@@ -117,11 +117,22 @@ today's `execute`-only shape covers it.
 
 - `./deploy.sh` rebuilds and redeploys the Debian backend container only —
   it pulls, rebuilds, and verifies `backend/`; it has no effect on the
-  Windows agent process. After any change to `agents/windows/`, manually
-  restart the running `agent.py` (Ctrl+C, then `python agent.py` again).
-  It's a separate, long-running process — a stale agent silently keeps
-  running old code with no error until something like a handler bug that
-  should've been fixed surfaces live.
+  Windows agent process. It's a separate, long-running process — a stale
+  agent silently keeps running old code with no error until something like
+  a handler bug that should've been fixed surfaces live.
+
+- The Windows agent is started **manually**, from the "IT-Deck Agent"
+  desktop shortcut, which points at `agents/windows/start_agent.bat`. The
+  "IT-Deck Agent" Scheduled Task registered by `install_task.ps1` is
+  **disabled on both PCs** and is not what runs the agent; ignore it.
+  `start_agent.bat` exits silently on a clean exit and only leaves the
+  window open (`pause`) on a non-zero exit code, so a window that stays up
+  means the agent crashed and the text in it is the error.
+
+- To restart the agent after any change to `agents/windows/`: close the
+  agent's console window, then launch the desktop shortcut again. This is a
+  GUI action on the Windows PC — Claude Code cannot perform it, so it has
+  to be done by hand before any agent-side change can be called working.
 
 ## Known limitations
 

@@ -1,47 +1,75 @@
 ---
 name: restart-windows-agent
-description: Restart the IT-Deck Windows agent after changing code in agents/windows/, and verify it's running again. Use whenever agent code changed and the running process needs to pick it up.
+description: Get the IT-Deck Windows agent restarted after changing code in agents/windows/, and verify the new process is actually running. Use whenever agent code changed and the running process needs to pick it up.
 ---
 
 # Restart Windows Agent
 
-The agent runs as the "IT-Deck Agent" Scheduled Task (registered by
-`agents/windows/install_task.ps1`, Stage 9), not a foreground console
-process — CLAUDE.md's "Commands" section still describes the older
-Ctrl+C/manual-rerun flow, which predates this and is stale. Restarting it
-here means stopping and starting that task, not killing a terminal.
+The agent is started **manually** from the "IT-Deck Agent" desktop shortcut,
+which points at `agents/windows/start_agent.bat`. It runs as a normal
+console process in the interactive user session.
 
-Restarting drops the agent's live WebSocket connection, so any in-flight
-command from the phone will fail until it reconnects — that's expected
-and is the point of invoking this skill, not something to double-confirm.
+The "IT-Deck Agent" Scheduled Task registered by `install_task.ps1` is
+**disabled on both PCs**. It is not what runs the agent — do not try to
+start, stop, or query it, and do not report on its state.
+
+`start_agent.bat` exits silently when `agent.py` returns 0, and only
+`pause`s (leaving the window open) on a non-zero exit code. So an agent
+window still sitting on screen means it **crashed**, and the text in that
+window is the error.
+
+## Claude cannot do this restart
+
+Restarting means closing a console window and double-clicking a desktop
+shortcut. Both are GUI actions on the Windows PC that Claude Code has no
+way to perform. Do not fake it with PowerShell that starts a detached
+process — that produces a differently-parented process than the shortcut
+does and hides the crash window.
+
+The job here is: **ask the user to restart, then verify they did.**
 
 ## Steps
 
-1. Check current state:
-   ```powershell
-   Get-ScheduledTask -TaskName "IT-Deck Agent" | Select-Object TaskName, State
-   ```
-   If the task doesn't exist, tell the user to run
-   `powershell -File agents/windows/install_task.ps1` first and stop.
+1. Check whether an agent process is running right now:
 
-2. Restart it:
    ```powershell
-   Stop-ScheduledTask -TaskName "IT-Deck Agent"
-   Start-Sleep -Seconds 2
-   Start-ScheduledTask -TaskName "IT-Deck Agent"
+   Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+     Where-Object { $_.CommandLine -like '*agent.py*' } |
+     Select-Object ProcessId, CreationDate
    ```
 
-3. Verify it came back up — poll state for a few seconds (Task Scheduler
-   reports "Running" almost immediately, but give it a moment):
-   ```powershell
-   Start-Sleep -Seconds 2
-   Get-ScheduledTask -TaskName "IT-Deck Agent" | Select-Object TaskName, State
-   ```
-   `State` should read `Running`. If it reads `Ready` (not running) after
-   a couple retries, the process likely crashed on startup — check
-   `agents/windows/.env` is present and valid, then try
-   `Get-ScheduledTaskInfo -TaskName "IT-Deck Agent"` for `LastTaskResult`
-   (0 = success; anything else is an error code worth looking up).
+   Record the `ProcessId` and `CreationDate` — that is the "before" state.
+   No rows means no agent is running at all.
 
-4. Report the before/after state to the user in one line — don't narrate
-   each PowerShell call.
+2. Tell the user, in one line, exactly what to do:
+
+   > Close the IT-Deck Agent console window, then launch the "IT-Deck
+   > Agent" desktop shortcut again.
+
+   Then stop and wait for them. Do not proceed to step 3 on your own.
+
+   Restarting drops the agent's live WebSocket, so any in-flight command
+   from the phone will fail until it reconnects. That is expected and is
+   the point of the restart — don't ask the user to confirm it.
+
+3. Once they say it's done, re-run the command from step 1 and compare:
+
+   - **A new `ProcessId`, and a `CreationDate` later than the "before"
+     value** → the restart took. Say so and move on.
+   - **The same `ProcessId`** → nothing was restarted. The old code is
+     still running. Say so plainly and ask again; do not proceed as if the
+     change is live.
+   - **No rows at all** → the agent isn't running. Most likely it crashed
+     on startup and the console window is showing the traceback. Ask the
+     user what the window says, and check `agents/windows/.env` exists and
+     is valid.
+
+4. Report the before/after in one line. Don't narrate each PowerShell call.
+
+## Why this matters
+
+`deploy.sh` rebuilds the backend container only; it has no effect on the
+agent. A stale agent keeps running old code with no error at all — the
+failure surfaces later as "the fix didn't work." Until step 3 shows a new
+PID, treat any change under `agents/windows/` as **not live**, and don't
+report it as working.

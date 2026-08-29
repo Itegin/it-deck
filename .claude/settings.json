@@ -4,14 +4,13 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "git status --short" },
           {
             "type": "command",
-            "command": "grep -qE 'agents[\\\\/]+windows' && echo '{\"systemMessage\": \"agents/windows changed - restart the running agent.py (Ctrl+C, then python agent.py) to load this. deploy.sh only rebuilds the backend container, not the agent process.\"}' || true"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent_changed.py\""
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/ruff_check.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff_check.py\""
           }
         ]
       }
@@ -22,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '(^|/)\\.env$' && echo 'BLOCKED: .env is gitignored and machine-specific — edit it manually, not through Claude Code' >&2 && exit 2 || exit 0"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_env.py\""
           }
         ]
       }

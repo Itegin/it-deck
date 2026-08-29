@@ -15,7 +15,7 @@ def main():
     file_path = tool_input.get("file_path") or tool_response.get("filePath") or ""
     file_path = file_path.replace("\\", "/")
 
-    if not re.search(r"(^|/)backend/.*\.py$", file_path):
+    if not re.search(r"(^|/)(backend|agents/windows)/.*\.py$", file_path):
         return
 
     try:
@@ -32,7 +32,13 @@ def main():
         output = (result.stdout + result.stderr).strip()
         if len(output) > 1000:
             output = output[:1000] + "\n... (truncated)"
-        print(json.dumps({"systemMessage": "ruff found issues:\n" + output}))
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": (
+                "ruff reported issues in " + file_path + ":\n" + output
+            ),
+            "systemMessage": "ruff found issues",
+        }}))
 
 
 if __name__ == "__main__":
