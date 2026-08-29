@@ -1,0 +1,38 @@
+# Managed by ansible/site.yml -- deployed to /etc/prometheus/prometheus.yml.
+# Edits made on the server are overwritten on the next playbook run.
+#
+# No alerting, no rule files, no Grafana: this host has a 4GB RAM ceiling
+# and the only consumer is a human occasionally opening Prometheus's own
+# expression browser on {{ itdeck_prometheus_listen }} through an SSH tunnel:
+#
+#   ssh -L 9090:127.0.0.1:9090 <user>@<server>
+#
+# then http://127.0.0.1:9090 in a browser on the local machine.
+
+global:
+  # 30s rather than the 15s default -- halves stored sample volume (and so
+  # both TSDB size and Prometheus's own memory footprint) on a box that
+  # cannot spare either. Nothing here needs sub-minute resolution.
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["{{ itdeck_node_exporter_listen }}"]
+
+  # The IT-Deck backend, scraped directly on the container's published port
+  # rather than through Nginx on 443 -- the self-signed LAN cert would only
+  # add a TLS verification failure on top.
+  #
+  # CAVEAT: /health returns {"status": "ok"} -- plain JSON, not the
+  # Prometheus exposition format -- so every scrape of this target fails to
+  # parse and its `up` series reads 0 whether the backend is healthy or
+  # completely down. The job is here because the endpoint exists, but it
+  # carries no usable signal as-is. To make it real, either give the app a
+  # /metrics route (e.g. prometheus-fastapi-instrumentator) and repoint
+  # metrics_path at it, or drop this job.
+  - job_name: itdeck_backend
+    metrics_path: /health
+    static_configs:
+      - targets: ["127.0.0.1:{{ itdeck_app_port }}"]

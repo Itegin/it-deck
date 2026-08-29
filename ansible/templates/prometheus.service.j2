@@ -1,0 +1,39 @@
+# Managed by ansible/site.yml -- deployed to
+# /etc/systemd/system/prometheus.service. Edits made on the server are
+# overwritten on the next playbook run.
+
+[Unit]
+Description=Prometheus
+Documentation=https://prometheus.io/docs/prometheus/latest/getting_started/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+# --config.file and --storage.tsdb.path both default to paths relative to
+# the working directory, so neither can be left off. Retention is a
+# command-line flag, not a prometheus.yml setting -- 15d is what keeps the
+# TSDB small enough to be a non-event on a 4GB host.
+#
+# Loopback only, on purpose -- nothing opens 9090 in the firewall. See the
+# monitoring section of ansible/site.yml.
+ExecStart=/usr/local/bin/prometheus \
+    --config.file=/etc/prometheus/prometheus.yml \
+    --storage.tsdb.path=/var/lib/prometheus \
+    --storage.tsdb.retention.time={{ itdeck_prometheus_retention }} \
+    --web.listen-address={{ itdeck_prometheus_listen }}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# The TSDB is the only thing Prometheus writes; /etc/prometheus stays
+# read-only to it.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/prometheus
+
+[Install]
+WantedBy=multi-user.target

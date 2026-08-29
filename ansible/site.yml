@@ -4,8 +4,8 @@
 # Docker release that doesn't ship the compose v2 plugin, and this
 # project's own scripts (deploy.sh, backup.sh, docker-compose.yml) all
 # assume `docker compose` v2 syntax), firewall, an Nginx reverse proxy
-# with a self-signed LAN cert, the app checkout, and the daily backup
-# cron job.
+# with a self-signed LAN cert, the app checkout, the daily backup cron
+# job, and a loopback-only Prometheus + node_exporter monitoring stack.
 #
 # No roles/ directory: this playbook provisions exactly one kind of
 # host for exactly one project. Roles earn their keep when tasks get
@@ -34,6 +34,19 @@
     # because .env doesn't exist yet the first time this firewall rule
     # runs. Update this and re-run if you change SERVER_PORT.
     itdeck_app_port: 8000
+
+    # Pinned, never "latest": a floating version means two runs of the same
+    # playbook can install different binaries. Bump these by hand. The
+    # matching sha256sums.txt from each release is fed to get_url's
+    # checksum:, so the pin validates itself and there is no hardcoded hash
+    # here to go stale alongside the version.
+    itdeck_node_exporter_version: "1.12.1"
+    itdeck_prometheus_version: "3.14.0"
+    # Both listen on loopback only -- see the monitoring section at the
+    # bottom of tasks: for why no firewall rule accompanies them.
+    itdeck_node_exporter_listen: "127.0.0.1:9100"
+    itdeck_prometheus_listen: "127.0.0.1:9090"
+    itdeck_prometheus_retention: "15d"
 
   tasks:
     # deb.debian.org timed out on every apt-get update during Stage 12
@@ -269,9 +282,228 @@
         hour: "3"
         job: "{{ itdeck_repo_dest }}/backup.sh >> {{ itdeck_repo_dest }}/data/backups/backup.log 2>&1"
 
+    # Monitoring: Prometheus scraping node_exporter, both installed from the
+    # projects' own pinned binary releases rather than apt (Debian 12 ships
+    # years-old versions of both).
+    #
+    # No Grafana, deliberately: this host has a 4GB RAM ceiling, and the
+    # only consumer is a human looking at a graph now and then -- which
+    # Prometheus's own expression browser on 9090 already covers.
+    #
+    # No firewall rule, equally deliberately: 9090 and 9100 are NOT opened
+    # in ufw, and both processes bind 127.0.0.1 only. Unlike the app, these
+    # are not something to put on the LAN -- node_exporter publishes a
+    # detailed inventory of the host, and Prometheus's browser is
+    # unauthenticated. Reach 9090 with an SSH tunnel instead:
+    #     ssh -L 9090:127.0.0.1:9090 <user>@<server>
+    - name: Create the node_exporter system user
+      ansible.builtin.user:
+        name: node_exporter
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+      become: true
+
+    # rc != 0 here just means "not installed yet" -- the download below is
+    # gated on the version string, which covers both that and a version
+    # bump, so the exit code itself is not interesting.
+    - name: Check the installed node_exporter version
+      ansible.builtin.command: /usr/local/bin/node_exporter --version
+      register: itdeck_node_exporter_check
+      changed_when: false
+      failed_when: false
+
+    # --version output goes to stdout on some releases and stderr on others,
+    # so match against both concatenated (the same idiom the compose task
+    # above uses). The trailing space in "version 1.12.1 " is load-bearing:
+    # it stops a future 1.12.11 from satisfying a 1.12.1 pin.
+    - name: Decide whether node_exporter needs installing
+      ansible.builtin.set_fact:
+        itdeck_node_exporter_install: >-
+          {{ ('version ' ~ itdeck_node_exporter_version ~ ' ') not in
+             ((itdeck_node_exporter_check.stdout | default('')) +
+              (itdeck_node_exporter_check.stderr | default(''))) }}
+
+    # checksum: is handed the release's own sha256sums.txt and picks the
+    # line matching the downloaded filename -- so a truncated or tampered
+    # download fails here, instead of becoming a service that won't start.
+    - name: Download the node_exporter release tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ itdeck_node_exporter_version }}/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64.tar.gz"
+        checksum: "sha256:https://github.com/prometheus/node_exporter/releases/download/v{{ itdeck_node_exporter_version }}/sha256sums.txt"
+        mode: "0644"
+      when: itdeck_node_exporter_install | bool
+
+    - name: Unpack the node_exporter release tarball
+      ansible.builtin.unarchive:
+        src: "/tmp/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: true
+      when: itdeck_node_exporter_install | bool
+
+    - name: Install the node_exporter binary
+      ansible.builtin.copy:
+        src: "/tmp/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      when: itdeck_node_exporter_install | bool
+      notify: Restart node_exporter
+      become: true
+
+    - name: Install the node_exporter systemd unit
+      ansible.builtin.template:
+        src: templates/node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart node_exporter
+      become: true
+
+    # ansible.builtin.systemd rather than the ansible.builtin.service used
+    # for docker/nginx above: only the systemd module can daemon_reload,
+    # which a freshly written unit file needs before it can be started.
+    - name: Ensure the node_exporter service is running and enabled
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+      become: true
+
+    - name: Create the prometheus system user
+      ansible.builtin.user:
+        name: prometheus
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+      become: true
+
+    - name: Check the installed Prometheus version
+      ansible.builtin.command: /usr/local/bin/prometheus --version
+      register: itdeck_prometheus_check
+      changed_when: false
+      failed_when: false
+
+    - name: Decide whether Prometheus needs installing
+      ansible.builtin.set_fact:
+        itdeck_prometheus_install: >-
+          {{ ('version ' ~ itdeck_prometheus_version ~ ' ') not in
+             ((itdeck_prometheus_check.stdout | default('')) +
+              (itdeck_prometheus_check.stderr | default(''))) }}
+
+    - name: Download the Prometheus release tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ itdeck_prometheus_version }}/prometheus-{{ itdeck_prometheus_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/prometheus-{{ itdeck_prometheus_version }}.linux-amd64.tar.gz"
+        checksum: "sha256:https://github.com/prometheus/prometheus/releases/download/v{{ itdeck_prometheus_version }}/sha256sums.txt"
+        mode: "0644"
+      when: itdeck_prometheus_install | bool
+
+    - name: Unpack the Prometheus release tarball
+      ansible.builtin.unarchive:
+        src: "/tmp/prometheus-{{ itdeck_prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: true
+      when: itdeck_prometheus_install | bool
+
+    # promtool comes along because the config template below is validated
+    # with it. The only other thing in the tarball is a sample
+    # prometheus.yml, which the template below replaces outright.
+    - name: Install the Prometheus binaries
+      ansible.builtin.copy:
+        src: "/tmp/prometheus-{{ itdeck_prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - prometheus
+        - promtool
+      when: itdeck_prometheus_install | bool
+      notify: Restart prometheus
+      become: true
+
+    - name: Create the Prometheus config directory
+      ansible.builtin.file:
+        path: /etc/prometheus
+        state: directory
+        owner: root
+        group: prometheus
+        mode: "0750"
+      become: true
+
+    # Owned by prometheus, not root: the TSDB is the one thing the service
+    # writes, and it cannot open the database at all if this directory is
+    # root-owned.
+    - name: Create the Prometheus data directory
+      ansible.builtin.file:
+        path: /var/lib/prometheus
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: "0750"
+      become: true
+
+    # validate: catches a broken config before it is ever written -- which
+    # is what the Nginx tasks above wanted and could not have, since
+    # nginx -t cannot check a bare site fragment. promtool has no such
+    # limitation, so the stronger form is used here. Ordering is
+    # load-bearing: promtool is installed above, and the service that reads
+    # this file starts below.
+    - name: Install the Prometheus config
+      ansible.builtin.template:
+        src: templates/prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: root
+        group: prometheus
+        mode: "0640"
+        validate: /usr/local/bin/promtool check config %s
+      notify: Restart prometheus
+      become: true
+
+    - name: Install the Prometheus systemd unit
+      ansible.builtin.template:
+        src: templates/prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart prometheus
+      become: true
+
+    - name: Ensure the Prometheus service is running and enabled
+      ansible.builtin.systemd:
+        name: prometheus
+        state: started
+        enabled: true
+        daemon_reload: true
+      become: true
+
   handlers:
     - name: Restart nginx
       ansible.builtin.service:
         name: nginx
         state: restarted
+      become: true
+
+    # daemon_reload here too: these fire on a changed unit file at least as
+    # often as on a changed binary or config.
+    - name: Restart node_exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: true
+      become: true
+
+    - name: Restart prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        state: restarted
+        daemon_reload: true
       become: true

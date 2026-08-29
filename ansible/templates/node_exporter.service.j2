@@ -1,0 +1,34 @@
+# Managed by ansible/site.yml -- deployed to
+# /etc/systemd/system/node_exporter.service. Edits made on the server are
+# overwritten on the next playbook run.
+
+[Unit]
+Description=Prometheus node_exporter
+Documentation=https://github.com/prometheus/node_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+# Loopback only, on purpose -- nothing opens 9100 in the firewall. See the
+# monitoring section of ansible/site.yml.
+ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ itdeck_node_exporter_listen }}
+Restart=on-failure
+RestartSec=5s
+
+# node_exporter only ever reads /proc, /sys and /dev, so it needs no write
+# access anywhere on the filesystem.
+#
+# ProtectHome is read-only rather than true: true replaces /home with an
+# empty mount inside the unit's namespace, and the filesystem collector
+# would then report that empty mount instead of the real one. The app
+# checkout, the SQLite DB and every backup live under the deploy user's
+# home, so free space there is one of the few numbers worth watching.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
