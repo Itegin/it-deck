@@ -1,6 +1,6 @@
 services:
   backend:
-    build: ./backend
+    image: ghcr.io/itegin/it-deck-backend:latest
     # Must match SERVER_PORT in .env and the uvicorn --port in backend/Dockerfile -- change all three together.
     ports:
       - "8000:8000"

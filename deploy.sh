@@ -29,7 +29,8 @@ UNPUSHED=$(git log origin/main..HEAD --oneline 2>/dev/null | wc -l)
 [ "$UNPUSHED" -gt 0 ] && echo -e "${Y}      ⚠ $UNPUSHED незапушенных коммит(ов) на сервере — сделай git push${N}"
 
 step "3/5 Пересобираю контейнер"
-docker compose up -d --build >/dev/null || fail "Сборка упала."
+docker compose pull >/dev/null || fail "Не удалось скачать образ из GHCR."
+docker compose up -d >/dev/null || fail "Контейнер не стартовал."
 ok "Контейнер запущен"
 
 step "4/5 Жду готовности бэкенда"
