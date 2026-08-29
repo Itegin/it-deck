@@ -156,19 +156,34 @@ def handle_audio_volume_set(params: dict) -> dict:
 
 def handle_audio_switch(params: dict) -> dict:
     try:
-        # OUTPUT_DEVICE_PRIMARY/SECONDARY hold SoundVolumeView's full
-        # "Command-Line Friendly ID" (DriverName\Device\Name\Direction), not
-        # a bare device Name -- a bare Name isn't a safe identifier here.
-        # E.g. "Динамики" is both the actual Realtek render device AND a
-        # capture-side subunit name that shows up under an unrelated fifine
-        # Microphone device in the same SoundVolumeView listing; passing
-        # just "Динамики" would be ambiguous. Passed through to subprocess
-        # exactly as read from the environment -- do not shorten, split, or
-        # otherwise parse these strings, the full ID is what disambiguates.
-        primary = os.getenv("OUTPUT_DEVICE_PRIMARY")
-        secondary = os.getenv("OUTPUT_DEVICE_SECONDARY")
-        if not primary or not secondary:
-            return {"status": "error", "message": "OUTPUT_DEVICE_PRIMARY/SECONDARY not set"}
+        # The two device IDs hold SoundVolumeView's full "Command-Line
+        # Friendly ID" (DriverName\Device\Name\Direction), not a bare device
+        # Name -- a bare Name isn't a safe identifier here. E.g. "Динамики"
+        # is both the actual Realtek render device AND a capture-side
+        # subunit name that shows up under an unrelated fifine Microphone
+        # device in the same SoundVolumeView listing; passing just
+        # "Динамики" would be ambiguous. They may come from the item's
+        # params (written by Studio's device picker) or, failing that, from
+        # OUTPUT_DEVICE_PRIMARY/SECONDARY in the environment; either way
+        # they are passed through to subprocess exactly as read -- do not
+        # shorten, split, or otherwise parse these strings, the full ID is
+        # what disambiguates.
+        #
+        # The source is chosen all-or-nothing rather than per-key: these two
+        # IDs are the two ends of one /SwitchDefault toggle, so pairing a
+        # params primary with an env secondary would silently toggle between
+        # a pair the user never configured. A half-filled params row means
+        # the picker didn't finish, so the env pair -- known to be
+        # consistent -- is the safer whole to fall back to.
+        params_primary = params.get("output_device_primary")
+        params_secondary = params.get("output_device_secondary")
+        if params_primary and params_secondary:
+            primary, secondary = params_primary, params_secondary
+        else:
+            primary = os.getenv("OUTPUT_DEVICE_PRIMARY")
+            secondary = os.getenv("OUTPUT_DEVICE_SECONDARY")
+            if not primary or not secondary:
+                return {"status": "error", "message": "OUTPUT_DEVICE_PRIMARY/SECONDARY not set"}
 
         # /SwitchDefault toggles: whichever of the two isn't currently the
         # default becomes it. Trailing 0 = render/multimedia role.
