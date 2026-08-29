@@ -1,0 +1,634 @@
+================================================================================
+CLAUDE CODE AUDIT & RECOMMENDATIONS - IT-Deck
+================================================================================
+Date:            2026-08-26
+Claude Code CLI: v2.1.246
+Docs verified:   code.claude.com/docs
+                 (docs.claude.com/en/docs/claude-code/* now 301-redirects here)
+Scope:           Advisory only. No project files were modified during the audit.
+
+
+--------------------------------------------------------------------------------
+PART 0: THREE THINGS YOU HAVE CONFIGURED THAT DO NOTHING
+--------------------------------------------------------------------------------
+
+This is the most valuable finding in the report, so it goes first.
+All three are VERIFIED, not inferred.
+
+
+0.1  YOUR .env EDIT BLOCKER HAS NEVER BLOCKED ANYTHING
+------------------------------------------------------
+
+.claude/settings.json line 25:
+
+    echo "$CLAUDE_TOOL_INPUT" | grep -qE '(^|/)\.env$' \
+      && echo 'BLOCKED: ...' >&2 && exit 2 || exit 0
+
+Two independent fatal bugs:
+
+  1. CLAUDE_TOOL_INPUT is not a thing.
+     The hooks reference lists exactly these env vars for command hooks:
+         $CLAUDE_PROJECT_DIR
+         $CLAUDE_PLUGIN_ROOT
+         $CLAUDE_PLUGIN_DATA
+         $CLAUDE_CODE_REMOTE
+         $CLAUDE_CODE_BRIDGE_SESSION_ID
+         $CLAUDE_EFFORT
+     Tool input arrives as JSON on STDIN, never as an env var.
+     So `echo ""` -> grep finds nothing -> `|| exit 0`.
+
+  2. Even if the var existed, the regex could never match.
+     `(^|/)\.env$` is anchored to end-of-line, and a JSON payload ends
+     in `}`, not `.env`.
+
+Tested directly (rather than by editing .env):
+
+    TEST 1 (var unset):                        exit 0 (allowed)
+    TEST 2 (var set to realistic payload JSON): exit 0 (allowed)
+
+You have been relying on a guard that is a no-op.
+
+
+0.2  ALL THREE PostToolUse HOOKS TALK TO A CHANNEL CLAUDE CANNOT HEAR
+----------------------------------------------------------------------
+
+The hooks reference has an explicit routing table. For PostToolUse:
+
+    Output channel            Reaches you   Reaches Claude
+    ----------------------    -----------   --------------
+    plain stdout, exit 0      NO (debug     NO
+                              log only)
+    systemMessage             YES           NO
+    additionalContext         YES           YES
+    exit 2 + stderr           YES           YES
+
+Against your config:
+
+  * `git status --short`
+    Plain stdout, exit 0. Goes to the debug log.
+    Neither you nor Claude sees it. Completely dead.
+
+  * agents/windows restart reminder
+    Emits systemMessage. YOU see the warning; CLAUDE DOES NOT.
+    So the model that just edited agents/windows/audio.py gets no signal
+    that a restart is needed, and cheerfully reports the fix as done.
+    This hook was built to solve your #1 pain point and is wired to the
+    one channel that cannot solve it.
+
+  * ruff_check.py
+    Emits systemMessage. Same problem: ruff findings reach you, not the
+    model that could fix them.
+    (Mechanics are otherwise fine - confirmed `python3 -m ruff` resolves
+    to ruff 0.8.4 in your Git Bash. Note `python -m ruff` does NOT; the
+    hook is correct to use python3.)
+
+Secondary issue:
+    The reminder greps `agents[\\/]+windows` against the ENTIRE stdin
+    payload, which includes the file CONTENT being written. Any file whose
+    text mentions "agents/windows" - including CLAUDE.md - false-positives.
+
+Also: the docs place systemMessage inside `hookSpecificOutput`, not at top
+level as you have it. Move it when you rewrite.
+
+
+0.3  CLAUDE.md ACTIVELY TEACHES THE WRONG RESTART PROCEDURE
+------------------------------------------------------------
+
+CLAUDE.md lines 118-124 say:
+    "manually restart the running agent.py (Ctrl+C, then python agent.py
+     again)."
+
+.claude/skills/restart-windows-agent/SKILL.md says the opposite, in as many
+words: the agent runs as the "IT-Deck Agent" SCHEDULED TASK registered by
+install_task.ps1, and "CLAUDE.md's Ctrl+C/manual-rerun flow predates this
+and is stale."
+
+CLAUDE.md loads into EVERY session. The skill loads only when invoked.
+So the authoritative-feeling document wins by default and teaches a
+procedure that no longer matches your machine.
+
+Part of your "forgot to restart the agent" pain is already solved by
+install_task.ps1 - and partly perpetuated by your own docs.
+
+
+--------------------------------------------------------------------------------
+PART 1: WHAT YOU HAVE (FULL INVENTORY)
+--------------------------------------------------------------------------------
+
+  Project CLAUDE.md              CLAUDE.md
+      Good, detailed - but stale on restart flow (see 0.3)
+
+  Hooks: PostToolUse x3          .claude/settings.json
+      Wired to wrong output channel (see 0.2)
+
+  Hook: PreToolUse .env block    .claude/settings.json
+      Dead (see 0.1)
+
+  Ruff hook script               .claude/hooks/ruff_check.py
+      Works, but only for backend/**.py - never agent or frontend code
+
+  Subagent                       .claude/agents/security-reviewer.md
+      Well-written; threat-model-aware. Good as-is
+
+  Skill                          .claude/skills/restart-windows-agent/
+      Genuinely good. Underused because nothing triggers it
+
+  Permissions                    .claude/settings.local.json
+      Bloated, see section 10
+
+  Custom slash commands          NONE
+  MCP servers                    NONE (no .mcp.json)
+
+  Global config                  ~/.claude/settings.json
+      Just model/theme/effort. No personal skills, agents, or commands
+
+  check.sh / deploy.sh           repo root
+      EXCELLENT - and Claude never runs them
+
+
+THE HEADLINE PATTERN
+--------------------
+You already wrote the verification logic.
+
+  * deploy.sh step 5/5 md5-compares backend/app/*.py on disk against the
+    same files inside the container. That IS the "rebuilt but stale" check.
+
+  * check.sh covers git sync, container freshness, API health, and agent
+    connectivity.
+
+Nothing invokes either at the moment it matters. Most of what follows is
+wiring triggers to machinery you already built.
+
+
+--------------------------------------------------------------------------------
+PART 2: RECOMMENDATIONS, ORDERED BY IMPACT / EFFORT
+--------------------------------------------------------------------------------
+
+
+[*1]  FIX CLAUDE.md's RESTART SECTION                          -- 5 minutes
+---------------------------------------------------------------------------
+
+Replace the Ctrl+C paragraph with the Scheduled Task reality and a pointer
+to the skill. Zero new machinery; removes a document that is actively
+misleading every session you start.
+
+
+[*2]  REPAIR THE .env BLOCKER                                  -- 10 minutes
+---------------------------------------------------------------------------
+
+Create .claude/hooks/block_env.py:
+
+    import json, re, sys
+
+    data = json.load(sys.stdin)
+    fp = (data.get("tool_input", {}).get("file_path") or "").replace("\\", "/")
+    if re.search(r"(^|/)\.env$", fp):
+        print("BLOCKED: .env is gitignored and machine-specific - edit it "
+              "manually, not through Claude Code.", file=sys.stderr)
+        sys.exit(2)
+
+In .claude/settings.json, replace the PreToolUse command with:
+
+    { "type": "command",
+      "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_env.py\"" }
+
+Confirmed from docs: on PreToolUse, exit 2 blocks the tool call and the
+stderr reason IS shown to Claude. It also covers agents/windows/.env,
+which the original intended.
+
+
+[*3]  REWIRE POSTTOOLUSE HOOKS TO additionalContext            -- 15 minutes
+---------------------------------------------------------------------------
+
+Highest-leverage change for the "forgot to restart the agent" problem,
+because it makes CLAUDE aware instead of only you.
+
+.claude/hooks/agent_changed.py:
+
+    import json, sys
+
+    data = json.load(sys.stdin)
+    fp = (data.get("tool_input", {}).get("file_path") or "").replace("\\", "/")
+    if "/agents/windows/" in fp and not fp.endswith((".md", ".txt")):
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": (
+                "agents/windows/ was modified. The running 'IT-Deck Agent' "
+                "Scheduled Task is still executing the OLD code. Do NOT report "
+                "this change as working until you have invoked the "
+                "restart-windows-agent skill. deploy.sh does not restart the "
+                "agent."
+            ),
+            "systemMessage": "agent code changed - restart required"
+        }}))
+
+Checking tool_input.file_path instead of grepping the whole payload also
+kills the false-positive bug.
+
+In ruff_check.py, change the final print to put findings in
+additionalContext (keep a short systemMessage for yourself). While you're
+there, widen line 18's regex to cover the agent too:
+
+    if not re.search(r"(^|/)(backend|agents/windows)/.*\.py$", file_path):
+
+And DELETE the `git status --short` hook entirely - it reaches no one.
+
+
+[**4]  A STOP HOOK - THE "REPORTED DONE BUT NOT APPLIED" FIX   -- 45 minutes
+---------------------------------------------------------------------------
+
+This is the feature you're missing that targets your stated problem most
+precisely.
+
+Stop fires when Claude finishes responding and is a BLOCKING event: exit 2
+prevents the stop, and the stderr reason IS shown to Claude, which then
+keeps working. That converts "I manually read git diff to verify every
+change" into a machine check.
+
+.claude/hooks/verify_applied.py:
+
+    import hashlib, json, os, subprocess, sys
+
+    data = json.load(sys.stdin)
+    session = data.get("session_id", "nosession")
+    root = os.environ.get("CLAUDE_PROJECT_DIR", ".")
+
+    diff = subprocess.run(["git", "-C", root, "diff", "HEAD"],
+                          capture_output=True, text=True).stdout
+    if not diff.strip():
+        sys.exit(0)          # nothing changed; nothing to verify
+
+    # Only nag once per distinct working-tree state, so we never loop forever.
+    stamp = os.path.join(os.environ.get("TEMP", "/tmp"),
+                         f"itdeck-verify-{session}")
+    digest = hashlib.sha1(diff.encode()).hexdigest()
+    if os.path.exists(stamp) and open(stamp).read().strip() == digest:
+        sys.exit(0)
+    open(stamp, "w").write(digest)
+
+    stat = subprocess.run(["git", "-C", root, "diff", "--stat", "HEAD"],
+                          capture_output=True, text=True).stdout
+
+    print(
+        "VERIFY BEFORE STOPPING. This is the actual working tree vs HEAD:\n\n"
+        f"{stat}\n"
+        "Check every change you just claimed to make against this diff. If "
+        "something you reported is missing or only partially applied, apply it "
+        "now. If a file under agents/windows/ appears above, the running agent "
+        "has NOT picked it up unless you invoked restart-windows-agent this "
+        "session. When everything matches, say so in one line and stop.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+Register it in .claude/settings.json:
+
+    "Stop": [
+      { "hooks": [
+          { "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify_applied.py\"" }
+      ]}
+    ]
+
+The digest stamp is the loop guard: once Claude has been shown a given diff
+state, that same state won't block again. If Claude FIXES something, the
+diff changes, and it gets one more verification pass - which is what you
+want.
+
+HONEST CAVEAT: a hook cannot know what Claude CLAIMED, only what's on disk.
+This doesn't catch a fabricated claim in the abstract; it forces a mandatory
+read of ground truth before the turn can end, which is where these failures
+actually get caught. Worth it for a 45-minute build given how many hours the
+failure mode has cost you.
+
+ALSO FREE, RIGHT NOW, ZERO SETUP: the bundled /verify skill (build and run
+the app to confirm a change does what it should) and /code-review. Both are
+already in your session. /rewind too - see section 7.
+
+
+[**5]  A /ship SKILL - THE DEPLOY-CHAIN CHECKLIST              -- 40 minutes
+---------------------------------------------------------------------------
+
+FEATURE NOTE, IMPORTANT: custom slash commands have been MERGED INTO SKILLS.
+Per the docs, .claude/commands/deploy.md and .claude/skills/deploy/SKILL.md
+both create /deploy and work the same way; existing commands/ files keep
+working, but skills are recommended (supporting files, richer frontmatter,
+and Claude can auto-load them).
+
+So: do NOT create .claude/commands/ - write skills. You already know the
+format.
+
+The killer feature here is DYNAMIC CONTEXT INJECTION: the  !`command`
+syntax runs BEFORE the content reaches Claude, so Claude starts with real
+state rather than assumptions.
+
+.claude/skills/ship/SKILL.md:
+
+    ---
+    name: ship
+    description: Commit, push, deploy to Athlon, and verify every link in the chain landed.
+    disable-model-invocation: true
+    argument-hint: [commit message]
+    allowed-tools: Bash(git add *) Bash(git commit *) Bash(git push *) Bash(git status *) Bash(git log *) Bash(git diff *)
+    ---
+
+    ## Ground truth right now
+    - Working tree: !`git status --short`
+    - Unpushed commits: !`git log origin/main..HEAD --oneline`
+    - Agent code changed vs origin: !`git diff origin/main --name-only -- agents/windows`
+
+    ## Your task
+    Ship the current work. Commit message: $ARGUMENTS
+
+    1. If the working tree is dirty, stage and commit.
+    2. Push to origin/main. Confirm `git log origin/main..HEAD` is now empty.
+    3. Tell me to run `./deploy.sh` on Athlon (or run it over SSH if that is
+       set up). deploy.sh's step 5/5 md5-compares container code against disk
+       - if it fails, the container is stale and the deploy did not take.
+    4. If anything under agents/windows/ appears in the diff above, invoke the
+       restart-windows-agent skill. deploy.sh does not touch the agent.
+    5. Report the chain explicitly, one line each: committed / pushed /
+       pulled+rebuilt / md5 verified / agent restarted. Then remind me:
+       Ctrl+Shift+R in the browser for cached JS.
+
+This is your "committed but not pushed, pushed but not pulled, pulled but
+not rebuilt, rebuilt but cached JS" failure mode turned into a literal
+checklist that starts from measured state.
+
+
+[*6]  PLAN MODE - FREE, ADOPT TODAY
+---------------------------------------------------------------------------
+
+Press SHIFT+TAB to cycle into it, or prefix one prompt with /plan, or start
+with `claude --permission-mode plan`.
+
+Claude reads files and runs exploratory shell commands but CANNOT EDIT YOUR
+SOURCE until you approve the plan. Approving presents three options
+(auto mode / manually approve each edit / keep planning). Ctrl+G opens the
+proposed plan in your editor so you can edit it before Claude proceeds.
+
+For you specifically: use it for anything touching the message shape between
+client -> backend -> agent, where CLAUDE.md warns not to assume today's
+execute-only shape covers a new case. Catching a wrong plan is much cheaper
+than catching it after a deploy across three machines.
+
+You can make it the default per-project with:
+
+    "permissions": { "defaultMode": "plan" }
+
+in .claude/settings.json. I'd try it manually for a week first - as a
+default it gets tiresome for one-line fixes.
+
+
+[*7]  CHECKPOINTING / /rewind - FREE, ALREADY ON
+---------------------------------------------------------------------------
+
+Automatic. Claude Code snapshots file state before each of your prompts
+(100 most recent per session, kept with the conversation so it survives
+/resume; deleted with sessions after 30 days).
+
+Open it with /rewind or DOUBLE-ESC on an empty prompt. You can restore code,
+conversation, both, or summarize a verbose stretch to reclaim context.
+
+LIMITATIONS THAT MATTER FOR YOUR SETUP:
+  * Files changed by BASH COMMANDS are NOT tracked - only edits through
+    Claude's file tools. Your deploy.sh, git operations, and container
+    rebuilds are outside it entirely.
+  * BACKGROUND SUBAGENT EDITS are NOT restored - use git.
+  * It is explicitly NOT a version-control replacement.
+
+Nothing to set up. Just know it exists - "Claude mangled three files, let me
+rewind" beats reconstructing by hand.
+
+Related: /branch forks a session to try a different approach while keeping
+the original intact.
+
+
+[*8]  A SessionStart HOOK THAT HANDS CLAUDE THE REAL STATE     -- 20 minutes
+---------------------------------------------------------------------------
+
+SessionStart fires when a session begins or resumes. Per the routing table,
+its plain stdout goes to YOU but additionalContext goes to CLAUDE. So emit
+JSON:
+
+    import json, subprocess, os
+
+    root = os.environ.get("CLAUDE_PROJECT_DIR", ".")
+    def g(*a): return subprocess.run(["git", "-C", root, *a],
+                                     capture_output=True, text=True).stdout.strip()
+
+    lines = [
+        f"HEAD: {g('log', '-1', '--oneline')}",
+        f"Uncommitted: {g('status', '--short') or 'clean'}",
+        f"Unpushed: {g('log', 'origin/main..HEAD', '--oneline') or 'none'}",
+    ]
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": "IT-Deck state at session start:\n" + "\n".join(lines),
+    }}))
+
+Every session then opens with Claude knowing whether you have unpushed work
+- instead of discovering it three steps into a debugging session.
+
+
+[*9]  HEADLESS MODE FOR THE SERVER SIDE           -- 30 minutes, CONDITIONAL
+---------------------------------------------------------------------------
+
+`claude -p "prompt"` runs non-interactively and exits.
+
+Useful flags:
+    --output-format json|stream-json
+    --allowedTools / --disallowedTools
+    --permission-mode
+    --max-turns
+    --max-budget-usd
+    --json-schema
+    -c                  continue the last session non-interactively
+    --bg                fire and forget
+
+NOTE: -p mode defaults to bypassPermissions unless you pass
+--permission-mode. Be deliberate.
+
+The realistic use for you is on ATHLON, wrapping the output of your own
+scripts:
+
+    ./check.sh 2>&1 | claude -p --model sonnet \
+      "This is IT-Deck's health check. State in 3 lines what is broken and
+       the single next command to run."
+
+That collapses your "run a command, paste output back, wait" loop for the
+server-side half.
+
+CAVEAT YOU NEED TO KNOW BEFORE YOU BUILD ON THIS:
+I tried to verify non-interactive SSH from your Windows box and could not
+get a working path.
+
+    ssh -o BatchMode=yes 192.168.0.28   -> TIMED OUT
+    ssh -o BatchMode=yes 192.168.0.27   -> TIMED OUT
+    ssh -o BatchMode=yes 82.115.5.187   -> Permission denied
+                                           (publickey,password) for user itegi
+
+You have ~/.ssh/id_ed25519 but no ~/.ssh/config.
+
+So the much better version of this - a /ship skill that runs
+`ssh athlon 'cd ~/controlhub && ./deploy.sh'` and reads the real output,
+eliminating the paste-back loop for deploys entirely - is blocked on ~15
+minutes of SSH setup: an ~/.ssh/config Host entry with the right User, and
+ssh-copy-id.
+
+Once `ssh athlon true` works non-interactively, add `Bash(ssh athlon *)` to
+your allowlist and Claude can read your server's state directly.
+
+I'd do this BEFORE anything else in sections 5/9 - it's the highest-value
+unlock in the report, and it's plumbing, not Claude Code config.
+
+
+[*10]  TRIM settings.local.json                                -- 10 minutes
+---------------------------------------------------------------------------
+
+Verified from the permissions docs: `Bash(git *)` matches EVERY git
+subcommand. So line 30 makes lines 15-19, 27-29, and 31 dead weight - and
+silently allows `git push --force` and `git reset --hard` without a prompt.
+
+Same for `Bash(curl *)` (line 26) swallowing lines 10/21/24, and
+`Bash(python *)` (line 9) swallowing 7-8.
+
+Not urgent, but on a solo project where Claude commits and pushes for you,
+`Bash(git *)` is broader than you probably intend. Replace with explicit:
+
+    Bash(git add *)
+    Bash(git commit *)
+    Bash(git push origin main)
+    Bash(git status *)
+    Bash(git diff *)
+    Bash(git log *)
+
+There's a bundled skill for this: /fewer-permission-prompts scans your
+transcripts and proposes a prioritized allowlist. Free, already installed.
+
+
+--------------------------------------------------------------------------------
+PART 3: THINGS I'D DELIBERATELY SKIP
+--------------------------------------------------------------------------------
+
+You asked for plain verdicts. These are all real features that don't earn
+their keep here.
+
+
+MCP SERVERS - SKIP
+    MCP shines when you're pasting data in from an external system: Jira,
+    Sentry, Linear, a production Postgres. Your entire stack is a local
+    SQLite file, three machines on your LAN, and a git repo - all reachable
+    through Bash and the file tools you already have.
+
+    There is NO official SSH/remote-shell MCP server in the docs; the "let
+    Claude see Athlon" job is done by ssh + an allowlist entry, not by MCP.
+    Adding one would be config to maintain for zero new reach.
+
+    (The Chrome browser tools you already have connected ARE MCP, and they
+    are genuinely the right call for debugging your PWA's cached-JS problem
+    - read the console, check what studio.js the browser actually got.
+    Keep those.)
+
+
+MORE SUBAGENTS - SKIP
+    Your security-reviewer is well-scoped: rare, deep, threat-model-aware,
+    and it keeps a verbose audit out of your main context. That's the
+    profile where subagents pay.
+
+    The docs are explicit that you should NOT create one when you need
+    frequent back-and-forth or when phases share significant context -
+    which describes essentially all your day-to-day work.
+
+    A "deploy-checker" or "frontend-reviewer" subagent would start with a
+    cold context, re-derive everything already in your conversation, and
+    hand back a summary. Use a SKILL for repeated procedures instead;
+    that's what skills are for, and you've already proven you can write
+    good ones.
+
+
+AGENT TEAMS / WORKTREES / PARALLEL AGENTS - SKIP
+    These solve coordination cost on large codebases with several
+    independent workstreams. You are one person on a three-directory
+    project.
+
+
+PLUGINS & MARKETPLACES - SKIP
+    Distribution mechanism for sharing config across a team or publicly.
+    You have no team. Your ~/.claude/plugins/marketplaces/ is just the
+    default catalog; nothing installed. Leave it.
+
+
+CUSTOM STATUS LINE, OUTPUT STYLES - SKIP
+    Cosmetic. Zero effect on any pain point you listed.
+
+
+SCHEDULED TASKS / CRON AGENTS / /loop - SKIP
+    These are for unattended recurring work (nightly audits, watching CI).
+    You deploy when you're at the keyboard. A cron'd Claude on a hobby
+    project mostly burns tokens.
+
+
+A TEST SUITE WRITTEN BY CLAUDE - TEMPTING, AND STILL: NOT YET
+    You have no tests, and you'd be right that this is the real fix for
+    "is it actually working." But your failure modes aren't logic bugs -
+    they're DEPLOYMENT bugs (stale container, stale agent, cached JS) that
+    no unit test catches.
+
+    Fix the chain first (sections 3, 4, 5). If you do want tests later, the
+    high-value target is narrow: backend/app/ws/client.py's _handle_execute
+    timeout/offline path, given CLAUDE.md's "every execute must resolve
+    within 5s" invariant.
+
+
+--------------------------------------------------------------------------------
+PART 4: SUGGESTED ADOPTION ORDER
+--------------------------------------------------------------------------------
+
+You said you'd rather adopt three things than twelve. In order:
+
+  1. Sections 1 + 2 + 3  --  one sitting, ~30 min.
+     Fix the stale CLAUDE.md, repair the dead .env hook, rewire three hooks
+     from systemMessage to additionalContext. This alone makes Claude aware
+     of agent restarts for the first time.
+
+  2. Section 4  --  the Stop hook. ~45 min.
+     Your "reported done but not applied" problem.
+
+  3. SSH to Athlon, then Section 5  --  the /ship skill.
+     This is where the deploy-chain confusion stops.
+
+Everything else is optional. Sections 6 and 7 (plan mode, /rewind) cost
+nothing and need no setup - just start using them.
+
+
+--------------------------------------------------------------------------------
+PART 5: WHAT I COULD NOT VERIFY
+--------------------------------------------------------------------------------
+
+Stated plainly, as you asked:
+
+  * NON-INTERACTIVE SSH FROM YOUR WINDOWS BOX TO ATHLON
+    Could not establish it (timeouts on both LAN IPs, publickey denial on
+    the public IP). The section 5/9 recommendations that depend on it are
+    gated on you setting that up; everything else in the report stands
+    independently.
+
+  * WHETHER STOP HOOKS EXPOSE A `stop_hook_active` INPUT FIELD
+    Older Claude Code versions had one as a loop guard. The current hooks
+    reference documents the common input fields (session_id, prompt_id,
+    transcript_path, cwd, permission_mode, hook_event_name, effort) and I
+    did not see stop_hook_active among them. That's why the section 4
+    script uses a diff-digest stamp instead - it doesn't depend on a field
+    I couldn't confirm.
+
+  * WHETHER A TOP-LEVEL systemMessage (YOUR CURRENT FORM) IS HONORED,
+    OR ONLY hookSpecificOutput.systemMessage
+    The docs show it nested. Either way the routing conclusion is
+    unchanged - systemMessage never reaches Claude - so I recommended
+    additionalContext regardless.
+
+
+================================================================================
+END OF REPORT
+================================================================================
