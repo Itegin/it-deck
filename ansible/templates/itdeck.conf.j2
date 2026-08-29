@@ -1,0 +1,59 @@
+# Managed by ansible/site.yml -- deployed to /etc/nginx/sites-available/itdeck
+# and symlinked into sites-enabled. Edits made on the server are overwritten
+# on the next playbook run.
+#
+# LAN-only: the cert is self-signed for itdeck.local, so the phone's browser
+# shows a one-time "not private" warning that has to be accepted. There is no
+# public domain here, hence no Let's Encrypt/certbot.
+
+server {
+    listen 80;
+    server_name _;
+
+    # Nothing is served over plain HTTP -- port 80 is open in the firewall
+    # only so this redirect can answer.
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name _;
+
+    ssl_certificate /etc/nginx/ssl/itdeck.crt;
+    ssl_certificate_key /etc/nginx/ssl/itdeck.key;
+
+    # Matches MAX_UPLOAD_BYTES in backend/app/api/screenshot.py -- nginx's
+    # 1MB default would 413 a screenshot upload the app itself accepts.
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ itdeck_app_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # /ws/agent and /ws/client. The proxy_http_version + Upgrade + Connection
+    # trio is what makes the WebSocket handshake survive the proxy: without
+    # it nginx talks HTTP/1.0 to the backend and drops the hop-by-hop Upgrade
+    # header, and both sockets fail to establish at all.
+    location /ws/ {
+        proxy_pass http://127.0.0.1:{{ itdeck_app_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Both sockets are persistent and only carry traffic when state
+        # actually changes, so an idle PC sends nothing for long stretches.
+        # nginx's 60s default would close an idle socket and leave the
+        # agent's reconnect/backoff loop flapping instead of surfacing a
+        # clear failure.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

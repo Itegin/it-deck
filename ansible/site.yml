@@ -3,8 +3,9 @@
 # not apt's docker.io -- Debian 12's docker.io package is an older
 # Docker release that doesn't ship the compose v2 plugin, and this
 # project's own scripts (deploy.sh, backup.sh, docker-compose.yml) all
-# assume `docker compose` v2 syntax), firewall, the app checkout, and
-# the daily backup cron job.
+# assume `docker compose` v2 syntax), firewall, an Nginx reverse proxy
+# with a self-signed LAN cert, the app checkout, and the daily backup
+# cron job.
 #
 # No roles/ directory: this playbook provisions exactly one kind of
 # host for exactly one project. Roles earn their keep when tasks get
@@ -42,6 +43,8 @@
           - curl
           - sqlite3
           - ufw
+          - nginx
+          - openssl
         update_cache: true
       become: true
 
@@ -101,6 +104,23 @@
         proto: tcp
       become: true
 
+    # Port 8000 above stays open on purpose: direct access is the fallback
+    # while the proxy is being verified. Closing it is a separate cleanup
+    # step once Nginx is confirmed working.
+    - name: Allow HTTP through the firewall for the HTTPS redirect
+      community.general.ufw:
+        rule: allow
+        port: "80"
+        proto: tcp
+      become: true
+
+    - name: Allow HTTPS through the firewall
+      community.general.ufw:
+        rule: allow
+        port: "443"
+        proto: tcp
+      become: true
+
     - name: Deny all other inbound traffic by default
       community.general.ufw:
         direction: incoming
@@ -111,6 +131,92 @@
       community.general.ufw:
         state: enabled
       become: true
+
+    # Nginx terminates TLS for the LAN and proxies everything to the
+    # backend container on 127.0.0.1. Set up before the app is cloned and
+    # started so the proxy is already in place the first time the app is
+    # reachable through it.
+    - name: Create the Nginx TLS directory
+      ansible.builtin.file:
+        path: /etc/nginx/ssl
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      become: true
+
+    # creates: makes this a no-op on every re-run -- regenerating the cert
+    # would change the fingerprint the phone has already been told to
+    # trust. Delete the .crt by hand to force a new one.
+    - name: Generate the self-signed TLS certificate
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048
+        -keyout /etc/nginx/ssl/itdeck.key
+        -out /etc/nginx/ssl/itdeck.crt
+        -subj "/CN=itdeck.local"
+      args:
+        creates: /etc/nginx/ssl/itdeck.crt
+      become: true
+
+    - name: Restrict permissions on the TLS private key
+      ansible.builtin.file:
+        path: /etc/nginx/ssl/itdeck.key
+        owner: root
+        group: root
+        mode: "0600"
+      become: true
+
+    - name: Install the IT-Deck Nginx site config
+      ansible.builtin.template:
+        src: templates/itdeck.conf.j2
+        dest: /etc/nginx/sites-available/itdeck
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart nginx
+      become: true
+
+    - name: Enable the IT-Deck Nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/itdeck
+        dest: /etc/nginx/sites-enabled/itdeck
+        state: link
+      notify: Restart nginx
+      become: true
+
+    # Debian's packaged default site also listens on 80 as the default
+    # server -- leaving it enabled would let it answer requests ahead of
+    # the redirect above.
+    - name: Remove the default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart nginx
+      become: true
+
+    # The handler only fires when something above actually changed, so this
+    # is what asserts nginx is up on an otherwise no-op re-run.
+    - name: Ensure the Nginx service is running and enabled
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+      become: true
+
+    # Deliberately not the template module's validate: -- nginx -t -c on a
+    # bare site fragment fails, because the fragment has no http {} wrapper
+    # around it. This checks the assembled config instead.
+    - name: Verify the assembled Nginx config parses
+      ansible.builtin.command: nginx -t
+      changed_when: false
+      become: true
+
+    # Handlers otherwise run at the very end of the play -- after the app
+    # is already up. Flush here so the proxy is actually live before the
+    # app it fronts starts, and so a failure further down can't leave
+    # nginx serving the previous config.
+    - name: Apply any pending Nginx restart now
+      ansible.builtin.meta: flush_handlers
 
     - name: Clone the IT-Deck repo
       ansible.builtin.git:
@@ -147,3 +253,10 @@
         minute: "0"
         hour: "3"
         job: "{{ itdeck_repo_dest }}/backup.sh >> {{ itdeck_repo_dest }}/data/backups/backup.log 2>&1"
+
+  handlers:
+    - name: Restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+      become: true
