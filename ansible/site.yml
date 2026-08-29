@@ -35,6 +35,14 @@
     # runs. Update this and re-run if you change SERVER_PORT.
     itdeck_app_port: 8000
 
+    # Prefix put in front of github.com release-download URLs because
+    # release-assets.githubusercontent.com is unreachable from this
+    # network (TCP connect never completes -- packets silently dropped).
+    # Community GitHub-release proxies like this one go down or change
+    # over time; if it stops working, blank this to "" to go straight to
+    # GitHub again, or swap in another proxy.
+    github_release_proxy: "https://gh-proxy.com/"
+
     # Pinned, never "latest": a floating version means two runs of the same
     # playbook can install different binaries. Bump these by hand. The
     # matching sha256sums.txt from each release is fed to get_url's
@@ -329,10 +337,11 @@
     # download fails here, instead of becoming a service that won't start.
     - name: Download the node_exporter release tarball
       ansible.builtin.get_url:
-        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ itdeck_node_exporter_version }}/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64.tar.gz"
+        url: "{{ github_release_proxy }}https://github.com/prometheus/node_exporter/releases/download/v{{ itdeck_node_exporter_version }}/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64.tar.gz"
         dest: "/tmp/node_exporter-{{ itdeck_node_exporter_version }}.linux-amd64.tar.gz"
-        checksum: "sha256:https://github.com/prometheus/node_exporter/releases/download/v{{ itdeck_node_exporter_version }}/sha256sums.txt"
+        checksum: "sha256:{{ github_release_proxy }}https://github.com/prometheus/node_exporter/releases/download/v{{ itdeck_node_exporter_version }}/sha256sums.txt"
         mode: "0644"
+        timeout: 60
       when: itdeck_node_exporter_install | bool
 
     - name: Unpack the node_exporter release tarball
@@ -398,10 +407,11 @@
 
     - name: Download the Prometheus release tarball
       ansible.builtin.get_url:
-        url: "https://github.com/prometheus/prometheus/releases/download/v{{ itdeck_prometheus_version }}/prometheus-{{ itdeck_prometheus_version }}.linux-amd64.tar.gz"
+        url: "{{ github_release_proxy }}https://github.com/prometheus/prometheus/releases/download/v{{ itdeck_prometheus_version }}/prometheus-{{ itdeck_prometheus_version }}.linux-amd64.tar.gz"
         dest: "/tmp/prometheus-{{ itdeck_prometheus_version }}.linux-amd64.tar.gz"
-        checksum: "sha256:https://github.com/prometheus/prometheus/releases/download/v{{ itdeck_prometheus_version }}/sha256sums.txt"
+        checksum: "sha256:{{ github_release_proxy }}https://github.com/prometheus/prometheus/releases/download/v{{ itdeck_prometheus_version }}/sha256sums.txt"
         mode: "0644"
+        timeout: 60
       when: itdeck_prometheus_install | bool
 
     - name: Unpack the Prometheus release tarball
