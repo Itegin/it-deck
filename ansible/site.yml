@@ -343,6 +343,10 @@
         mode: "0644"
         timeout: 60
       when: itdeck_node_exporter_install | bool
+      register: itdeck_node_exporter_download_result
+      until: itdeck_node_exporter_download_result is succeeded
+      retries: 3
+      delay: 10
 
     - name: Unpack the node_exporter release tarball
       ansible.builtin.unarchive:
@@ -413,6 +417,10 @@
         mode: "0644"
         timeout: 60
       when: itdeck_prometheus_install | bool
+      register: itdeck_prometheus_download_result
+      until: itdeck_prometheus_download_result is succeeded
+      retries: 3
+      delay: 10
 
     - name: Unpack the Prometheus release tarball
       ansible.builtin.unarchive:
