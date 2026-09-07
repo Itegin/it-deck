@@ -15,7 +15,34 @@
   color: inherit;
   text-align: inherit;
 
-  background: var(--tile-color, var(--color-surface));
+  /* Two layers in one shorthand, and the split matters. The gradient
+     becomes background-image; the var() becomes background-color. Every
+     mechanism that colours a tile writes the *colour* longhand only --
+     .state-active/.state-alert's background-color, and updateTileState's
+     inline tile.style.backgroundColor for false_color -- so none of them
+     can touch the image layer. The sheen therefore composes on top of all
+     three colouring paths (default --tile-color, the two state classes,
+     false_color) without any of them needing to know it exists, and
+     without it needing a pseudo-element: ::before is the tile-ok/tile-error
+     ring and ::after is the pending dot, both already spoken for, and there
+     is no third layer available on this box.
+
+     The gradient itself: white at 8% along the top edge, gone by the upper
+     third. Achromatic on purpose -- it must not shift what the tile's
+     colour is saying, only how the surface reads, so it is a cold metal
+     highlight rather than a glow. The 18% midpoint makes the falloff
+     non-linear, which is what stops it looking like a gradient wash. It is
+     static; nothing animates it, and background-image is deliberately
+     absent from the transition list below.
+
+     Held in a custom property because the slider's fill-bar needs the
+     identical gradient (see .tile-slider .fill-bar) -- it inherits this
+     from here, so the sheen is written once and the two can't drift. */
+  --tile-sheen: linear-gradient(180deg,
+                                rgba(255, 255, 255, 0.08) 0%,
+                                rgba(255, 255, 255, 0.03) 18%,
+                                rgba(255, 255, 255, 0) 36%);
+  background: var(--tile-sheen), var(--tile-color, var(--color-surface));
   border-radius: 16px;
   /* Positioning context for .tile-pending's dot. .tile-slider already set
      this for its own fill-bar; hoisting it to every tile changes nothing
@@ -122,6 +149,16 @@
      it reads the same --active-color custom property render.js sets on
      every tile. */
   background-color: var(--active-color, var(--color-active));
+  /* The fill-bar is a positioned child, so it paints above .tile's own
+     background-image and would otherwise punch a flat, sheen-less hole
+     through it -- a slider at 45% showed the highlight stopping dead at
+     the fill edge, and one at 100% had no sheen at all. It spans the
+     tile's full height (inset: 0), so repeating the inherited gradient
+     here lands it in exactly the same place and the highlight reads as
+     one unbroken edge across the tile. Set as the background-image
+     longhand, not the shorthand, so it leaves background-color above
+     alone. */
+  background-image: var(--tile-sheen);
   transition: width 200ms ease;
   pointer-events: none;
   z-index: 0;
@@ -146,10 +183,11 @@
    composites the whole subtree -- including the label -- so opacity: 0.4
    dragged the label down to 3.34:1 against the tile it sits on: illegible,
    not de-emphasised. An inset box-shadow paints above the background and
-   below the content, so the same #0B0D10-at-60% wash lands on the tile's
-   background while the label keeps full strength above it (16.8:1 on the
-   default #1A1F26 tile, and 4.67:1 in the worst case of a near-white
-   item.color -- still over AA). 0 blur, so no filter/blur cost either. */
+   below the content, so the same --color-scrim near-black wash lands on
+   the tile's background while the label keeps full strength above it
+   (16.8:1 on the default #1A1F26 tile, and 4.67:1 in the worst case of a
+   near-white item.color -- still over AA). 0 blur, so no filter/blur cost
+   either. */
 .tile.tile-offline {
   filter: grayscale(1);
   pointer-events: none;

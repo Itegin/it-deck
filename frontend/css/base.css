@@ -1,8 +1,10 @@
 /* The project's palette, declared once. Every value here was already in
    use as a literal somewhere in these files -- this block introduces no new
    colour, it just gives each role one source of truth instead of the same
-   hex repeated (and, for #1A1F26/#F1F5F9/#0B0D10, re-cased) across five
-   files. Named for the role, so a value can change without the name lying.
+   hex repeated (and, for #1A1F26/#F1F5F9, re-cased) across five files.
+   Named for the role, so a value can change without the name lying --
+   --color-bg has since exercised exactly that and moved to pure black, so
+   it is now the one value in this block that did not predate it.
 
    base.css is linked first on both pages (index.html and studio.html), so
    these are in scope for grid/button/contextmenu/toast.css and for
@@ -18,8 +20,16 @@
   --color-accent: #8e5ff5;
 
   /* The page itself, and the recessed wells of Studio's inputs/selects
-     (they sit on --color-surface and read as sunk into it). */
-  --color-bg: #0B0D10;
+     (they sit on --color-surface and read as sunk into it).
+
+     Pure black rather than the near-black it started as: the Dashboard's
+     tiles now carry a faint white sheen along their top edge (button.css),
+     and a highlight only reads as an edge if the ground behind it has
+     nothing in it. This token is shared, so Studio goes black too, and its
+     field wells with it -- both were checked and neither loses contrast:
+     --color-text on this goes from 17.8:1 to 19.2:1, i.e. slightly better,
+     and the wells read as deeper against the --color-surface form. */
+  --color-bg: #000000;
 
   /* One step up from the page: the context-menu sheet, the toast, Studio's
      form and its buttons, and a tile that carries no colour of its own. */
@@ -47,12 +57,20 @@
      destructive control. */
   --color-alert: #dc2626;
 
-  /* --color-bg at 60%, used as a wash: the context-menu scrim and
+  /* A near-black at 60%, used as a wash: the context-menu scrim and
      .tile-offline's inset dim. Declared whole rather than composed from
      --color-bg, because rgba() cannot take a hex custom property as its
      first argument and the alternatives (a channel-triplet token, or
      color-mix) would either split the source of truth in two or raise the
-     browser floor for no visible gain. */
+     browser floor for no visible gain.
+
+     This *was* --color-bg at 60%. It no longer is, and that is deliberate:
+     when --color-bg went to pure black this kept rgb(11,13,16), because it
+     is a dimming wash laid over tiles and menus, not the page ground.
+     Taking it to pure black would change how dead an offline tile looks --
+     a different decision from the one that blackened the page, and not one
+     that was asked for. The two values are simply unrelated now; don't
+     "fix" this one to match. */
   --color-scrim: rgba(11, 13, 16, 0.6);
 }
 
