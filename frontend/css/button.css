@@ -1,4 +1,20 @@
 .tile {
+  /* Action tiles are real <button>s (see render.js), so these undo the UA
+     button styling that would otherwise make them differ from the widget and
+     slider tiles, which are still divs. Measured against the div, not
+     guessed: a bare button here computes to a 2px border, 1px padding,
+     Arial 13.33px and black text, against the div's 0/0/-apple-system 16px
+     /#F1F5F9. font/color: inherit rather than restating values keeps this a
+     reset instead of a second copy of base.css's typography. */
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+
   background: var(--tile-color, #1A1F26);
   border-radius: 16px;
   /* Positioning context for .tile-pending's dot. .tile-slider already set
@@ -152,13 +168,14 @@
    acting on the tile) rather than .state-active/.state-alert's (the item's
    own confirmed device state), and are named to match.
 
-   None of the three may touch background-color, box-shadow or filter, and
-   that constraint is what dictates their shape: updateTileState writes
-   background-color *inline* for false_color, which beats any class rule
-   regardless of specificity; box-shadow is .tile-offline's dim, which
-   co-occurs with these; and filter is shared by :active and .tile-offline.
-   So the pending dot gets its own pseudo-element layer, and the two settled
-   phases use an inset outline, which costs no layout at all. */
+   None of the three may touch background-color, box-shadow, filter or
+   outline, and that constraint is what dictates their shape: updateTileState
+   writes background-color *inline* for false_color, which beats any class
+   rule regardless of specificity; box-shadow is .tile-offline's dim, which
+   co-occurs with these; filter is shared by :active and .tile-offline; and
+   outline belongs to :focus-visible alone. So all three live on their own
+   pseudo-element layer -- the dot on ::after, the two settled rings on
+   ::before -- which also costs no layout. */
 .tile-pending::after {
   content: "";
   position: absolute;
@@ -187,20 +204,39 @@
   }
 }
 
+/* Both settled phases draw their ring on ::before, not on outline, and that
+   is now a standing rule: outline is reserved exclusively for :focus-visible.
+   An element has exactly one outline, so when these used it, a focused tile
+   that was also erroring rendered only whichever rule won the cascade -- and
+   at equal specificity (0,2,0) that was these, since button.css is linked
+   after base.css. The keyboard user lost the focus ring precisely when a
+   command had just failed. Raising specificity would only invert the loss.
+   ::after is already the pending dot, so ::before is the free layer.
+
+   inset:0 + border-radius:inherit traces the tile exactly; pointer-events:none
+   keeps it clear of the tap surface; z-index 3 puts it above the fill-bar (0),
+   the label/icon (1) and the pending dot (2). */
+.tile.tile-ok::before,
+.tile.tile-error::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid transparent;
+  pointer-events: none;
+  z-index: 3;
+}
+
 /* Deliberately rare: render.js applies this only to tiles with no
    data-state-key. A tile that reports real state confirms itself when
    poller.py's next tick lands and the colour changes for real -- this exists
    for Screenshot and launch_app, which never get that. */
-.tile.tile-ok {
-  outline: 2px solid var(--active-color, #0d9488);
-  outline-offset: -2px;
+.tile.tile-ok::before {
+  border-color: var(--active-color, #0d9488);
 }
 
-/* Last of the three so it wins should an error ever land on a tile still
-   showing another phase. The offset is negative on purpose: it keeps the
-   ring inside the tile and visually distinct from base.css's accent focus
-   ring, which sits outside on a positive offset. */
-.tile.tile-error {
-  outline: 2px solid var(--alert-color, #dc2626);
-  outline-offset: -2px;
+/* Last of the two, so it wins should an error land on a tile still showing
+   the success ring. */
+.tile.tile-error::before {
+  border-color: var(--alert-color, #dc2626);
 }

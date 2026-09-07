@@ -47,7 +47,21 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   grid.innerHTML = "";
 
   for (const item of workspace.items) {
-    const tile = document.createElement("div");
+    const isSlider = item.kind === "action" && item.width >= 2 && item.type === "audio_volume_set";
+    // A real <button> for anything you can actually press, so focusability,
+    // the button role and Enter/Space activation come from the browser rather
+    // than being reimplemented with tabindex + role + keydown. Sliders stay
+    // divs (a drag surface is not a button, and role=slider with arrow-key
+    // stepping is a separate task), and so do widget tiles, which have no
+    // listener at all -- making them focusable would put empty stops in the
+    // tab order.
+    const isButton = item.kind === "action" && !isSlider;
+    const tile = document.createElement(isButton ? "button" : "div");
+    if (isButton) {
+      // Without this a <button> inside a <form> would default to submit.
+      // There is no form here, but the default is never what a tile wants.
+      tile.type = "button";
+    }
     tile.className = "tile";
     tile.dataset.itemId = item.id;
     tile.dataset.kind = item.kind;
@@ -85,8 +99,6 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
     tile.style.setProperty("--active-color", (item.params && item.params.active_color) || "#0d9488");
     tile.style.setProperty("--alert-color", (item.params && item.params.alert_color) || "#dc2626");
 
-    const isSlider = item.kind === "action" && item.width >= 2 && item.type === "audio_volume_set";
-
     if (isSlider) {
       tile.classList.add("tile-slider");
       const fillBar = document.createElement("div");
@@ -114,6 +126,17 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
       attachSliderHandlers(tile, item, onSliderChange);
     } else if (item.kind === "action") {
       attachLongPress(tile, () => onTileLongPress(item), () => onTileClick(item.id));
+      // Keyboard activation, riding the button's own Enter/Space -> click
+      // behaviour so there is no keydown handling here at all. The guard is
+      // load-bearing: longpress already fires the tap from pointerup, and a
+      // mouse click fires pointerup *and* click, so an unguarded listener
+      // would execute the command twice per press. A click synthesised from
+      // the keyboard carries detail === 0; a real mouse click carries 1.
+      tile.addEventListener("click", (event) => {
+        if (event.detail === 0) {
+          onTileClick(item.id);
+        }
+      });
     }
 
     grid.appendChild(tile);
@@ -227,7 +250,11 @@ export function renderWorkspaceSelector(workspaces, onSelect) {
   grid.innerHTML = "";
 
   workspaces.forEach((workspace, index) => {
-    const tile = document.createElement("div");
+    // Every selector tile is actionable, and this screen was already wired on
+    // "click" rather than pointerup -- so a <button> gets Enter/Space for free
+    // with no extra handler and no double-fire to guard against.
+    const tile = document.createElement("button");
+    tile.type = "button";
     tile.className = "tile";
     tile.style.gridColumn = "1 / span 1";
     tile.style.gridRow = `${index + 1} / span 1`;

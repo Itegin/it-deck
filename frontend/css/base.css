@@ -68,6 +68,17 @@ body {
   border-radius: 2px;
 }
 
+/* Same convention as the header links above -- 2px accent ring, positive
+   offset so it sits outside the shape rather than altering it. Tiles are real
+   <button>s, so this needs no tabindex to be reachable. outline is kept free
+   for exactly this: button.css's .tile-ok/.tile-error draw their rings on
+   ::before specifically so a focused tile can show both at once. Don't put a
+   tile state back on outline -- it silently costs the focus ring. */
+.tile:focus-visible {
+  outline: 2px solid #8e5ff5;
+  outline-offset: 2px;
+}
+
 /* Lives here rather than in each stylesheet so there's one place to look
    for "what motion does this app suppress". base.css is linked *first*
    (see index.html), so a same-specificity override would lose the cascade
