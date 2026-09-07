@@ -38,8 +38,24 @@ const ICONS = {
   camera: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z"/><circle cx="12" cy="13" r="4"/></svg>`,
 };
 
+// The h1 is the only thing on the deck that says which PC it is pointing at,
+// so it tracks whatever is actually on screen: the workspace's name when a
+// deck is loaded, and the bare app name on the selector, which belongs to no
+// single workspace. Both callers live in this module because DOM writes do --
+// which also means every path that shows a deck (saved workspace, ?workspace=
+// param, picking one in the selector, a Studio edit re-render) and every path
+// that shows the selector (first run, "Switch") is covered without app.js
+// having to remember to call anything.
+function setHeaderWorkspace(name) {
+  // Falls back to the bare name rather than printing "IT-Deck undefined" if a
+  // workspace row ever has no name.
+  document.getElementById("workspace-name").textContent = name ? `IT-Deck ${name}` : "IT-Deck";
+}
+
 export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLongPress) {
   const grid = document.getElementById("grid");
+
+  setHeaderWorkspace(workspace.name);
 
   grid.style.setProperty("--cols", workspace.grid_cols);
   grid.style.setProperty("--rows", workspace.grid_rows);
@@ -243,6 +259,11 @@ export function updateTileState(stateData) {
 // dashboard uses.
 export function renderWorkspaceSelector(workspaces, onSelect) {
   const grid = document.getElementById("grid");
+
+  // Explicitly cleared, not just left alone: arriving here from "Switch" means
+  // a workspace name is already in the heading, and keeping it would label the
+  // picker with the deck the user just left.
+  setHeaderWorkspace(null);
 
   grid.style.setProperty("--cols", 1);
   grid.style.setProperty("--rows", workspaces.length);
