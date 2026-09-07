@@ -36,44 +36,7 @@ const ICONS = {
   headphones: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3Z"/></svg>`,
   "audio-switch": `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`,
   camera: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z"/><circle cx="12" cy="13" r="4"/></svg>`,
-  // db.py's fixup_vpn_item() has seeded items with icon='shield' since it
-  // was written; there was simply never an entry here, so the VPN tile
-  // rendered with no .icon at all. That was survivable while a tile was a
-  // block of its own colour, but the icon now sits in the badge that carries
-  // the tile's state -- a VPN tile with no badge is a tile with no visible
-  // on/off signal, so the missing key had to be filled, not routed around.
-  shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>`,
 };
-
-// '#2a2f38' is the item table's DEFAULT for color, and Studio's "Color" and
-// "Off color" pickers both open on it -- it is what a row that was never
-// given a colour of its own holds. It is also byte-for-byte --color-border.
-//
-// That was harmless while a tile's colour was its whole card: a #2a2f38 card
-// simply read as the plain surface. It is not harmless now that the colour
-// paints the icon badge instead -- an icon in it sits at 1.2:1 against the
-// --color-surface card behind it, which is not a dim badge, it is no badge.
-// Four seeded rows carry it (Terminal, Headphones, Audio Switch, Screenshot).
-//
-// So it is treated as "unset" here and the property is left off the element,
-// which lets button.css's own fallback (--color-text-muted) paint a legible
-// neutral badge. The cost is that an item deliberately set to this exact hex
-// in Studio gets the neutral badge too -- the right trade, given the value
-// means "no colour of its own" everywhere else in this codebase.
-//
-// The comparison can stay this exact because both writers are constrained:
-// db.py seeds the lowercase literal, and Studio's fields are
-// <input type="color">, whose value the HTML spec requires to be a lowercase
-// #rrggbb simple colour. toLowerCase/trim only guard hand-edited DB rows.
-const UNSET_COLOR = "#2a2f38";
-
-function tileColor(value) {
-  if (!value) {
-    return null;
-  }
-  const normalized = String(value).trim().toLowerCase();
-  return normalized === UNSET_COLOR ? null : normalized;
-}
 
 // The h1 is the only thing on the deck that says which PC it is pointing at,
 // so it tracks whatever is actually on screen: the workspace's name when a
@@ -135,31 +98,15 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
     // coerced to strings, so `tile.dataset.falseColor = null` would
     // actually store the truthy string "null", not nothing, and later
     // falsy-checks on it would misfire.
-    //
-    // Run through tileColor() for the same reason item.color is: Studio's
-    // "Off color" picker opens on the very same #2a2f38 default, so a row
-    // saved without touching it would otherwise pin the badge to an
-    // invisible colour on the false side specifically. Falling through to
-    // item.color (and then to --color-text-muted) is the honest behaviour
-    // for "no off-colour chosen".
-    const falseColor = item.params && tileColor(item.params.false_color);
-    if (falseColor) {
-      tile.dataset.falseColor = falseColor;
+    if (item.params && item.params.false_color) {
+      tile.dataset.falseColor = item.params.false_color;
     } else {
       delete tile.dataset.falseColor;
     }
 
     tile.style.gridColumn = `${item.col + 1} / span ${item.width}`;
     tile.style.gridRow = `${item.row + 1} / span ${item.height}`;
-    // --tile-color has exactly one reader now: button.css derives
-    // --tile-state-color from it, so this is the icon badge's colour in the
-    // default state rather than the whole card's fill. See tileColor().
-    const color = tileColor(item.color);
-    if (color) {
-      tile.style.setProperty("--tile-color", color);
-    } else {
-      tile.style.removeProperty("--tile-color");
-    }
+    tile.style.setProperty("--tile-color", item.color);
     // Per-item active/alert theming -- optional params keys, falling back
     // to the original hardcoded teal/red so untouched items render
     // identically to before this existed. Set on every tile (not just
@@ -290,22 +237,17 @@ export function updateTileState(stateData) {
       const isTrue = Boolean(value);
       tile.classList.toggle(activeClass, isTrue);
 
-      // false_color is written as an inline custom property, which beats any
-      // stylesheet rule (including .state-active/.state-alert's own
-      // --tile-state-color) regardless of specificity -- so on the true side
-      // it must be removed again, or a stale false-state color would
-      // permanently win over the class-based one from here on.
-      //
-      // It sets --tile-state-color, not backgroundColor: a tile's card is a
-      // flat --color-surface now and the state color lives in the icon badge
-      // (see button.css). An inline background-color left over from the old
-      // shape would out-rank that surface and repaint the whole card.
+      // false_color is an inline style, which beats any stylesheet rule
+      // (including .state-active/.state-alert's class-based
+      // --active-color/--alert-color) regardless of specificity -- so on
+      // the true side it must be cleared back to "", or a stale false-state
+      // color would permanently win over the class-based one from here on.
       if (isTrue) {
-        tile.style.removeProperty("--tile-state-color");
+        tile.style.backgroundColor = "";
       } else if (tile.dataset.falseColor) {
-        tile.style.setProperty("--tile-state-color", tile.dataset.falseColor);
+        tile.style.backgroundColor = tile.dataset.falseColor;
       } else {
-        tile.style.removeProperty("--tile-state-color"); // falls back to item.color via --tile-color
+        tile.style.backgroundColor = ""; // falls back to item.color via --tile-color
       }
     }
   }

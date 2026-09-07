@@ -22,31 +22,23 @@
   /* The page itself, and the recessed wells of Studio's inputs/selects
      (they sit on --color-surface and read as sunk into it).
 
-     Pure black rather than the near-black it started as. The original reason
-     was the faint white sheen the Dashboard's tiles used to carry along
-     their top edge -- a highlight only reads as an edge if the ground behind
-     it has nothing in it. That sheen is gone (tiles are flat --color-surface
-     cards with a --color-border hairline now), but the value stays: the
-     hairline is the edge doing that job today, and it separates from the
-     page more cleanly on black than on a near-black a few points off it.
-     This token is shared, so Studio is black too, and its field wells with
-     it -- both were checked and neither loses contrast: --color-text on this
-     goes from 17.8:1 to 19.2:1, i.e. slightly better, and the wells read as
-     deeper against the --color-surface form. */
+     Pure black rather than the near-black it started as: the Dashboard's
+     tiles now carry a faint white sheen along their top edge (button.css),
+     and a highlight only reads as an edge if the ground behind it has
+     nothing in it. This token is shared, so Studio goes black too, and its
+     field wells with it -- both were checked and neither loses contrast:
+     --color-text on this goes from 17.8:1 to 19.2:1, i.e. slightly better,
+     and the wells read as deeper against the --color-surface form. */
   --color-bg: #000000;
 
   /* One step up from the page: the context-menu sheet, the toast, Studio's
-     form and its buttons, and -- since the tile restyle -- the card of every
-     Dashboard tile, not just the ones that carried no colour of their own.
-     An item's own colour did not disappear with that change; it moved into
-     the tile's icon badge (see button.css's --tile-state-color). */
+     form and its buttons, and a tile that carries no colour of its own. */
   --color-surface: #1A1F26;
 
   /* Hairlines: table rows, form and button borders, context-menu row
-     separators, the Studio group headings' rule, and the 1px edge around
-     every Dashboard tile. Also the hover fill for Studio's buttons -- the
-     same tone reads as a lift there rather than a line. Genuinely a
-     different colour from --color-surface, not a
+     separators, the Studio group headings' rule. Also the hover fill for
+     Studio's buttons -- the same tone reads as a lift there rather than a
+     line. Genuinely a different colour from --color-surface, not a
      re-casing of it: rgb(42,47,56) against rgb(26,31,38). */
   --color-border: #2a2f38;
 
