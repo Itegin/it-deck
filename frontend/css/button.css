@@ -5,7 +5,9 @@
      guessed: a bare button here computes to a 2px border, 1px padding,
      Arial 13.33px and black text, against the div's 0/0/-apple-system 16px
      /#F1F5F9. font/color: inherit rather than restating values keeps this a
-     reset instead of a second copy of base.css's typography. */
+     reset instead of a second copy of base.css's typography. The border is
+     re-declared below rather than left at 0 -- the card now carries a real
+     hairline, so this line only exists to clear the UA's 2px outset one. */
   appearance: none;
   -webkit-appearance: none;
   border: 0;
@@ -15,35 +17,40 @@
   color: inherit;
   text-align: inherit;
 
-  /* Two layers in one shorthand, and the split matters. The gradient
-     becomes background-image; the var() becomes background-color. Every
-     mechanism that colours a tile writes the *colour* longhand only --
-     .state-active/.state-alert's background-color, and updateTileState's
-     inline tile.style.backgroundColor for false_color -- so none of them
-     can touch the image layer. The sheen therefore composes on top of all
-     three colouring paths (default --tile-color, the two state classes,
-     false_color) without any of them needing to know it exists, and
-     without it needing a pseudo-element: ::before is the tile-ok/tile-error
-     ring and ::after is the pending dot, both already spoken for, and there
-     is no third layer available on this box.
+  /* The one place a tile's state colour is resolved. Every state mechanism
+     writes *this* and nothing else, so the badge (.icon below) has a single
+     source to read and cannot fall out of sync with whatever painted the
+     tile last:
 
-     The gradient itself: white at 8% along the top edge, gone by the upper
-     third. Achromatic on purpose -- it must not shift what the tile's
-     colour is saying, only how the surface reads, so it is a cold metal
-     highlight rather than a glow. The 18% midpoint makes the falloff
-     non-linear, which is what stops it looking like a gradient wash. It is
-     static; nothing animates it, and background-image is deliberately
-     absent from the transition list below.
+       default      this rule           -> --tile-color, i.e. item.color
+       active       .state-active       -> --active-color
+       alert        .state-alert        -> --alert-color
+       false_color  inline, render.js   -> item.params.false_color
 
-     Held in a custom property because the slider's fill-bar needs the
-     identical gradient (see .tile-slider .fill-bar) -- it inherits this
-     from here, so the sheen is written once and the two can't drift. */
-  --tile-sheen: linear-gradient(180deg,
-                                rgba(255, 255, 255, 0.08) 0%,
-                                rgba(255, 255, 255, 0.03) 18%,
-                                rgba(255, 255, 255, 0) 36%);
-  background: var(--tile-sheen), var(--tile-color, var(--color-surface));
-  border-radius: 16px;
+     The inline write wins over the two class rules regardless of
+     specificity, which is exactly the ordering the false side needs -- and
+     is why updateTileState must removeProperty() it again on the true side
+     rather than just letting the class take over. That mirrors the
+     background-color clearing it used to do, one property along.
+
+     Declared on .tile, not on .icon, on purpose: it is only a value here.
+     The `color` that actually paints anything is set on .icon alone, so
+     .tile-pending's currentColor dot and the label keep the light-on-dark
+     colour they have always had. */
+  --tile-state-color: var(--tile-color, var(--color-text-muted));
+
+  /* Flat dark card: one surface tone for every tile, one hairline a step
+     lighter than it. No gradient, no shadow -- the tile's own colour now
+     lives in the icon badge instead of flooding the whole card, so the card
+     itself is deliberately quiet and identical everywhere.
+
+     --color-surface and --color-border are base.css's existing tokens, used
+     here for exactly the roles they were named for ("one step up from the
+     page" and "hairlines"); this restyle needed no new colour. */
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 8px;
   /* Positioning context for .tile-pending's dot. .tile-slider already set
      this for its own fill-bar; hoisting it to every tile changes nothing
      there and is what lets the dot be absolutely placed on any tile. */
@@ -68,12 +75,11 @@
 }
 
 .tile:active {
-  /* brightness(1.15) uses the tile's own current color -- whatever
-     state it's in (idle, state-active teal, state-alert red) -- so it
-     composes with those classes instead of overriding background-color.
-     Kept in the same block as the Day 1 scale transform so both press
-     effects (shrink + brighten) apply together, not as two competing
-     :active rules. */
+  /* brightness(1.15) uses the tile's own current rendering -- card, badge
+     tint and icon together -- so it composes with the state classes instead
+     of overriding any colour. Kept in the same block as the Day 1 scale
+     transform so both press effects (shrink + brighten) apply together, not
+     as two competing :active rules. */
   transform: scale(0.95);
   filter: brightness(1.15);
 }
@@ -82,6 +88,10 @@
   font-size: 17px;
   font-size: clamp(13px, 11cqmin, 22px);
   font-weight: 600;
+  /* Secondary rather than full-strength text: the badge is the loud element
+     on the card now, and a label at --color-text competed with it. 6.5:1 on
+     --color-surface, so this is a de-emphasis, not a legibility trade. */
+  color: var(--color-text-muted);
   text-align: center;
   touch-action: manipulation;
   user-select: none;
@@ -90,12 +100,17 @@
 }
 
 /* Secondary text below .label -- e.g. the Audio Switch tile's current
-   device name, pushed in via updateTileState for string-valued state. */
+   device name, pushed in via updateTileState for string-valued state.
+   Moved onto the same muted token as .label (with a slight opacity step
+   rather than a second colour) because the label is no longer full-strength
+   white: at its old 0.65 of --color-text this read *brighter* than the
+   label above it and inverted the hierarchy. 4.67:1, still over AA. */
 .tile .subtitle {
   font-size: 12px;
   font-size: clamp(9px, 8cqmin, 15px);
   font-weight: 400;
-  opacity: 0.65;
+  color: var(--color-text-muted);
+  opacity: 0.8;
   text-align: center;
   margin-top: 2px;
   touch-action: manipulation;
@@ -104,21 +119,69 @@
   -webkit-touch-callout: none;
 }
 
+/* The icon badge. render.js already wraps every icon in this div, so the
+   badge needed no markup change -- the wrapper stopped being a bare sizing
+   box and became the rounded plate itself.
+
+   Centred above the label rather than pinned top-left: a dashboard tile is
+   about 110x140 on an iPhone X (3 columns, 5 rows, 10px gaps), i.e. taller
+   than it is wide with no room for a text column beside a 42px badge. The
+   existing centred flex column is what those proportions want.
+
+   Sized in cqmin like the label and subtitle already are, so it tracks the
+   tile rather than sitting at one fixed size across a 1-wide tile and the
+   2-wide Volume slider. On the phone this lands at ~42px, and at the top of
+   the clamp (44px) on wider tiles.
+
+   `color` is set here and only here -- see --tile-state-color above. It
+   feeds two things at once: the translucent plate on ::before, and the
+   icon's own stroke, which is stroke="currentColor" in every ICONS entry. */
 .tile .icon {
-  width: 28px;
-  height: 28px;
-  width: clamp(20px, 18cqmin, 42px);
-  height: clamp(20px, 18cqmin, 42px);
-  margin-bottom: 6px;
+  width: 42px;
+  height: 42px;
+  width: clamp(34px, 38cqmin, 44px);
+  height: clamp(34px, 38cqmin, 44px);
+  flex: none;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  color: var(--tile-state-color);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The plate: the state colour at 18%, laid under the icon.
+
+   A pseudo-element with opacity rather than a translucent background-color,
+   because the colour arrives as an opaque hex in a custom property and
+   rgba() cannot take one as its first argument. color-mix() could, and is
+   supported on the iOS 16.7 floor, but this needs no such floor at all and
+   an opacity on an empty box costs nothing.
+
+   It does not collide with the tile's own pseudo-elements: those are
+   .tile::before (the ok/error ring) and .tile::after (the pending dot), on a
+   different element. .icon had both of its own free. */
+.tile .icon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0.18;
+  pointer-events: none;
 }
 
 .tile .icon svg {
-  width: 100%;
-  height: 100%;
+  width: 58%;
+  height: 58%;
+  /* Above ::before, which is a positioned sibling in the same stacking
+     context and would otherwise paint over an unpositioned inline child. */
+  position: relative;
 }
 
 .tile.state-active {
-  background-color: var(--active-color, var(--color-active));
+  --tile-state-color: var(--active-color, var(--color-active));
 }
 
 /* Which class an item uses (teal "active" vs red "alert") is decided per
@@ -127,13 +190,15 @@
    tile from item.params.active_color/alert_color (falls back to these same
    teal/red defaults if unset). */
 .tile.state-alert {
-  background-color: var(--alert-color, var(--color-alert));
+  --tile-state-color: var(--alert-color, var(--color-alert));
 }
 
 .tile-slider {
   position: relative;
   /* Clips the fill-bar to the tile's own rounded corners instead of giving
-     the bar's moving right edge its own (visually odd) rounded corners. */
+     the bar's moving right edge its own (visually odd) rounded corners.
+     It clips at the padding box, so the card's 1px border stays visible
+     around a fill at 100%. */
   overflow: hidden;
   /* Without this, iOS treats a horizontal drag on the tile as a page pan
      and pointermove never fires with useful deltas. */
@@ -147,18 +212,10 @@
   /* Sliders never toggle .state-active (they report a number, not a
      boolean), but the fill still needs to be themeable the same way --
      it reads the same --active-color custom property render.js sets on
-     every tile. */
+     every tile. Flat, like the card: the tile-wide sheen this used to
+     repeat is gone, so there is no longer a gradient for it to line up
+     with. */
   background-color: var(--active-color, var(--color-active));
-  /* The fill-bar is a positioned child, so it paints above .tile's own
-     background-image and would otherwise punch a flat, sheen-less hole
-     through it -- a slider at 45% showed the highlight stopping dead at
-     the fill edge, and one at 100% had no sheen at all. It spans the
-     tile's full height (inset: 0), so repeating the inherited gradient
-     here lands it in exactly the same place and the highlight reads as
-     one unbroken edge across the tile. Set as the background-image
-     longhand, not the shorthand, so it leaves background-color above
-     alone. */
-  background-image: var(--tile-sheen);
   transition: width 200ms ease;
   pointer-events: none;
   z-index: 0;
@@ -174,31 +231,36 @@
 }
 
 /* Offline means "we don't know", not "it's inactive" -- it must never look
-   like a confident state. grayscale(1) desaturates whatever state-active
-   or state-alert color is currently applied (so the override doesn't need
-   to out-specificity those classes' background-color), and pointer-events
-   keeps the tile functionally inert.
+   like a confident state. grayscale(1) desaturates whatever state colour is
+   currently applied, badge included (so the override doesn't need to
+   out-specificity .state-active/.state-alert), and pointer-events keeps the
+   tile functionally inert.
 
    The dim is an inset shadow, not opacity, on purpose. Group opacity
    composites the whole subtree -- including the label -- so opacity: 0.4
    dragged the label down to 3.34:1 against the tile it sits on: illegible,
    not de-emphasised. An inset box-shadow paints above the background and
    below the content, so the same --color-scrim near-black wash lands on
-   the tile's background while the label keeps full strength above it
-   (16.8:1 on the default #1A1F26 tile, and 4.67:1 in the worst case of a
-   near-white item.color -- still over AA). 0 blur, so no filter/blur cost
-   either. */
+   the tile's background while the label keeps full strength above it.
+   0 blur, so no filter/blur cost either. */
 .tile.tile-offline {
   filter: grayscale(1);
   pointer-events: none;
   box-shadow: inset 0 0 0 999px var(--color-scrim);
 }
 
-/* The fill-bar is a child, so it paints above the inset dim instead of
-   under it -- an offline slider would otherwise show its teal fill at full
-   strength. It carries no text, so dimming it directly is safe here. */
+/* Two children that paint above the inset dim instead of under it, so each
+   needs dimming directly. Neither carries text, so a plain opacity is safe
+   here in a way it is not on the tile as a whole: an offline slider would
+   otherwise show its teal fill at full strength, and the badge -- now the
+   most saturated thing on any tile -- would keep announcing a state we no
+   longer know to be true. */
 .tile.tile-offline .fill-bar {
   opacity: 0.4;
+}
+
+.tile.tile-offline .icon {
+  opacity: 0.45;
 }
 
 /* Command feedback: three tile modifiers driven by ws.js's in-flight
@@ -207,13 +269,11 @@
    own confirmed device state), and are named to match.
 
    None of the three may touch background-color, box-shadow, filter or
-   outline, and that constraint is what dictates their shape: updateTileState
-   writes background-color *inline* for false_color, which beats any class
-   rule regardless of specificity; box-shadow is .tile-offline's dim, which
-   co-occurs with these; filter is shared by :active and .tile-offline; and
-   outline belongs to :focus-visible alone. So all three live on their own
-   pseudo-element layer -- the dot on ::after, the two settled rings on
-   ::before -- which also costs no layout. */
+   outline, and that constraint is what dictates their shape: box-shadow is
+   .tile-offline's dim, which co-occurs with these; filter is shared by
+   :active and .tile-offline; and outline belongs to :focus-visible alone.
+   So all three live on their own pseudo-element layer -- the dot on ::after,
+   the two settled rings on ::before -- which also costs no layout. */
 .tile-pending::after {
   content: "";
   position: absolute;
@@ -223,7 +283,10 @@
   height: 8px;
   border-radius: 50%;
   /* currentColor, so the dot inherits the same light-on-dark assumption the
-     label and icon already make instead of introducing a new colour. */
+     label already makes instead of introducing a new colour. Note this is
+     .tile's currentColor, not the badge's: --tile-state-color is a value on
+     .tile but `color` is only ever set on .icon, so the state colour cannot
+     leak into this dot. */
   background: currentColor;
   opacity: 0.85;
   /* Above .tile-slider .fill-bar (z-index 0) and the label/icon (z-index 1),
@@ -251,14 +314,18 @@
    command had just failed. Raising specificity would only invert the loss.
    ::after is already the pending dot, so ::before is the free layer.
 
-   inset:0 + border-radius:inherit traces the tile exactly; pointer-events:none
-   keeps it clear of the tap surface; z-index 3 puts it above the fill-bar (0),
-   the label/icon (1) and the pending dot (2). */
+   inset:-1px, not 0: an absolutely positioned box resolves inset against the
+   *padding* box, so now that .tile carries a 1px border the ring would sit
+   one pixel inside it and read as a double edge against the hairline. -1px
+   puts it back on the border box, which is also where border-radius:inherit
+   measures from, so the two trace the same curve. pointer-events:none keeps
+   it clear of the tap surface; z-index 3 puts it above the fill-bar (0), the
+   label/icon (1) and the pending dot (2). */
 .tile.tile-ok::before,
 .tile.tile-error::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -1px;
   border-radius: inherit;
   border: 2px solid transparent;
   pointer-events: none;
