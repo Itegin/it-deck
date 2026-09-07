@@ -386,6 +386,19 @@ function openForm(item) {
   }
 
   form.hidden = false;
+  // The form renders below the table, so on a workspace with a full item list
+  // it can open well past the bottom of the viewport -- Edit then looks like
+  // it did nothing. Both paths land here (edit and "+ New Item"), so one call
+  // covers them. Must follow form.hidden = false: scrollIntoView on a
+  // display:none element has nothing to scroll to.
+  //
+  // "auto" for anyone who has asked their OS for reduced motion. A smooth
+  // scroll is a JS-driven animation, so base.css's reduced-motion block can't
+  // suppress it the way it does the dashboard's transitions, and studio.html
+  // sets no scroll-behavior for it to inherit -- this is the only place the
+  // preference can be honoured.
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  form.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "start" });
   // After form.hidden = false, so "Loading devices…" lands on a form the
   // user can already see.
   syncDeviceFields(savedDevices);
