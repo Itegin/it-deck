@@ -79,7 +79,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .tile,
   .tile-slider .fill-bar,
-  .context-overlay {
+  .context-overlay,
+  .toast {
     transition: none !important;
+  }
+
+  /* transition:none above does not reach this: the pending dot pulses via a
+     keyframe animation, a separate property. Suppressed rather than hidden --
+     the dot is the only thing saying a command is still in flight, so it
+     stays visible at its resting opacity and simply stops moving. */
+  .tile-pending::after {
+    animation: none !important;
   }
 }

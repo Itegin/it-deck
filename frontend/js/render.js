@@ -2,6 +2,27 @@ import { attachLongPress } from "./longpress.js";
 
 const SLIDER_THROTTLE_MS = 100;
 
+// How long a tap may be outstanding before the pending dot appears. A local
+// mute toggle resolves in tens of milliseconds; flashing an indicator for
+// 30ms reads as a glitch rather than as feedback, so the dot is reserved for
+// commands slow enough to actually leave someone waiting.
+const PENDING_DELAY_MS = 150;
+
+// A flash, not a state -- and only stateless tiles get one at all. See
+// setTileCommandState.
+const OK_LINGER_MS = 600;
+
+// Outlives the toast slightly, so "which tile" is still on screen for a
+// moment after "why" has gone. It has to be a timer: stateless tiles
+// (Screenshot, launch_app) never receive a state update that could clear it,
+// so a purely state-driven clear would strand them showing red forever.
+const ERROR_LINGER_MS = 4000;
+
+// item_id -> the one outstanding timeout handle for that tile. One slot per
+// item because the three phases are mutually exclusive: entering any phase
+// cancels whatever the previous one had scheduled.
+const commandTimers = new Map();
+
 // Literal, module-authored SVG markup only -- never build a key from
 // item.icon and interpolate untrusted content into innerHTML. Missing keys
 // render no icon rather than falling back to any kind of text/placeholder.
@@ -149,6 +170,12 @@ export function updateTileState(stateData) {
     const tiles = document.querySelectorAll(`.tile[data-state-key="${CSS.escape(key)}"]`);
 
     for (const tile of tiles) {
+      // A real reported value is more authoritative than anything the press
+      // feedback is still showing: the device just told us where it actually
+      // is, so drop any pending dot or error ring rather than leaving a stale
+      // one sitting under the confirmed state.
+      clearCommandState(tile);
+
       if (typeof value === "number") {
         tile.style.setProperty("--fill-percent", `${value}%`);
         continue;
@@ -216,6 +243,117 @@ export function renderWorkspaceSelector(workspaces, onSelect) {
   });
 }
 
+// Same lookup idiom as updateTileState's data-state-key and setAgentOffline's
+// data-target queries. data-item-id is already set on every tile by
+// renderWorkspace; nothing read it until now.
+function tilesForItem(itemId) {
+  return document.querySelectorAll(`.tile[data-item-id="${CSS.escape(String(itemId))}"]`);
+}
+
+function cancelCommandTimer(key) {
+  const timer = commandTimers.get(key);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    commandTimers.delete(key);
+  }
+}
+
+// Removes every command-feedback class from one tile and cancels its timer.
+// Used by the two "something more authoritative just happened" paths below.
+function clearCommandState(tile) {
+  cancelCommandTimer(tile.dataset.itemId);
+  tile.classList.remove("tile-pending", "tile-ok", "tile-error");
+}
+
+export function setTileCommandState(itemId, phase) {
+  const key = String(itemId);
+  cancelCommandTimer(key);
+
+  const tiles = tilesForItem(key);
+  // A result routinely outlives its tile: onWorkspaceUpdate re-renders the
+  // whole grid (grid.innerHTML = "" above), so the element a command started
+  // on may simply be gone by the time it settles. Nothing to draw on is not
+  // an error.
+  if (!tiles.length) {
+    return;
+  }
+
+  for (const tile of tiles) {
+    tile.classList.remove("tile-pending", "tile-ok", "tile-error");
+  }
+
+  if (phase === "pending") {
+    commandTimers.set(
+      key,
+      setTimeout(() => {
+        commandTimers.delete(key);
+        // Re-queried rather than reusing `tiles`: a re-render during the
+        // delay would otherwise put the class on a detached element.
+        for (const tile of tilesForItem(key)) {
+          tile.classList.add("tile-pending");
+        }
+      }, PENDING_DELAY_MS)
+    );
+    return;
+  }
+
+  if (phase === "ok") {
+    // A tile that reports real state confirms itself: poller.py's next tick
+    // (1s) lands, updateTileState recolours it, and that colour change *is*
+    // the success. Adding a second signal there would be the button colouring
+    // itself from its own click. Only tiles that will never get such an
+    // update -- Screenshot, launch_app -- need telling that the command
+    // landed, and data-state-key is exactly that distinction.
+    const stateless = [...tiles].filter((tile) => !tile.dataset.stateKey);
+    if (!stateless.length) {
+      return;
+    }
+    for (const tile of stateless) {
+      tile.classList.add("tile-ok");
+    }
+    commandTimers.set(
+      key,
+      setTimeout(() => {
+        commandTimers.delete(key);
+        for (const tile of tilesForItem(key)) {
+          tile.classList.remove("tile-ok");
+        }
+      }, OK_LINGER_MS)
+    );
+    return;
+  }
+
+  if (phase === "error") {
+    for (const tile of tiles) {
+      tile.classList.add("tile-error");
+    }
+    commandTimers.set(
+      key,
+      setTimeout(() => {
+        commandTimers.delete(key);
+        for (const tile of tilesForItem(key)) {
+          tile.classList.remove("tile-error");
+        }
+      }, ERROR_LINGER_MS)
+    );
+  }
+}
+
+// Label and owning agent for one item, read back off the tile rather than
+// held in a second copy of the workspace -- the DOM is already the live
+// record, and it survives re-renders that a cached object wouldn't.
+export function getTileMeta(itemId) {
+  const tile = tilesForItem(String(itemId))[0];
+  if (!tile) {
+    return null;
+  }
+  const label = tile.querySelector(".label");
+  return {
+    label: label ? label.textContent : "",
+    target: tile.dataset.target || "",
+  };
+}
+
 export function setAgentOffline(agent, isOffline) {
   // Scoped to the agent named in the agent_status message: with more than
   // one agent connected, one disconnecting must not grey out the other's
@@ -224,6 +362,14 @@ export function setAgentOffline(agent, isOffline) {
     `.tile[data-kind="action"][data-target="${CSS.escape(agent)}"]`
   );
   for (const tile of tiles) {
+    // Going offline answers every command still outstanding on this agent:
+    // the tile is about to be greyed and made inert, and the server's own
+    // timeout for those req_ids is still up to 5s away. Leaving a pending dot
+    // pulsing underneath a greyed-out tile would claim work is in progress
+    // that provably cannot be.
+    if (isOffline) {
+      clearCommandState(tile);
+    }
     tile.classList.toggle("tile-offline", isOffline);
   }
 }

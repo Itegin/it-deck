@@ -1,7 +1,8 @@
 import { fetchWorkspaces } from "./api.js";
-import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline } from "./render.js";
-import { sendExecute, sendSetValue, onResult, onStateChange, onAgentStatus, onWorkspaceUpdate } from "./ws.js";
+import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setTileCommandState, getTileMeta } from "./render.js";
+import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate } from "./ws.js";
 import { showContextMenu } from "./contextmenu.js";
+import { showToast } from "./toast.js";
 
 // Device-local "which workspace does this deck show" choice. Deliberately
 // not part of any server state -- multiple phones can point at different
@@ -39,6 +40,30 @@ function describeLoadFailure(err) {
       // Not an api.js failure at all -- a bug in the render path reaches
       // the same catch. Say so plainly instead of blaming the backend.
       return `Couldn't draw the deck: ${err.message}`;
+  }
+}
+
+// The same job describeLoadFailure does, one layer down: turn the reason off
+// the wire into something that says what happened and what to do next. The
+// backend already phrases these for a human ("agent offline", "timeout"), but
+// they describe the system's view, not the person's -- and none of them name
+// the tile that was actually pressed.
+function describeCommandFailure(itemId, message) {
+  const meta = getTileMeta(itemId);
+  const label = meta && meta.label ? meta.label : "That command";
+  const agent = meta && meta.target ? meta.target : "its";
+
+  switch (message) {
+    case "agent offline":
+      return `${label} didn't run — the ${agent} agent isn't connected. Start the IT-Deck Agent on that PC.`;
+    case "timeout":
+      // Deliberately not "it failed": the command reached the agent and the
+      // reply is what went missing, so it may well have run.
+      return `${label} didn't answer in time. It may still have run — check the PC before pressing again.`;
+    case "item not found":
+      return `${label} is no longer in the catalog. Reload the deck to pick up the change.`;
+    default:
+      return message ? `${label} failed: ${message}` : `${label} failed.`;
   }
 }
 
@@ -97,9 +122,18 @@ document.getElementById("switch-workspace-link").addEventListener("click", (even
   init();
 });
 
-// Day 3 will drive a pending/success/error state on the tile itself; for
-// now this just proves the execute -> agent -> result round trip works.
-onResult((result) => console.log("result:", result));
+// Press feedback. ws.js has already resolved the raw result frame back to the
+// item that was pressed (by req_id -- several server paths omit item_id), so
+// this only has to decide where each phase is shown: the ring/dot on the tile
+// says which, the toast says why. Success gets no toast at all -- for a tile
+// that reports state the colour change is the confirmation, and for one that
+// doesn't, .tile-ok already says it landed.
+onCommandState(({ itemId, phase, message }) => {
+  setTileCommandState(itemId, phase);
+  if (phase === "error") {
+    showToast(describeCommandFailure(itemId, message));
+  }
+});
 
 onStateChange((data) => updateTileState(data));
 onAgentStatus(({ agent, status }) => setAgentOffline(agent, status === "offline"));

@@ -1,6 +1,10 @@
 .tile {
   background: var(--tile-color, #1A1F26);
   border-radius: 16px;
+  /* Positioning context for .tile-pending's dot. .tile-slider already set
+     this for its own fill-bar; hoisting it to every tile changes nothing
+     there and is what lets the dot be absolutely placed on any tile. */
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -141,4 +145,62 @@
    strength. It carries no text, so dimming it directly is safe here. */
 .tile.tile-offline .fill-bar {
   opacity: 0.4;
+}
+
+/* Command feedback: three tile modifiers driven by ws.js's in-flight
+   tracking. They belong to .tile-offline's family (an external condition
+   acting on the tile) rather than .state-active/.state-alert's (the item's
+   own confirmed device state), and are named to match.
+
+   None of the three may touch background-color, box-shadow or filter, and
+   that constraint is what dictates their shape: updateTileState writes
+   background-color *inline* for false_color, which beats any class rule
+   regardless of specificity; box-shadow is .tile-offline's dim, which
+   co-occurs with these; and filter is shared by :active and .tile-offline.
+   So the pending dot gets its own pseudo-element layer, and the two settled
+   phases use an inset outline, which costs no layout at all. */
+.tile-pending::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  /* currentColor, so the dot inherits the same light-on-dark assumption the
+     label and icon already make instead of introducing a new colour. */
+  background: currentColor;
+  opacity: 0.85;
+  /* Above .tile-slider .fill-bar (z-index 0) and the label/icon (z-index 1),
+     so a pending volume tile can't hide its own dot behind the fill. */
+  z-index: 2;
+  animation: tile-pending-pulse 1s ease-in-out infinite;
+}
+
+/* Only the midpoint is declared: the resting 0.85 above is the implicit
+   start and end, so suppressing the animation entirely (see base.css's
+   reduced-motion block) leaves the dot sitting at full strength rather than
+   at whatever frame it stopped on. */
+@keyframes tile-pending-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Deliberately rare: render.js applies this only to tiles with no
+   data-state-key. A tile that reports real state confirms itself when
+   poller.py's next tick lands and the colour changes for real -- this exists
+   for Screenshot and launch_app, which never get that. */
+.tile.tile-ok {
+  outline: 2px solid var(--active-color, #0d9488);
+  outline-offset: -2px;
+}
+
+/* Last of the three so it wins should an error ever land on a tile still
+   showing another phase. The offset is negative on purpose: it keeps the
+   ring inside the tile and visually distinct from base.css's accent focus
+   ring, which sits outside on a positive offset. */
+.tile.tile-error {
+  outline: 2px solid var(--alert-color, #dc2626);
+  outline-offset: -2px;
 }
