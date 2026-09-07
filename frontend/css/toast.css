@@ -8,9 +8,9 @@
   /* Matches #grid's own 12px inset at narrow widths instead of running edge
      to edge, and stops growing once it would outrun comfortable line length. */
   max-width: min(calc(100vw - 24px), 420px);
-  background: #1A1F26;
-  color: #F1F5F9;
-  border: 1px solid #2a2f38;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 14px;

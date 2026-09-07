@@ -22,7 +22,7 @@
     }
 
     header a {
-      color: #8e5ff5;
+      color: var(--color-accent);
     }
 
     table {
@@ -34,19 +34,19 @@
     th, td {
       text-align: left;
       padding: 8px 10px;
-      border-bottom: 1px solid #2a2f38;
+      border-bottom: 1px solid var(--color-border);
       font-size: 14px;
     }
 
     th {
-      color: #9aa3b2;
+      color: var(--color-text-muted);
       font-weight: 600;
     }
 
     button {
-      background: #1A1F26;
-      color: #F1F5F9;
-      border: 1px solid #2a2f38;
+      background: var(--color-surface);
+      color: var(--color-text);
+      border: 1px solid var(--color-border);
       border-radius: 6px;
       padding: 6px 12px;
       cursor: pointer;
@@ -54,12 +54,12 @@
     }
 
     button:hover {
-      background: #2a2f38;
+      background: var(--color-border);
     }
 
     button.danger:hover {
-      background: #dc2626;
-      border-color: #dc2626;
+      background: var(--color-alert);
+      border-color: var(--color-alert);
     }
 
     /* Same flex row idiom as #item-form .form-actions -- two bare adjacent
@@ -87,9 +87,9 @@
        page. Same field colors as the form's inputs, but the button's padding
        and font-size so it sits level with the two buttons in the flex row. */
     .toolbar select {
-      background: #0B0D10;
-      color: #F1F5F9;
-      border: 1px solid #2a2f38;
+      background: var(--color-bg);
+      color: var(--color-text);
+      border: 1px solid var(--color-border);
       border-radius: 6px;
       padding: 6px 12px;
       font-size: 13px;
@@ -103,8 +103,8 @@
        grouping needs no wrapper divs and the `grid-column: 1 / -1` rules below
        (and both #item-form label selectors) keep resolving against it. */
     #item-form {
-      background: #1A1F26;
-      border: 1px solid #2a2f38;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
       border-radius: 10px;
       padding: 20px;
       display: grid;
@@ -132,11 +132,11 @@
     #devices-message {
       grid-column: 1 / -1;
       font-size: 13px;
-      color: #9aa3b2;
+      color: var(--color-text-muted);
     }
 
     #devices-message.error {
-      color: #dc2626;
+      color: var(--color-alert);
     }
 
     #item-form label {
@@ -144,27 +144,28 @@
       flex-direction: column;
       gap: 4px;
       font-size: 13px;
-      color: #9aa3b2;
+      color: var(--color-text-muted);
       /* Half the form, as before -- see the four-column comment above. */
       grid-column: span 2;
     }
 
-    /* Group heading. The whole hierarchy signal is this being #F1F5F9 against
-       the fields' own #9aa3b2 labels, plus the hairline and the spacing --
-       deliberately no card, background or border-radius per group, and no
-       ALL-CAPS. The spacing is asymmetric on purpose: 24px of margin plus the
-       rule and 12px of padding above the heading, only the grid's 12px below
-       it, so each heading reads as belonging to the fields under it. Identity
-       has no heading (it's the form's first content), so every h2 here --
-       including the first -- separates two groups and keeps the same 24px. */
+    /* Group heading. The whole hierarchy signal is this being --color-text
+       against the fields' own --color-text-muted, plus the hairline and the
+       spacing -- deliberately no card, background or border-radius per
+       group, and no ALL-CAPS. The spacing is asymmetric on purpose: 24px of
+       margin plus the rule and 12px of padding above the heading, only the
+       grid's 12px below it, so each heading reads as belonging to the fields
+       under it. Identity has no heading (it's the form's first content), so
+       every h2 here -- including the first -- separates two groups and keeps
+       the same 24px. */
     #item-form .form-group {
       grid-column: 1 / -1;
       margin: 24px 0 0;
       padding-top: 12px;
-      border-top: 1px solid #2a2f38;
+      border-top: 1px solid var(--color-border);
       font-size: 13px;
       font-weight: 600;
-      color: #F1F5F9;
+      color: var(--color-text);
     }
 
     /* Label and Params (JSON). Set on the <label>, never on the control inside
@@ -201,9 +202,9 @@
     #item-form input,
     #item-form select,
     #item-form textarea {
-      background: #0B0D10;
-      color: #F1F5F9;
-      border: 1px solid #2a2f38;
+      background: var(--color-bg);
+      color: var(--color-text);
+      border: 1px solid var(--color-border);
       border-radius: 6px;
       padding: 8px;
       font-size: 14px;
@@ -225,7 +226,7 @@
 
     #params-error {
       grid-column: 1 / -1;
-      color: #dc2626;
+      color: var(--color-alert);
       font-size: 13px;
     }
 
