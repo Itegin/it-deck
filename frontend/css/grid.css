@@ -38,3 +38,23 @@ body {
   gap: 10px;
   padding: 12px;
 }
+
+/* renderError() drops this straight into #grid, which is still a track grid
+   (3x5 by the defaults above, or the last workspace's shape). Without
+   spanning every track the message auto-places into the top-left cell at a
+   third of the width, and html/body's overflow:hidden makes the clipped
+   remainder unreachable -- there is no scroll to recover it. Deliberately
+   plain: a legible full-bleed message, not a designed error state.
+   user-select overrides base.css's page-wide none, because these messages
+   now carry an HTTP status or an item id worth copying. */
+.error-message {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  align-self: center;
+  font-size: 15px;
+  line-height: 1.45;
+  text-align: center;
+  overflow-wrap: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}

@@ -142,6 +142,10 @@ function renderTable(items) {
     }
 
     const actionsTd = document.createElement("td");
+    // Same flex-row-with-a-gap idiom as .toolbar and #item-form
+    // .form-actions -- without it Edit and Delete sit flush, which is
+    // worst for the destructive one of the pair.
+    actionsTd.className = "row-actions";
 
     const editBtn = document.createElement("button");
     editBtn.type = "button";

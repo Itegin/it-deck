@@ -70,6 +70,18 @@
       margin-bottom: 16px;
     }
 
+    /* The table's Edit/Delete cell, set by renderTable in studio.js. Same
+       display:flex + 8px gap as .toolbar and #item-form .form-actions, and
+       deliberately nothing else -- Delete sitting flush against Edit is
+       exactly the hazard the .toolbar comment above describes, and it's
+       worse here because one of the pair is destructive. (No align-items:
+       a blockified <td> doesn't stretch its flex line, so the buttons keep
+       their natural 29px height even on a wrapped, 74px-tall row.) */
+    .row-actions {
+      display: flex;
+      gap: 8px;
+    }
+
     /* #item-form select doesn't reach the toolbar's own workspace picker, and
        an unstyled select renders as an OS-default light control on this dark
        page. Same field colors as the form's inputs, but the button's padding

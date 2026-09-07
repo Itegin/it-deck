@@ -119,10 +119,26 @@
 /* Offline means "we don't know", not "it's inactive" -- it must never look
    like a confident state. grayscale(1) desaturates whatever state-active
    or state-alert color is currently applied (so the override doesn't need
-   to out-specificity those classes' background-color), and opacity + a
-   disabled pointer-events keep it visually and functionally inert. */
+   to out-specificity those classes' background-color), and pointer-events
+   keeps the tile functionally inert.
+
+   The dim is an inset shadow, not opacity, on purpose. Group opacity
+   composites the whole subtree -- including the label -- so opacity: 0.4
+   dragged the label down to 3.34:1 against the tile it sits on: illegible,
+   not de-emphasised. An inset box-shadow paints above the background and
+   below the content, so the same #0B0D10-at-60% wash lands on the tile's
+   background while the label keeps full strength above it (16.8:1 on the
+   default #1A1F26 tile, and 4.67:1 in the worst case of a near-white
+   item.color -- still over AA). 0 blur, so no filter/blur cost either. */
 .tile.tile-offline {
-  opacity: 0.4;
   filter: grayscale(1);
   pointer-events: none;
+  box-shadow: inset 0 0 0 999px rgba(11, 13, 16, 0.6);
+}
+
+/* The fill-bar is a child, so it paints above the inset dim instead of
+   under it -- an offline slider would otherwise show its teal fill at full
+   strength. It carries no text, so dimming it directly is safe here. */
+.tile.tile-offline .fill-bar {
+  opacity: 0.4;
 }

@@ -53,3 +53,33 @@ body {
   display: flex;
   gap: 12px;
 }
+
+#workspace-header a:hover {
+  text-decoration: underline;
+}
+
+/* First focus style in the project, so it sets the convention: a 2px
+   accent ring offset off the text, not a change to the text itself.
+   :focus-visible rather than :focus -- these are touch targets first, and
+   a tap must not leave a ring sitting behind on the phone. */
+#workspace-header a:focus-visible {
+  outline: 2px solid #8e5ff5;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Lives here rather than in each stylesheet so there's one place to look
+   for "what motion does this app suppress". base.css is linked *first*
+   (see index.html), so a same-specificity override would lose the cascade
+   to the very rules it targets -- hence !important, which is also the
+   honest expression of intent: an OS-level user preference outranks any
+   author rule. Only the transitions are dropped, not the effects: .tile's
+   press feedback still applies, it just arrives instantly instead of
+   animating over 120ms. */
+@media (prefers-reduced-motion: reduce) {
+  .tile,
+  .tile-slider .fill-bar,
+  .context-overlay {
+    transition: none !important;
+  }
+}

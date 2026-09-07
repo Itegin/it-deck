@@ -22,6 +22,26 @@ function handleTileLongPress(item) {
   ]);
 }
 
+// Maps api.js's tagged failure kinds onto what the person holding the phone
+// can actually do next. The four cases have four different fixes, so they
+// get four different messages rather than one string for every failure.
+function describeLoadFailure(err) {
+  switch (err.kind) {
+    case "unreachable":
+      return `Can't reach the backend at ${window.location.host}. Check the backend is running and that this phone is on the same network.`;
+    case "status":
+      return `The backend answered HTTP ${err.message} for /api/workspaces. Check the backend log.`;
+    case "badReply":
+      return "The backend's reply wasn't valid JSON. Check the backend log.";
+    case "badParams":
+      return `${err.message} has invalid params JSON, so the deck can't be drawn. Fix its Params field in Control Panel.`;
+    default:
+      // Not an api.js failure at all -- a bug in the render path reaches
+      // the same catch. Say so plainly instead of blaming the backend.
+      return `Couldn't draw the deck: ${err.message}`;
+  }
+}
+
 function loadWorkspace(workspace) {
   renderWorkspace(workspace, sendExecute, sendSetValue, handleTileLongPress);
 }
@@ -38,7 +58,7 @@ async function init() {
     const workspaces = await fetchWorkspaces();
 
     if (!workspaces.length) {
-      renderError("No workspaces found");
+      renderError("The backend has no workspaces yet, so there's nothing to show.");
       return;
     }
 
@@ -62,7 +82,7 @@ async function init() {
       showSelector(workspaces);
     }
   } catch (err) {
-    renderError("Failed to load");
+    renderError(describeLoadFailure(err));
   }
 }
 
