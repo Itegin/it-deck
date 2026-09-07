@@ -96,13 +96,19 @@
       font-family: inherit;
     }
 
+    /* Four columns, not two: an ordinary field spans 2 of them (exactly the
+       half width it had before), and the quarter-width sets -- the four colour
+       pickers, and Row/Col/Width/Height -- take a single column each. Doing it
+       this way keeps every field a direct child of this one grid, so the
+       grouping needs no wrapper divs and the `grid-column: 1 / -1` rules below
+       (and both #item-form label selectors) keep resolving against it. */
     #item-form {
       background: #1A1F26;
       border: 1px solid #2a2f38;
       border-radius: 10px;
       padding: 20px;
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 12px;
     }
 
@@ -139,6 +145,57 @@
       gap: 4px;
       font-size: 13px;
       color: #9aa3b2;
+      /* Half the form, as before -- see the four-column comment above. */
+      grid-column: span 2;
+    }
+
+    /* Group heading. The whole hierarchy signal is this being #F1F5F9 against
+       the fields' own #9aa3b2 labels, plus the hairline and the spacing --
+       deliberately no card, background or border-radius per group, and no
+       ALL-CAPS. The spacing is asymmetric on purpose: 24px of margin plus the
+       rule and 12px of padding above the heading, only the grid's 12px below
+       it, so each heading reads as belonging to the fields under it. Identity
+       has no heading (it's the form's first content), so every h2 here --
+       including the first -- separates two groups and keeps the same 24px. */
+    #item-form .form-group {
+      grid-column: 1 / -1;
+      margin: 24px 0 0;
+      padding-top: 12px;
+      border-top: 1px solid #2a2f38;
+      font-size: 13px;
+      font-weight: 600;
+      color: #F1F5F9;
+    }
+
+    /* Label and Params (JSON). Set on the <label>, never on the control inside
+       it: the label is the grid item, and #item-form label's display:flex makes
+       the input/textarea a flex child, where grid-column does nothing at all. */
+    #item-form .field-full {
+      grid-column: 1 / -1;
+    }
+
+    /* Label identifies the item, so it's the largest control in the form. Needs
+       the #item-form prefix to outrank #item-form input's own font-size below --
+       a bare #field-label would lose that on specificity and silently do
+       nothing, the same trap as #item-form label[hidden] above. */
+    #item-form #field-label {
+      font-size: 16px;
+      padding: 10px;
+    }
+
+    /* The four colour pickers, and Row/Col/Width/Height: one column each, so
+       each set lands as a single four-across row instead of four half-width
+       cells carrying the same visual weight as Label. */
+    #item-form .field-quarter {
+      grid-column: span 1;
+    }
+
+    /* On Row only, so the geometry quartet starts a fresh line rather than
+       filling the two columns left over by the half-width Workspace field above
+       it. Must stay after .field-quarter: same specificity, and this is what
+       overrides the grid-column-start that shorthand's `span 1` sets. */
+    #item-form .starts-row {
+      grid-column-start: 1;
     }
 
     #item-form input,
@@ -158,8 +215,9 @@
       height: 36px;
     }
 
+    /* The `grid-column: 1 / -1` that used to sit here never applied: the grid
+       item is this textarea's parent <label>, which carries .field-full now. */
     #field-params {
-      grid-column: 1 / -1;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       min-height: 80px;
       resize: vertical;
@@ -207,14 +265,15 @@
     <tbody id="items-tbody"></tbody>
   </table>
 
+  <!-- Grouped identity / action / placement / appearance / advanced. The
+       order is the grouping: every field is still a direct child of the one
+       grid (see #item-form's four-column comment), and the <h2>s are grid
+       children too, so nothing here wraps or nests a field. -->
   <form id="item-form" hidden>
     <input type="hidden" id="field-id">
 
-    <label>Workspace
-      <select id="field-workspace-id"></select>
-    </label>
-
-    <label>Label
+    <!-- Identity. No heading: it's the form's first content. -->
+    <label class="field-full">Label
       <input id="field-label" required>
     </label>
 
@@ -222,21 +281,7 @@
       <input id="field-icon" placeholder="e.g. lightbulb">
     </label>
 
-    <label>Color
-      <input type="color" id="field-color" value="#2a2f38">
-    </label>
-
-    <label>Active color
-      <input type="color" id="field-active-color" value="#0d9488">
-    </label>
-
-    <label>Alert color
-      <input type="color" id="field-alert-color" value="#dc2626">
-    </label>
-
-    <label>Off color
-      <input type="color" id="field-false-color" value="#2a2f38">
-    </label>
+    <h2 class="form-group">Action</h2>
 
     <label>Kind
       <select id="field-kind">
@@ -257,10 +302,15 @@
       </select>
     </label>
 
+    <label>State key
+      <input id="field-state-key" placeholder="optional, e.g. mic.muted">
+    </label>
+
     <!-- audio_switch only: studio.js shows/hides these (and the message
          below) as Type/Target change, and fills them from the selected
          Target agent's live device list. Hidden by default so a fresh form
-         for any other Type never flashes them. -->
+         for any other Type never flashes them. Kept in the Action group,
+         next to the Type and Target fields that drive them. -->
     <label id="primary-device-label" hidden>Primary device
       <select id="field-primary-device"></select>
     </label>
@@ -271,29 +321,54 @@
 
     <div id="devices-message" hidden></div>
 
-    <label>State key
-      <input id="field-state-key" placeholder="optional, e.g. mic.muted">
+    <h2 class="form-group">Placement</h2>
+
+    <label>Workspace
+      <select id="field-workspace-id"></select>
     </label>
 
-    <label>Row
+    <label class="field-quarter starts-row">Row
       <input type="number" id="field-row" required>
     </label>
 
-    <label>Col
+    <label class="field-quarter">Col
       <input type="number" id="field-col" required>
     </label>
 
-    <label>Width
+    <label class="field-quarter">Width
       <input type="number" id="field-width" value="1" min="1">
     </label>
 
-    <label>Height
+    <label class="field-quarter">Height
       <input type="number" id="field-height" value="1" min="1">
     </label>
 
-    <label>Params (JSON)
+    <h2 class="form-group">Appearance</h2>
+
+    <label class="field-quarter">Color
+      <input type="color" id="field-color" value="#2a2f38">
+    </label>
+
+    <label class="field-quarter">Active color
+      <input type="color" id="field-active-color" value="#0d9488">
+    </label>
+
+    <label class="field-quarter">Alert color
+      <input type="color" id="field-alert-color" value="#dc2626">
+    </label>
+
+    <label class="field-quarter">Off color
+      <input type="color" id="field-false-color" value="#2a2f38">
+    </label>
+
+    <h2 class="form-group">Advanced</h2>
+
+    <label class="field-full">Params (JSON)
       <textarea id="field-params">{}</textarea>
     </label>
+    <!-- Directly above the actions on purpose: studio.js writes both the
+         JSON-validation message and the "Save failed (...)" message here, and
+         the second of those has to land next to the button that just failed. -->
     <div id="params-error" hidden></div>
 
     <div class="form-actions">
