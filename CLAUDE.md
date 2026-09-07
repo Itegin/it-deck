@@ -28,6 +28,13 @@ backend/app/
 ├── db.py          sqlite connection, schema, seed/fixup migrations
 ├── models.py      Item/Workspace pydantic models, query helpers
 ├── state.py       in-memory current-state snapshot + diffing
+├── api/
+│   ├── items.py      CRUD for the item catalog (token-gated)
+│   ├── workspaces.py workspace create/compact (token-gated)
+│   ├── screenshot.py POST /api/screenshot (token-gated)
+│   ├── agents.py     agent status
+│   └── settings.py   app-wide key/value settings — currently just the
+│                     Dashboard theme; the one write endpoint with no token
 └── ws/
     ├── hub.py      ConnectionHub: tracks connected clients/agents, broadcast
     ├── agent.py    /ws/agent handler — agent hello/auth, state, results
@@ -45,8 +52,9 @@ frontend/
 │   ├── app.js     boot: fetch workspace, initial render, wire clicks
 │   ├── api.js     REST fetch + params JSON parsing
 │   ├── ws.js      client WebSocket: connect/reconnect, send execute, result callbacks
-│   └── render.js  DOM rendering: grid, tiles, error/empty states
-└── css/           base.css, grid.css, button.css
+│   ├── render.js  DOM rendering: grid, tiles, error/empty states
+│   └── theme.js   Dashboard theme: fetch/PUT, cycle, apply to <html data-theme>
+└── css/           base.css, grid.css, button.css, themes.css
 ```
 
 The frontend serves two separate pages from the same static mount, split
@@ -71,6 +79,29 @@ or `{"type": "state", "data": {...}}` for polled state changes.
 
 **Backend → client**: results and state changes are broadcast to every
 connected client verbatim; a fresh client also gets a full `{"type": "state", "data": <snapshot>}` on connect since it missed prior diffs.
+
+## Dashboard themes
+
+The Dashboard has three visual themes -- `flat` (the original look), `pastel`
+and `glossy` -- selected by a `data-theme` attribute on `<html>` and
+implemented as CSS custom property overrides in `frontend/css/themes.css`.
+That file is linked from `index.html` only, which is the whole of the
+mechanism keeping **Studio on its own styling**; `studio.html` uses a bare
+`<header>` and never carries `#workspace-header`, so none of the Dashboard's
+header or theme rules can reach it.
+
+Every tile state resolves to one custom property, `--tile-state-color`
+(`button.css`), written by all four state mechanisms -- default `--tile-color`,
+`.state-active`, `.state-alert`, and render.js's inline write for
+`false_color`. Themes only change container-level presentation on top of that
+one value; none of them touch the state logic.
+
+The choice is **server-side** (the `setting` table, `GET /api/settings` +
+`PUT /api/settings/theme`), so it is shared by every panel rather than being
+per-browser. `localStorage` holds a cache of it, read by a small inline script
+in `index.html`'s `<head>` purely so the first paint isn't a flash of the
+wrong theme; the server value always wins a moment later. A change broadcasts
+`{"type": "settings_update", "settings": {...}}` to every connected client.
 
 `item.params` is stored as a JSON string in the `item` table and parsed at
 the point of use (both backend `client.py` and frontend `api.js`) — it is
@@ -143,3 +174,12 @@ today's `execute`-only shape covers it.
   Sufficient for this project's documented single-user, local-network
   scope; revisit if that scope ever changes. `/api/workspaces` remains
   unauthenticated.
+
+- `PUT /api/settings/theme` is the one **write** endpoint with no token at
+  all, and that is deliberate rather than an oversight: the only client that
+  changes the theme is the Dashboard on the phone, which has no token and
+  nowhere safe to keep one over plain http on the LAN. The value is
+  constrained to one of three literals (`flat`/`pastel`/`glossy`) before it
+  is stored, and again in the client before it reaches a DOM attribute, so
+  what it concedes is that anyone already on the local network can change how
+  the deck looks -- not run a command, reach an agent, or touch the catalog.

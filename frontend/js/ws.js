@@ -17,6 +17,7 @@ const stateChangeCallbacks = [];
 const agentStatusCallbacks = [];
 const workspaceUpdateCallbacks = [];
 const commandStateCallbacks = [];
+const settingsUpdateCallbacks = [];
 
 // req_id -> {itemId, timer}. The correlation lives here because req_ids are
 // generated here and nowhere else; every consumer downstream works in
@@ -59,6 +60,13 @@ function connect() {
     } else if (message.type === "workspace_update") {
       for (const callback of workspaceUpdateCallbacks) {
         callback();
+      }
+    } else if (message.type === "settings_update") {
+      // Unlike workspace_update, this carries its payload rather than being a
+      // bare "go re-fetch" signal -- there is one word to deliver and nothing
+      // to re-render, so a round trip back to the API would buy nothing.
+      for (const callback of settingsUpdateCallbacks) {
+        callback(message.settings || {});
       }
     }
   });
@@ -194,4 +202,11 @@ export function onAgentStatus(callback) {
 
 export function onWorkspaceUpdate(callback) {
   workspaceUpdateCallbacks.push(callback);
+}
+
+// Another panel (or another device) changed a shared setting. Currently only
+// the theme; the callback gets the whole settings object so adding a second
+// key later needs no change here.
+export function onSettingsUpdate(callback) {
+  settingsUpdateCallbacks.push(callback);
 }

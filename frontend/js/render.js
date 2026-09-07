@@ -237,17 +237,25 @@ export function updateTileState(stateData) {
       const isTrue = Boolean(value);
       tile.classList.toggle(activeClass, isTrue);
 
-      // false_color is an inline style, which beats any stylesheet rule
-      // (including .state-active/.state-alert's class-based
-      // --active-color/--alert-color) regardless of specificity -- so on
-      // the true side it must be cleared back to "", or a stale false-state
-      // color would permanently win over the class-based one from here on.
+      // false_color is written as an inline custom property, which beats any
+      // stylesheet rule (including .state-active/.state-alert's own
+      // --tile-state-color) regardless of specificity -- so on the true side
+      // it must be removed again, or a stale false-state color would
+      // permanently win over the class-based one from here on.
+      //
+      // It sets --tile-state-color rather than backgroundColor because the
+      // card is no longer the only thing a state color paints: Pastel puts it
+      // in a border and an icon badge, Glossy runs a gradient off it (see
+      // css/themes.css). Writing the background directly would have themed
+      // exactly one of the three -- and would have needed an !important in
+      // Pastel to get the light card back, since nothing outranks an inline
+      // style.
       if (isTrue) {
-        tile.style.backgroundColor = "";
+        tile.style.removeProperty("--tile-state-color");
       } else if (tile.dataset.falseColor) {
-        tile.style.backgroundColor = tile.dataset.falseColor;
+        tile.style.setProperty("--tile-state-color", tile.dataset.falseColor);
       } else {
-        tile.style.backgroundColor = ""; // falls back to item.color via --tile-color
+        tile.style.removeProperty("--tile-state-color"); // falls back to item.color via --tile-color
       }
     }
   }

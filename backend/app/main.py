@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.agents import router as agents_router
 from app.api.items import router as items_router
 from app.api.screenshot import router as screenshot_router
+from app.api.settings import router as settings_router
 from app.api.workspaces import router as workspaces_router
 from app.db import (
     fixup_audio_switch_state_key,
@@ -77,6 +78,7 @@ app.include_router(screenshot_router)
 app.include_router(items_router)
 app.include_router(workspaces_router)
 app.include_router(agents_router)
+app.include_router(settings_router)
 
 
 # Starlette matches routes in registration order, so a catch-all mount at "/"

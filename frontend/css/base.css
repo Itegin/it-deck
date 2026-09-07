@@ -106,42 +106,126 @@ body {
   touch-action: manipulation;
 }
 
+/* Dashboard-only, despite living in a file both pages link: studio.html's
+   header is a bare <header> with its own inline styles and never carries this
+   id, so nothing here (or in css/themes.css, which builds on it) can reach
+   Studio. That is what keeps the theme switcher scoped to the Dashboard
+   without needing a single Studio-specific override.
+
+   align-items went from baseline to center when the links became pills: a
+   baseline aligns the *text* inside each control, which left the pill boxes
+   sitting low and unevenly against the h1, and the icon button -- which has
+   no text baseline at all -- lowest of the three. */
 #workspace-header {
   padding: 12px 16px 0;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
+/* min-width:0 lets the flex item actually shrink (its default min-width:auto
+   refuses to go below its content), and the pills below are nowrap -- so when
+   a long workspace name and three controls cannot both fit, the name
+   ellipsises and the controls stay whole. The other way round, the controls
+   wrap into stacks and the header grows a second row. */
 #workspace-header h1 {
   margin: 0;
+  min-width: 0;
   font-size: 20px;
   font-weight: 700;
-}
-
-#workspace-header a {
-  color: var(--color-accent);
-  font-size: 14px;
-  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #workspace-header .header-links {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  /* Never give up width to the h1: these are fixed, small, and the name next
+     to them is the thing that can afford to be truncated. */
+  flex: none;
 }
 
-#workspace-header a:hover {
-  text-decoration: underline;
+/* One pill shape for all three controls -- the two links and the theme
+   button. Sized by padding, so each is only as wide as what it holds: these
+   sit in a header row, not the grid, and stretching them to a tile's width
+   would read as three more tiles above the deck.
+
+   The button needs the <a> rules restated as a reset (font, color, border,
+   appearance) for the same reason .tile does -- a UA button otherwise brings
+   its own font and 2px outset border to a shape that has to match a link
+   exactly. Colours come from the same tokens as everything else, which is
+   what lets css/themes.css restyle the header by overriding tokens alone. */
+#workspace-header a,
+#workspace-header .header-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  /* Tight on purpose. Three controls plus the deck name have to fit across a
+     390px phone, and at 14px/6px-12px the name was being ellipsised to
+     "IT-Deck Ho..." -- the header's one piece of actual information losing to
+     its chrome. 13px and 10px of side padding buys back the ~20px that costs,
+     and keeps every control well past the 44px touch-target minimum in the
+     axis that matters (they are 30px tall in a 12px-padded header, and the
+     press target extends to the header's own bounds). */
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  /* "Switch deck" is two words in a pill barely wider than one of them; left
+     to wrap it made the control two lines tall and pushed the whole header
+     row out of alignment with the h1. */
+  white-space: nowrap;
+  color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  text-decoration: none;
+  cursor: pointer;
+  /* These are touch targets on a phone; same suppression the tiles get. */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Icon-only, so it gets a squarer padding than the text pills rather than a
+   wide one wrapped around a 16px glyph. */
+#workspace-header .header-btn {
+  padding: 5px 8px;
+}
+
+#workspace-header .header-btn svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+/* The pill already carries the affordance, so hover lifts the surface the way
+   Studio's buttons do instead of underlining text inside a bordered box. */
+#workspace-header a:hover,
+#workspace-header .header-btn:hover {
+  background: var(--color-border);
 }
 
 /* First focus style in the project, so it sets the convention: a 2px
-   accent ring offset off the text, not a change to the text itself.
+   accent ring offset off the control, not a change to the control itself.
    :focus-visible rather than :focus -- these are touch targets first, and
-   a tap must not leave a ring sitting behind on the phone. */
-#workspace-header a:focus-visible {
+   a tap must not leave a ring sitting behind on the phone.
+
+   No border-radius override any more: it used to force 2px so the ring hugged
+   bare text, but these are pills now and the rule would have squared off the
+   ring around a 999px shape. The pill's own radius is what the outline should
+   follow, so it is left alone. */
+#workspace-header a:focus-visible,
+#workspace-header .header-btn:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /* Same convention as the header links above -- 2px accent ring, positive

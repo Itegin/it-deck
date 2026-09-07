@@ -10,6 +10,31 @@ function loadFailure(kind, detail) {
   return error;
 }
 
+// Settings are a flat key/value read, with none of fetchWorkspaces' per-item
+// params parsing to go wrong -- so these throw plainly and let theme.js decide
+// what a failure means, rather than carrying the tagged `kind` that exists
+// purely so app.js can name which part of a workspace payload was bad.
+export async function fetchTheme() {
+  const response = await fetch("/api/settings");
+  if (!response.ok) {
+    throw new Error(`GET /api/settings returned HTTP ${response.status}`);
+  }
+  const settings = await response.json();
+  return settings.theme;
+}
+
+export async function putTheme(theme) {
+  const response = await fetch("/api/settings/theme", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ theme }),
+  });
+  if (!response.ok) {
+    throw new Error(`PUT /api/settings/theme returned HTTP ${response.status}`);
+  }
+  return (await response.json()).theme;
+}
+
 export async function fetchWorkspaces() {
   let response;
   try {

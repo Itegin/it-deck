@@ -1,6 +1,7 @@
 import { fetchWorkspaces } from "./api.js";
 import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setTileCommandState, getTileMeta } from "./render.js";
-import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate } from "./ws.js";
+import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate, onSettingsUpdate } from "./ws.js";
+import { initTheme, applyTheme } from "./theme.js";
 import { showContextMenu } from "./contextmenu.js";
 import { showToast } from "./toast.js";
 
@@ -141,6 +142,16 @@ onAgentStatus(({ agent, status }) => setAgentOffline(agent, status === "offline"
 // refetching and fully re-rendering is simplest and cheap enough here
 // (edits are infrequent), same as init()'s own first load.
 onWorkspaceUpdate(() => init());
+
+// The theme is a shared, server-stored choice, so it is wired up on its own
+// rather than through init(): it must survive a workspace that fails to load,
+// and it must not be re-fetched every time a Studio edit re-renders the grid.
+initTheme((err) => showToast(`Couldn't save the theme: ${err.message}`));
+
+// Another panel pressed the theme button. Applied, not re-fetched -- the
+// frame already carries the new value, and applyTheme re-checks it against
+// the allowlist before it reaches the DOM.
+onSettingsUpdate(({ theme }) => applyTheme(theme));
 
 // iOS Safari only applies :active styles on tap if some element has a touch
 // listener attached; this empty listener exists solely to enable that.

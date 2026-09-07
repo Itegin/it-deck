@@ -11,8 +11,36 @@
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/grid.css">
   <link rel="stylesheet" href="/css/button.css">
+  <!-- Last, so a [data-theme] block can override a tile rule at equal
+       specificity. Not linked from studio.html: that is what keeps Studio on
+       its own look regardless of the theme chosen here. -->
+  <link rel="stylesheet" href="/css/themes.css">
   <link rel="stylesheet" href="/css/contextmenu.css">
   <link rel="stylesheet" href="/css/toast.css">
+  <!-- The only inline script in the project, and it earns that: the theme
+       lives on the server, so the module that fetches it cannot possibly know
+       the answer before the first paint. Without this, every load of a
+       Pastel or Glossy deck would flash the dark Flat theme for a round trip.
+
+       So the last applied theme is read straight off localStorage here,
+       synchronously, before any of the stylesheets above have painted. It
+       duplicates the allowlist from js/theme.js on purpose -- a classic
+       script cannot import a module, and the alternative (deferring to the
+       module) is exactly the flash this exists to prevent. Keep the two
+       lists in step; both are three literals long.
+
+       localStorage is only a cache of the server's value. js/theme.js
+       re-applies whatever GET /api/settings answers a moment later, so a
+       stale entry here self-corrects and is never authoritative. -->
+  <script>
+    try {
+      var t = localStorage.getItem("itdeck:theme");
+      document.documentElement.dataset.theme =
+        (t === "pastel" || t === "glossy") ? t : "flat";
+    } catch (e) {
+      document.documentElement.dataset.theme = "flat";
+    }
+  </script>
 </head>
 <body>
   <header id="workspace-header">
@@ -20,6 +48,13 @@
     <div class="header-links">
       <a href="#" id="switch-workspace-link">Switch deck</a>
       <a href="studio.html">Studio</a>
+      <!-- aria-label and title are both set from js/theme.js, which names the
+           theme a press will switch *to*; the static one here only covers the
+           moment before that runs. A real <button> so Enter/Space and
+           focusability come from the browser, matching the tiles. -->
+      <button type="button" id="theme-cycle" class="header-btn" aria-label="Switch theme" title="Switch theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="13" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="10" cy="19" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20c1.4 0 2-.8 2-1.7 0-1.5-1.4-1.9-1.4-3.3 0-1 .8-1.7 1.8-1.7H16a6 6 0 0 0 6-6c0-4.2-4.5-7.3-10-7.3Z"/></svg>
+      </button>
     </div>
   </header>
   <div id="grid"></div>

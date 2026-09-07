@@ -51,6 +51,21 @@ def init_db() -> None:
                 press_count INTEGER NOT NULL DEFAULT 0,
                 last_pressed TEXT
             );
+
+            -- App-wide key/value settings, as opposed to the per-workspace
+            -- and per-item columns above. Deliberately not a column on
+            -- `workspace`: the first entry is the Dashboard's visual theme,
+            -- which is one choice shared by every panel pointed at this
+            -- backend -- putting it on a workspace row would make the deck
+            -- you switch to silently change how the app looks.
+            --
+            -- Rows are created on first write (see api/settings.py's UPSERT),
+            -- so there is no seed and no fixup for this table: an absent row
+            -- means "never set", and each reader supplies its own default.
+            CREATE TABLE IF NOT EXISTS setting (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
         conn.commit()

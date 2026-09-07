@@ -1,0 +1,226 @@
+/* Dashboard themes. Linked from index.html only -- never from studio.html --
+   which is the whole of the mechanism keeping Studio on its own look. Loaded
+   last, after button.css, so a theme block can override a tile rule at equal
+   specificity without needing to out-specify it.
+
+   Selected by data-theme on <html>, written by js/theme.js (and, before first
+   paint, by the small inline script in index.html's <head>). Three values,
+   allowlisted at every point they are read; see api/settings.py.
+
+   Flat has no block here on purpose. It is the base stylesheets rendering
+   untouched, so data-theme="flat" matches nothing below and there is no way
+   for this file to drift away from it.
+
+   Nearly everything here is a token override rather than a new rule. The tile
+   already resolves its state colour to one custom property (button.css's
+   --tile-state-color), so a theme mostly has to answer "what is a surface,
+   what is a border, what is text" and let the existing rules repaint
+   themselves. Only where a theme changes the *shape* of a tile -- Pastel's
+   circular badge, Glossy's gradient -- does it add rules of its own.
+
+   Neither theme uses backdrop-filter, blur, or any animation. The only motion
+   in either is the press feedback and transitions button.css already had. */
+
+
+/* ── Pastel ──────────────────────────────────────────────────────────────
+   A light deck: near-white cards on a soft grey page, the state colour
+   carried by a thin border and a circular icon badge rather than by flooding
+   the card. Dark text, because the card is now the light surface.
+
+   The state colour appears at three strengths -- full on the border and the
+   icon, ~14% behind the icon -- which is what keeps default/active/alert
+   distinguishable without a saturated card. */
+[data-theme="pastel"] {
+  /* The same brand purple, stepped down for a light ground. #8e5ff5 is only
+     4.1:1 on white -- under AA for the 14px header links and for the focus
+     ring it also draws. This value is already the project's purple in
+     generated docs, so it is a step within the palette, not a new hue: 7.1:1
+     on the card, 6.4:1 on the page. */
+  --color-accent: #6d28d9;
+  --color-bg: #e9edf3;
+  /* The card, and the header pills that sit on the same page. */
+  --color-surface: #ffffff;
+  --color-border: #d3dae4;
+  /* 13.9:1 on the white card. */
+  --color-text: #1c2430;
+  /* 4.9:1 on the white card -- still AA at the subtitle's 12px. */
+  --color-text-muted: #5b6675;
+  /* Darkened from the shared teal/red so they hold up as *text and hairlines
+     on white* rather than as fills behind white text: #0d9488 is 3.0:1 on
+     #ffffff and #dc2626 is 4.3:1, both short. These are the same two hues,
+     stepped down until they clear AA (4.7:1 and 5.9:1). They are only the
+     fallbacks -- an item's own --active-color/--alert-color still wins, the
+     same as in Flat. */
+  --color-active: #0b7c72;
+  --color-alert: #b91c1c;
+
+  /* Offline inverts here. --color-scrim is a 60% near-black wash designed to
+     dim a dark tile; laid over a white card it reads as a *darker* tile, i.e.
+     as more emphasis, which is the opposite of what offline means. A light
+     wash washes the card out toward the page instead, which is what "we don't
+     know" should look like on a light deck. */
+  --color-scrim: rgba(233, 237, 243, 0.72);
+}
+
+[data-theme="pastel"] .tile {
+  /* Flat's white top sheen is invisible on a near-white card and the brief
+     asks for no gradient here, so the layer is dropped rather than tinted. */
+  background-image: none;
+  /* The card stays light whatever the tile's state is -- the state colour
+     goes to the border and the badge instead. No !important needed, and that
+     is a direct payoff of every state mechanism writing --tile-state-color
+     rather than background-color: there is no inline background left on the
+     element for this rule to have to outrank. */
+  background-color: var(--color-surface);
+  /* The state colour, at full strength but only 1.5px of it. */
+  border: 1.5px solid var(--tile-state-color);
+  border-radius: 14px;
+}
+
+/* Turns the plain sizing box button.css uses into the badge. .icon is a real
+   element with both of its own pseudo-elements free, so this needs no markup
+   change and does not touch .tile::before (the ok/error ring) or .tile::after
+   (the pending dot). */
+[data-theme="pastel"] .tile .icon {
+  width: clamp(34px, 38cqmin, 46px);
+  height: clamp(34px, 38cqmin, 46px);
+  flex: none;
+  border-radius: 50%;
+  margin-bottom: 8px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Feeds both the plate below and the icon's own stroke, which is
+     stroke="currentColor" in every ICONS entry in render.js. */
+  color: var(--tile-state-color);
+}
+
+/* The tint. A pseudo-element at low opacity rather than a translucent
+   background-color, because the state colour arrives as an opaque hex in a
+   custom property and rgba() cannot take one as its first argument. color-mix
+   could, and is supported on the iOS 16.7 floor this project targets, but an
+   opacity on an empty box needs no floor at all. */
+[data-theme="pastel"] .tile .icon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.14;
+  pointer-events: none;
+}
+
+[data-theme="pastel"] .tile .icon svg {
+  width: 56%;
+  height: 56%;
+  /* Above ::before, which is a positioned sibling and would otherwise paint
+     over an unpositioned inline child. */
+  position: relative;
+}
+
+[data-theme="pastel"] .tile .label {
+  color: var(--color-text);
+}
+
+[data-theme="pastel"] .tile .subtitle {
+  color: var(--color-text-muted);
+  /* button.css dims this to 0.65 against a light-on-dark label. Against dark
+     text on white the same 0.65 drops it under AA, and the size and weight
+     difference already carry the hierarchy. */
+  opacity: 1;
+}
+
+/* The slider fill is the one place Pastel keeps a saturated block, because it
+   has to read as a *level* at a glance. Dropped to a tint of the same colour
+   so it sits with the rest of the theme; the label stays dark and legible
+   over it, which it would not at full strength. */
+[data-theme="pastel"] .tile-slider .fill-bar {
+  background-image: none;
+  opacity: 0.28;
+}
+
+/* The pending dot is currentColor, which is now dark text -- correct on a
+   white card, and it needs no rule. The ok/error rings already read the
+   item's own --active-color/--alert-color, and those fall back to the
+   darkened tokens above. */
+
+
+/* ── Glossy ──────────────────────────────────────────────────────────────
+   The state colour as a moulded plastic button: the card is still that
+   colour, but shaded down its height and lit along its top edge, with a small
+   drop shadow under it.
+
+   Deliberately NOT glass. No backdrop-filter and no blur anywhere -- both are
+   direct GPU cost on an iPhone X already holding a WebSocket open, and this
+   project has no build step to optimise around them. Everything below is two
+   gradient layers and one box-shadow. */
+[data-theme="glossy"] {
+  /* A step off pure black so the drop shadow under each tile has something to
+     fall on -- on #000 the shadow is invisible and the tiles read as flat
+     again, which is the one thing this theme exists not to be. */
+  --color-bg: #0b0e13;
+
+  /* The body: transparent at the top so the tile's own state colour shows
+     through unchanged, deepening to 30% black at the bottom. This is how the
+     "gradient to a darker shade of itself" is produced without having to
+     compute a darker hex from an arbitrary colour -- no color-mix, no browser
+     floor, and it composes over every state including an item's false_color. */
+  --tile-gloss-body: linear-gradient(180deg,
+                                     rgba(0, 0, 0, 0) 0%,
+                                     rgba(0, 0, 0, 0.05) 48%,
+                                     rgba(0, 0, 0, 0.30) 100%);
+
+  /* The highlight: the same technique as Flat's --tile-sheen and the same
+     achromatic-on-purpose reasoning, just stronger and shorter -- it has to
+     read as a lit top edge rather than Flat's faint metal sheen. */
+  --tile-gloss-sheen: linear-gradient(180deg,
+                                      rgba(255, 255, 255, 0.26) 0%,
+                                      rgba(255, 255, 255, 0.10) 14%,
+                                      rgba(255, 255, 255, 0) 40%);
+
+  /* Small and tight, not a soft glow: 3px of blur under a 2px offset. The
+     inset line is the top edge catching light, and doubles as the tile's
+     border without costing layout the way a real border would. */
+  --tile-gloss-shadow: 0 2px 3px rgba(0, 0, 0, 0.5),
+                       inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+[data-theme="glossy"] .tile {
+  /* Sheen over body, both over background-color -- the state colour is
+     untouched underneath, so every state mechanism still decides what this
+     tile is. Two gradient layers in one property: no extra element, no
+     pseudo-element (::before and ::after are both spoken for on .tile), and
+     nothing animates either of them. */
+  background-image: var(--tile-gloss-sheen), var(--tile-gloss-body);
+  box-shadow: var(--tile-gloss-shadow);
+  border-radius: 14px;
+}
+
+/* The fill-bar is a positioned child, so it paints above the tile's own
+   background-image and would otherwise punch a flat, gloss-less hole through
+   it. It spans the tile's full height (inset: 0), so repeating the same two
+   layers here lands them in exactly the same place and the highlight reads as
+   one unbroken edge across the tile -- the same fix, and the same reason, as
+   button.css's existing --tile-sheen line on this element. */
+[data-theme="glossy"] .tile-slider .fill-bar {
+  background-image: var(--tile-gloss-sheen), var(--tile-gloss-body);
+}
+
+/* .tile-offline puts its dim on box-shadow, which this theme has just claimed
+   for the drop shadow -- and at (0,2,0) against (0,2,0), themes.css being
+   loaded last would have won and silently left offline tiles glossy and
+   undimmed. Restated with both, scrim first so the inset wash paints over the
+   tile rather than under it. The grayscale(1) filter is untouched and still
+   desaturates the gradients along with everything else. */
+[data-theme="glossy"] .tile.tile-offline {
+  box-shadow: inset 0 0 0 999px var(--color-scrim), var(--tile-gloss-shadow);
+}
+
+/* Header pills get the same treatment as the tiles, at a smaller scale, so
+   the controls above the deck read as belonging to it. */
+[data-theme="glossy"] #workspace-header a,
+[data-theme="glossy"] #workspace-header .header-btn {
+  background-image: var(--tile-gloss-sheen), var(--tile-gloss-body);
+  box-shadow: var(--tile-gloss-shadow);
+}
