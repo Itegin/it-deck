@@ -44,7 +44,7 @@ const ICONS = {
 // single workspace. Both callers live in this module because DOM writes do --
 // which also means every path that shows a deck (saved workspace, ?workspace=
 // param, picking one in the selector, a Studio edit re-render) and every path
-// that shows the selector (first run, "Switch") is covered without app.js
+// that shows the selector (first run, "Switch deck") is covered without app.js
 // having to remember to call anything.
 function setHeaderWorkspace(name) {
   // Falls back to the bare name rather than printing "IT-Deck undefined" if a
@@ -260,7 +260,7 @@ export function updateTileState(stateData) {
 export function renderWorkspaceSelector(workspaces, onSelect) {
   const grid = document.getElementById("grid");
 
-  // Explicitly cleared, not just left alone: arriving here from "Switch" means
+  // Explicitly cleared, not just left alone: arriving here from "Switch deck" means
   // a workspace name is already in the heading, and keeping it would label the
   // picker with the deck the user just left.
   setHeaderWorkspace(null);

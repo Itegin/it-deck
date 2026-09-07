@@ -35,7 +35,7 @@ function describeLoadFailure(err) {
     case "badReply":
       return "The backend's reply wasn't valid JSON. Check the backend log.";
     case "badParams":
-      return `${err.message} has invalid params JSON, so the deck can't be drawn. Fix its Params field in Control Panel.`;
+      return `${err.message} has invalid params JSON, so the deck can't be drawn. Fix its Params field in Studio.`;
     default:
       // Not an api.js failure at all -- a bug in the render path reaches
       // the same catch. Say so plainly instead of blaming the backend.
