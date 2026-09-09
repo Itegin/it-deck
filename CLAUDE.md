@@ -82,9 +82,9 @@ connected client verbatim; a fresh client also gets a full `{"type": "state", "d
 
 ## Dashboard themes
 
-The Dashboard has three visual themes -- `flat` (the original look), `pastel`
-and `glossy` -- selected by a `data-theme` attribute on `<html>` and
-implemented as CSS custom property overrides in `frontend/css/themes.css`.
+The Dashboard has four visual themes -- `flat` (the original look), `pastel`,
+`glossy` and `liquid-glass` -- selected by a `data-theme` attribute on `<html>`
+and implemented as CSS custom property overrides in `frontend/css/themes.css`.
 That file is linked from `index.html` only, which is the whole of the
 mechanism keeping **Studio on its own styling**; `studio.html` uses a bare
 `<header>` and never carries `#workspace-header`, so none of the Dashboard's
@@ -95,6 +95,33 @@ Every tile state resolves to one custom property, `--tile-state-color`
 `.state-active`, `.state-alert`, and render.js's inline write for
 `false_color`. Themes only change container-level presentation on top of that
 one value; none of them touch the state logic.
+
+A tile's **text colour is derived, not fixed**: render.js writes `--tile-ink`
+inline, choosing whichever palette ink scores the higher WCAG contrast against
+whatever `--tile-state-color` currently resolves to, and re-deciding whenever
+that changes. This is why a pale tile (`#f2c14e`) carries dark text while a
+neutral one carries light. Themes whose tile surface is *not* the state colour
+-- Pastel's white card, Liquid Glass's dark frosted pane -- pin `color` on
+their own `.tile` rule instead; the inline custom property cannot be
+outranked, but the `color` declaration it feeds can.
+
+**Liquid Glass** is the one theme that uses `backdrop-filter`, against the
+general "no glass material system" guidance in the visual-design skill. It is
+bounded deliberately: exactly one blurred layer per tile (`blur(12px)
+saturate(180%)`), nothing blurred behind it, and no blur at all on the header
+pills or the slider fill. `.claude/skills/it-deck-visual-design` still applies
+everywhere else -- don't read this theme as a licence for a second blurred
+surface.
+
+Adding a theme means adding the slug in **five** places, byte-identical:
+`THEMES` in `backend/app/api/settings.py`, `THEMES` in `frontend/js/theme.js`
+(order here is the cycle order), the inline boot allowlist in `index.html`'s
+`<head>`, a `[data-theme=...]` block in `css/themes.css`, and this file. Missing
+the boot allowlist raises no error at all -- it just flashes Flat on every load,
+which is exactly what that script exists to prevent. Note also that the backend
+copy ships **in the image** while the other three are **bind-mounted**: deploy
+the frontend ahead of the backend and cycling to the new theme 422s and
+silently reverts on the phone.
 
 The choice is **server-side** (the `setting` table, `GET /api/settings` +
 `PUT /api/settings/theme`), so it is shared by every panel rather than being
@@ -121,6 +148,18 @@ position), the client → backend → agent message shape does not currently
 carry one — `sendExecute` only sends `item_id` + `req_id`. Extend the
 message shape deliberately before building that handler; don't assume
 today's `execute`-only shape covers it.
+
+## Slider tiles
+
+The Volume tile is a `div`, not an `<input type="range">`, so every affordance a
+native control would bring is written by hand in `render.js`: `role="slider"`,
+`tabindex="0"`, `aria-valuemin/max/now/text`, and a `keydown` handler (arrows
+±5, PageUp/Down ±10, Home/End). **`setSliderValue()` is the only place a
+slider's value becomes visible** — it writes the painted `--fill-percent` and
+`aria-valuenow` together. Three callers drive it: the drag handlers, the
+keyboard handler, and `updateTileState` when the agent's poller reports the real
+volume. Writing `--fill-percent` directly anywhere else silently desyncs the
+announced value from the bar.
 
 ## Platform constraints
 
@@ -179,7 +218,8 @@ today's `execute`-only shape covers it.
   all, and that is deliberate rather than an oversight: the only client that
   changes the theme is the Dashboard on the phone, which has no token and
   nowhere safe to keep one over plain http on the LAN. The value is
-  constrained to one of three literals (`flat`/`pastel`/`glossy`) before it
-  is stored, and again in the client before it reaches a DOM attribute, so
+  constrained to one of four literals (`flat`/`pastel`/`glossy`/`liquid-glass`)
+  before it is stored, and again in the client before it reaches a DOM
+  attribute, so
   what it concedes is that anyone already on the local network can change how
   the deck looks -- not run a command, reach an agent, or touch the catalog.

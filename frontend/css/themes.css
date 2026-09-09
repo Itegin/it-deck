@@ -4,7 +4,7 @@
    specificity without needing to out-specify it.
 
    Selected by data-theme on <html>, written by js/theme.js (and, before first
-   paint, by the small inline script in index.html's <head>). Three values,
+   paint, by the small inline script in index.html's <head>). Four values,
    allowlisted at every point they are read; see api/settings.py.
 
    Flat has no block here on purpose. It is the base stylesheets rendering
@@ -18,8 +18,11 @@
    themselves. Only where a theme changes the *shape* of a tile -- Pastel's
    circular badge, Glossy's gradient -- does it add rules of its own.
 
-   Neither theme uses backdrop-filter, blur, or any animation. The only motion
-   in either is the press feedback and transitions button.css already had. */
+   Pastel and Glossy use no backdrop-filter, blur, or animation at all. Liquid
+   Glass is the one theme that does blur, and it is bounded on purpose -- one
+   blurred layer per tile, nothing blurred behind it, and no blur at all on the
+   header. No theme adds motion; the only motion on the deck is still the press
+   feedback and the transitions button.css already had. */
 
 
 /* ── Pastel ──────────────────────────────────────────────────────────────
@@ -53,6 +56,20 @@
      same as in Flat. */
   --color-active: #0b7c72;
   --color-alert: #b91c1c;
+  /* base.css brightens the text variant of the alert colour to clear AA on a
+     dark sheet; on Pastel's white context panel that same brightening runs the
+     wrong way (3.0:1). The darkened fill value is already the right answer for
+     text here, so the two collapse back into one. */
+  --color-alert-text: #b91c1c;
+
+  /* A tile with no colour of its own. Cannot be left at --color-surface (its
+     value everywhere else), because Pastel makes --color-surface the card --
+     so the "state colour" drawn in the border and the icon badge would be the
+     card's own white, on white. The workspace selector's tiles are exactly
+     this case and were rendering as an invisible border on a white card. The
+     hairline grey the rest of the theme uses for borders is the honest answer
+     for "this tile is not telling you anything". */
+  --tile-default-color: #d3dae4;
 
   /* Offline inverts here. --color-scrim is a 60% near-black wash designed to
      dim a dark tile; laid over a white card it reads as a *darker* tile, i.e.
@@ -63,6 +80,14 @@
 }
 
 [data-theme="pastel"] .tile {
+  /* Pastel's surface is the card, not the state colour, so button.css's
+     adaptive --tile-ink -- which is chosen against --tile-state-color -- is
+     the wrong answer here: a neutral #2a2f38 tile would pick the light ink and
+     paint .tile-pending's currentColor dot white on a white card. Pinning
+     `color` (not --tile-ink, which is inline and cannot be outranked) restores
+     exactly what .tile used to inherit from body. .label, .subtitle and .icon
+     set their own colours below and are unaffected either way. */
+  color: var(--color-text);
   /* Flat's white top sheen is invisible on a near-white card and the brief
      asks for no gradient here, so the layer is dropped rather than tinted. */
   background-image: none;
@@ -223,4 +248,144 @@
 [data-theme="glossy"] #workspace-header .header-btn {
   background-image: var(--tile-gloss-sheen), var(--tile-gloss-body);
   box-shadow: var(--tile-gloss-shadow);
+}
+
+
+/* ── Liquid Glass ────────────────────────────────────────────────────────
+   Apple's frosted-pane look: each tile is a translucent sheet of its own
+   state colour, blurring and saturating whatever is behind it, with a thin
+   specular line along its top edge.
+
+   Note the tension with .claude/skills/it-deck-visual-design, which rules out
+   "heavy backdrop-filter/blur stacks" and "glass material systems" on iPhone X
+   hardware. This theme was asked for explicitly, with its own performance
+   bound, so it is built to that bound rather than to the blanket no:
+
+     - exactly ONE blurred layer per tile, and nothing blurred behind it. The
+       fill-bar, the header pills, the icon badge and both tile pseudo-elements
+       are all plain paint.
+     - blur(12px), a moderate radius. The cost of backdrop-filter scales with
+       radius and with blurred area, and 12px on ten grid cells is the budget.
+     - it is opt-in. Anyone on hardware that struggles cycles one press on to
+       Glossy, which is pure gradient work.
+
+   Everything else is the usual token override: the state logic is untouched,
+   and --tile-state-color is still the only thing any state mechanism writes. */
+[data-theme="liquid-glass"] {
+  /* Not pure black. backdrop-filter can only reveal what is behind the pane,
+     and a flat ground blurs to itself -- the frost would be invisible and the
+     tiles would read as flat translucent rectangles. This is a deep blue-black
+     with two soft pools of the project's own purple and teal laid over it (see
+     the body rule below); functional, not decoration. */
+  --color-bg: #070a11;
+  --color-surface: #151a23;
+  --color-border: #2f3644;
+
+  /* A tile carrying no colour of its own still has to read as a pane. This is
+     the frost's own grey rather than a transparent nothing. */
+  --tile-default-color: #47506a;
+
+  /* How much of the state colour the pane holds. Below ~35% a neutral tile
+     stops reading as a tile at all; above ~50% it stops reading as glass. */
+  --glass-tint: 42%;
+
+  /* The veil: a flat white wash over the tint. It does two jobs -- it lifts
+     every pane off the ground (including the neutral ones, which the tint
+     alone leaves nearly invisible) and it is what makes the frost look like
+     a material rather than a colour filter. Kept achromatic for the same
+     reason Flat's --tile-sheen is: it must not shift what the tile's colour
+     is saying. */
+  --glass-veil: linear-gradient(180deg,
+                                rgba(255, 255, 255, 0.14) 0%,
+                                rgba(255, 255, 255, 0.06) 42%,
+                                rgba(255, 255, 255, 0.03) 100%);
+
+  /* The specular edge: a hairline catching light along the top, plus a
+     containing hairline for the rest of the pane's rim, plus a soft drop
+     shadow so the sheet reads as floating above the ground rather than cut
+     out of it. One box-shadow, no extra element. */
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.42),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.10),
+                0 6px 16px rgba(0, 0, 0, 0.42);
+}
+
+/* The ground the panes frost. Two large, low-alpha radial pools in the
+   project's existing purple and teal -- large enough that no tile ever sits
+   over a hard edge, faint enough to read as depth rather than as a gradient
+   wash. background-attachment is left alone: grid.css already pins html/body
+   with position:fixed, so this never scrolls. */
+[data-theme="liquid-glass"] body {
+  background-image:
+    radial-gradient(70% 55% at 18% 8%, rgba(142, 95, 245, 0.20) 0%, rgba(142, 95, 245, 0) 100%),
+    radial-gradient(60% 50% at 88% 82%, rgba(13, 148, 136, 0.16) 0%, rgba(13, 148, 136, 0) 100%);
+}
+
+[data-theme="liquid-glass"] .tile {
+  /* The pane's surface is the frosted ground, not the state colour, so
+     button.css's adaptive --tile-ink -- chosen against --tile-state-color --
+     would pick a dark ink for a pale state and paint it on a dark pane. Pinned
+     for the same reason Pastel pins it, and it holds for every state: the tint
+     never lightens the pane past the point where the light ink drops below AA.
+     Measured, not assumed -- see the audit note in css/themes.css's history. */
+  color: var(--color-text);
+
+  /* color-mix, because --tile-state-color arrives as an opaque hex and rgba()
+     cannot take a custom property as its first argument. Both .tile
+     pseudo-elements are already spoken for (::before is the ok/error ring,
+     ::after the pending dot), so there is no free layer to put a translucent
+     overlay on instead. color-mix clears this project's iOS 16.7 floor -- the
+     same note Pastel's icon tint makes about it. */
+  background-color: color-mix(in srgb, var(--tile-state-color) var(--glass-tint), transparent);
+  /* Replaces Flat's --tile-sheen rather than stacking on it. */
+  background-image: var(--glass-veil);
+  box-shadow: var(--glass-edge);
+  border-radius: 18px;
+
+  /* The one blurred layer. saturate() is what stops the blurred backdrop
+     going muddy grey -- it is the half of the Apple recipe people leave out.
+     The -webkit- prefix is not optional on the iOS floor this targets. */
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+}
+
+/* Fallback for a browser without backdrop-filter (nothing this project
+   targets, but the property degrades to *no blur at all*, i.e. a 42%
+   translucent tile over a dark ground -- unreadably faint, not merely
+   plainer). Raising the tint to fully opaque there gives back a solid tile
+   in the state colour, which is Flat. */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  [data-theme="liquid-glass"] .tile {
+    --glass-tint: 100%;
+  }
+}
+
+/* The fill-bar is a positioned child, so it paints above the tile's own
+   background and would punch a hole through the frost. Deliberately NOT given
+   its own backdrop-filter -- that would be the second blurred layer per tile
+   this theme's budget rules out. A flat translucent block of the fill colour
+   over the already-frosted pane reads as the level rising through the glass,
+   and costs nothing. */
+[data-theme="liquid-glass"] .tile-slider .fill-bar {
+  background-color: color-mix(in srgb, var(--active-color, var(--color-active)) 55%, transparent);
+  background-image: var(--glass-veil);
+}
+
+/* .tile-offline puts its dim on box-shadow, which this theme has just claimed
+   for the specular edge -- and at equal specificity, themes.css being loaded
+   last, this block would have won and left offline tiles lit and undimmed.
+   Restated with both, scrim first so the wash paints over the pane rather
+   than under it. Exactly the collision Glossy hit; the same fix. */
+[data-theme="liquid-glass"] .tile.tile-offline {
+  box-shadow: inset 0 0 0 999px var(--color-scrim), var(--glass-edge);
+}
+
+/* The header gets the material's *look* -- translucent fill, hairline rim --
+   but no backdrop-filter. Three more blurred layers above ten already-blurred
+   tiles is the stacking this theme's budget exists to avoid, and at 30px tall
+   the pills have almost no backdrop to reveal anyway. */
+[data-theme="liquid-glass"] #workspace-header a,
+[data-theme="liquid-glass"] #workspace-header .header-btn {
+  background-color: rgba(255, 255, 255, 0.08);
+  background-image: var(--glass-veil);
+  border-color: rgba(255, 255, 255, 0.14);
 }

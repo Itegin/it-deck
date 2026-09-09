@@ -23,6 +23,7 @@ from app.db import (
     fixup_day4_items,
     fixup_legacy_seed,
     fixup_mic_item,
+    fixup_toggle_off_colors,
     fixup_volume_item,
     fixup_vpn_item,
     init_db,
@@ -52,6 +53,10 @@ def on_startup() -> None:
     fixup_day4_items()
     fixup_vpn_item()
     fixup_audio_switch_state_key()
+    # Last: it rewrites the colour of rows the fixups above create, so it has
+    # to see them in their settled state (VPN in particular does not exist
+    # until fixup_vpn_item() has run at least once).
+    fixup_toggle_off_colors()
 
 
 @app.get("/health")

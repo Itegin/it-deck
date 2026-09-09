@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "taste": {
+      "source": "affaan-m/ECC",
+      "sourceType": "github",
+      "skillPath": "skills/taste/SKILL.md",
+      "computedHash": "d8b4a67b63f5a4f45aa3a8086f96837a85a2b739d23c9f3dabfa4c02a2680343"
+    },
+    "ui-styling": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/ui-styling/SKILL.md",
+      "computedHash": "0b5ee9163cc894c55e1ad1fec06fcffba2af85c8991cde03fbe93a2b72eff322"
+    }
+  }
+}

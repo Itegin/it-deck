@@ -150,12 +150,18 @@ function renderTable(items) {
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
+    // The visible word stays "Edit"; the accessible name names the row. A
+    // screen reader reading this table out of visual context otherwise gets a
+    // run of identical "Edit / Delete" buttons with nothing to tell them apart
+    // -- and one of each pair deletes an item.
+    editBtn.setAttribute("aria-label", `Edit "${item.label}"`);
     editBtn.addEventListener("click", () => openForm(item));
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "danger";
     deleteBtn.textContent = "Delete";
+    deleteBtn.setAttribute("aria-label", `Delete "${item.label}"`);
     deleteBtn.addEventListener("click", () => deleteItem(item));
 
     actionsTd.append(editBtn, deleteBtn);
@@ -321,8 +327,14 @@ function syncDeviceFields(selected) {
   loadDevices(fields.target.value, selected);
 }
 
+// What had focus when the form opened -- an Edit button, or "+ New Item".
+// closeForm hands focus back to it, so Cancel/Save returns the keyboard to the
+// row it came from rather than dropping it on <body> at the top of the page.
+let formOpener = null;
+
 function openForm(item) {
   paramsError.hidden = true;
+  formOpener = document.activeElement;
 
   // Carried down to syncDeviceFields rather than assigned to the selects
   // here: the <option>s don't exist until the agent's device list arrives.
@@ -399,12 +411,24 @@ function openForm(item) {
   // preference can be honoured.
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   form.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "start" });
+  // Scrolling the form into view is only half the job: focus was still on the
+  // Edit button up in the table, so a keyboard user's next Tab went to the
+  // *next row's* buttons rather than into the form that just opened.
+  // preventScroll, because the scrollIntoView above is already handling that
+  // and a second, instant scroll would cancel the smooth one mid-flight.
+  fields.label.focus({ preventScroll: true });
   // After form.hidden = false, so "Loading devices…" lands on a form the
   // user can already see.
   syncDeviceFields(savedDevices);
 }
 
 function closeForm() {
+  // Before the form is hidden: focus sitting inside a display:none subtree is
+  // dropped to <body>, and moving it afterwards would be a second jump.
+  if (formOpener && formOpener.isConnected) {
+    formOpener.focus();
+  }
+  formOpener = null;
   form.hidden = true;
   paramsError.hidden = true;
   // Same reason syncDeviceFields bumps it: a reply still in flight when the

@@ -12,7 +12,9 @@
   padding: 0;
   margin: 0;
   font: inherit;
-  color: inherit;
+  /* `color` is set below from --tile-ink, which defaults to the same
+     --color-text a <div> tile would have inherited -- so the reset's job
+     (undo the UA button's black) is still done, one declaration later. */
   text-align: inherit;
 
   /* The one place a tile's state colour is resolved, and the only thing any
@@ -40,7 +42,7 @@
      var() substitution the same as on any other, and that was checked
      directly rather than assumed, on a plain element and on a
      container-type: size one like this. */
-  --tile-state-color: var(--tile-color, var(--color-surface));
+  --tile-state-color: var(--tile-color, var(--tile-default-color));
 
   /* The sheen: white at 8% along the top edge, gone by the upper third.
      Achromatic on purpose -- it must not shift what the tile's colour is
@@ -57,6 +59,22 @@
                                 rgba(255, 255, 255, 0.08) 0%,
                                 rgba(255, 255, 255, 0.03) 18%,
                                 rgba(255, 255, 255, 0) 36%);
+
+  /* The ink the tile's own content is drawn in. render.js writes this
+     inline, picking whichever of the two palette inks scores the higher
+     contrast ratio against whatever --tile-state-color currently resolves
+     to -- so a pale tile (#f2c14e, 1.53:1 under the light ink) gets dark
+     text instead of unreadable white. The fallback is the light ink, which
+     is what every tile used unconditionally before, so a deck whose JS
+     never ran renders exactly as it always did.
+
+     Set on .tile rather than on .label, so the icon (stroke="currentColor"
+     in every ICONS entry), the .subtitle and .tile-pending's dot all follow
+     the same decision without three more rules. Themes whose tile surface is
+     NOT the state colour -- Pastel's white card, Liquid Glass's dark frosted
+     pane -- pin `color` on their own rules instead; an inline custom property
+     cannot be overridden, but the `color` declaration it feeds can. */
+  color: var(--tile-ink, var(--color-text));
 
   /* Two longhands rather than the `background:` shorthand these used to
      share, and the split is a fix, not a style preference. `background:

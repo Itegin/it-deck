@@ -57,6 +57,35 @@
       background: var(--color-border);
     }
 
+    /* Studio had :hover but no focus style at all, so tabbing through the
+       toolbar and the per-row Edit/Delete buttons was invisible. Same
+       convention base.css sets for the Dashboard -- 2px accent ring, 2px
+       outside the control -- restated here because studio.html carries its own
+       stylesheet and links none of the Dashboard's. */
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+
+    /* Available to a screen reader, absent from the page. Used for the actions
+       column's header, which has to be empty on screen (the cell is two
+       buttons wide) but must not be an unnamed column. */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
     button.danger:hover {
       background: var(--color-alert);
       border-color: var(--color-alert);
@@ -136,7 +165,9 @@
     }
 
     #devices-message.error {
-      color: var(--color-alert);
+      /* Text, so the brighter variant -- --color-alert is 3.43:1 on this
+         form's --color-surface, under AA at 13px. */
+      color: var(--color-alert-text);
     }
 
     #item-form label {
@@ -226,7 +257,8 @@
 
     #params-error {
       grid-column: 1 / -1;
-      color: var(--color-alert);
+      /* Same reason as #devices-message.error above. */
+      color: var(--color-alert-text);
       font-size: 13px;
     }
 
@@ -250,7 +282,10 @@
          form's workspace field meant Compact silently hit whatever that
          hidden dropdown happened to hold, which is only correct for the
          workspace whose item was edited most recently. -->
-    <select id="compact-workspace-select"></select>
+    <!-- No visible <label>: it sits directly beside the button it feeds and a
+         label would read as a second control in the row. Named for a screen
+         reader instead, which otherwise announces it as an unlabelled combo. -->
+    <select id="compact-workspace-select" aria-label="Workspace to show and compact"></select>
   </div>
 
   <table>
@@ -260,7 +295,7 @@
         <th>Type</th>
         <th>Target</th>
         <th>Position</th>
-        <th></th>
+        <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody id="items-tbody"></tbody>
@@ -320,7 +355,12 @@
       <select id="field-secondary-device"></select>
     </label>
 
-    <div id="devices-message" hidden></div>
+    <!-- Both messages are written by studio.js after an action the user took
+         and are never focused, so without a live region a screen-reader user
+         gets no signal at all that the device list failed or that Save was
+         rejected. role="alert" is the assertive one on purpose: each reports
+         that the thing just attempted did not happen. -->
+    <div id="devices-message" role="alert" hidden></div>
 
     <h2 class="form-group">Placement</h2>
 
@@ -370,7 +410,7 @@
     <!-- Directly above the actions on purpose: studio.js writes both the
          JSON-validation message and the "Save failed (...)" message here, and
          the second of those has to land next to the button that just failed. -->
-    <div id="params-error" hidden></div>
+    <div id="params-error" role="alert" hidden></div>
 
     <div class="form-actions">
       <button type="submit" id="save-btn">Save</button>

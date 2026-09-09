@@ -16,8 +16,17 @@
    them it is only ever as the var() fallback -- the item's own value still
    wins, exactly as before. */
 :root {
-  /* Header links on both pages, and every :focus-visible ring. */
-  --color-accent: #8e5ff5;
+  /* Header links on both pages, and every :focus-visible ring.
+
+     A lighter step of the project's purple than the #8e5ff5 this was, and the
+     reason is measured rather than aesthetic: the Dashboard's header links are
+     13px text sitting on --color-surface, not on the page, and #8e5ff5 is
+     4.03:1 there -- 3.27:1 once :hover lifts the pill to --color-border. Both
+     under AA. This value clears it on all three grounds (6.09:1 on the pill,
+     4.94:1 hovered, 7.72:1 on Studio's black page) and brightens the focus ring
+     with it. Same hue, one stop up the same ramp Pastel's #6d28d9 comes from --
+     not a new colour in the system. */
+  --color-accent: #a78bfa;
 
   /* The page itself, and the recessed wells of Studio's inputs/selects
      (they sit on --color-surface and read as sunk into it).
@@ -52,10 +61,31 @@
      fallback behind a tile's own --active-color. */
   --color-active: #0d9488;
 
-  /* The "alert/error" state colour: the fallback behind a tile's own
-     --alert-color, and the literal colour of every error message and
-     destructive control. */
+  /* The "alert/error" state colour as a *fill*: the fallback behind a tile's
+     own --alert-color, the tile's error ring, and Studio's danger-button hover.
+     Only ever paint, never text -- see --color-alert-text. */
   --color-alert: #dc2626;
+
+  /* The same role as text. A separate token because the two have opposite
+     requirements against the same dark grounds: #dc2626 is a fine fill behind
+     the light ink, and 3.43:1 as text on --color-surface, which is under AA at
+     the 13-16px these are set in. Every place the alert colour is *read* uses
+     this instead -- the context menu's destructive row, Studio's params and
+     device error messages. 4.68:1 on --color-surface, 5.93:1 on the page.
+     Themes with a light ground override it; Pastel does. */
+  --color-alert-text: #e85757;
+
+  /* What a tile with no colour of its own falls back to. Deliberately NOT
+     --color-surface directly, even though that is its value here: a theme is
+     free to redefine --color-surface as the *tile's own* surface (Pastel does
+     exactly that, making it the white card), and the fallback then resolves
+     to the card colour painted onto the card -- an invisible tile. Splitting
+     the two names lets each theme answer "what colour is a colourless tile"
+     separately from "what is a raised surface". See css/themes.css.
+
+     This is the fallback the workspace selector's tiles hit: they carry no
+     item, so render.js never sets --tile-color on them. */
+  --tile-default-color: #1A1F26;
 
   /* A near-black at 60%, used as a wash: the context-menu scrim and
      .tile-offline's inset dim. Declared whole rather than composed from

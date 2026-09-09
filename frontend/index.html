@@ -27,7 +27,10 @@
        duplicates the allowlist from js/theme.js on purpose -- a classic
        script cannot import a module, and the alternative (deferring to the
        module) is exactly the flash this exists to prevent. Keep the two
-       lists in step; both are three literals long.
+       lists in step; both are four literals long. Miss this one when adding
+       a theme and nothing errors -- every load just flashes Flat before the
+       module corrects it, which is precisely what this script exists to
+       prevent.
 
        localStorage is only a cache of the server's value. js/theme.js
        re-applies whatever GET /api/settings answers a moment later, so a
@@ -36,7 +39,7 @@
     try {
       var t = localStorage.getItem("itdeck:theme");
       document.documentElement.dataset.theme =
-        (t === "pastel" || t === "glossy") ? t : "flat";
+        (t === "pastel" || t === "glossy" || t === "liquid-glass") ? t : "flat";
     } catch (e) {
       document.documentElement.dataset.theme = "flat";
     }

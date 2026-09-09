@@ -53,5 +53,16 @@
 }
 
 .context-row.destructive {
-  color: var(--color-alert);
+  /* The text variant, not the fill one: --color-alert is 3.43:1 on this
+     sheet's --color-surface, under AA for 16px. */
+  color: var(--color-alert-text);
+}
+
+/* The menu now takes focus when it opens (see js/contextmenu.js), so its rows
+   need the same ring convention as the tiles and header pills -- inset, because
+   an outside ring on a full-width row would be clipped by .context-panel's
+   overflow:hidden. */
+.context-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }

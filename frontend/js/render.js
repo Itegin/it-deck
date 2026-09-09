@@ -36,7 +36,73 @@ const ICONS = {
   headphones: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3Z"/></svg>`,
   "audio-switch": `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`,
   camera: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z"/><circle cx="12" cy="13" r="4"/></svg>`,
+  // db.py's fixup_vpn_item has always seeded icon='shield', but there was no
+  // such key here -- so the VPN tile rendered label-only while every other
+  // tile carried a glyph. Same 24x24 stroke geometry as the rest.
+  shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>`,
 };
+
+// The two inks a tile's content can be drawn in: base.css's --color-text, and
+// --color-surface reused as a dark ink. Literals for the same reason the
+// active/alert fallbacks below are literals -- this runs per tile on every
+// render and every state change, and resolving two tokens off the document
+// each time buys nothing.
+const INK_LIGHT = "#F1F5F9";
+const INK_DARK = "#1A1F26";
+
+// #rgb, #rrggbb, and the rgb()/rgba() forms a computed custom property can
+// come back as. Anything else (a named colour, a colour function this browser
+// resolves differently, garbage typed into Studio's Params field) returns null
+// and leaves the ink alone rather than guessing.
+function parseColor(value) {
+  const text = String(value).trim();
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(text);
+  if (short) {
+    return [1, 2, 3].map((i) => parseInt(short[i] + short[i], 16));
+  }
+  const long = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(text);
+  if (long) {
+    return [1, 2, 3].map((i) => parseInt(long[i], 16));
+  }
+  const fn = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(text);
+  if (fn) {
+    return [1, 2, 3].map((i) => Math.round(Number(fn[i])));
+  }
+  return null;
+}
+
+// WCAG relative luminance / contrast ratio. Small enough to inline, and the
+// alternative -- eyeballing which tiles need dark text -- is exactly how
+// #f2c14e ended up carrying white text at 1.53:1.
+function luminance([r, g, b]) {
+  const channel = (value) => {
+    const c = value / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrastRatio(a, b) {
+  const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
+// Picks the ink for whatever colour the tile is resolving to *right now* and
+// writes it as --tile-ink (see button.css). Must be called after the tile is
+// in the document -- a detached element's computed custom property is the
+// empty string -- and again after anything that changes --tile-state-color,
+// which is why updateTileState calls it too.
+function applyTileInk(tile) {
+  const state = getComputedStyle(tile).getPropertyValue("--tile-state-color");
+  const rgb = parseColor(state);
+  if (!rgb) {
+    tile.style.removeProperty("--tile-ink");
+    return;
+  }
+  const dark = contrastRatio(rgb, parseColor(INK_DARK));
+  const light = contrastRatio(rgb, parseColor(INK_LIGHT));
+  tile.style.setProperty("--tile-ink", dark > light ? INK_DARK : INK_LIGHT);
+}
 
 // The h1 is the only thing on the deck that says which PC it is pointing at,
 // so it tracks whatever is actually on screen: the workspace's name when a
@@ -67,10 +133,10 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
     // A real <button> for anything you can actually press, so focusability,
     // the button role and Enter/Space activation come from the browser rather
     // than being reimplemented with tabindex + role + keydown. Sliders stay
-    // divs (a drag surface is not a button, and role=slider with arrow-key
-    // stepping is a separate task), and so do widget tiles, which have no
-    // listener at all -- making them focusable would put empty stops in the
-    // tab order.
+    // divs -- a drag surface is not a button -- and carry role="slider" plus
+    // their own arrow-key stepping instead (see attachSliderHandlers). Widget
+    // tiles stay plain divs with no listener at all: making them focusable
+    // would put empty stops in the tab order.
     const isButton = item.kind === "action" && !isSlider;
     const tile = document.createElement(isButton ? "button" : "div");
     if (isButton) {
@@ -107,19 +173,42 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
     tile.style.gridColumn = `${item.col + 1} / span ${item.width}`;
     tile.style.gridRow = `${item.row + 1} / span ${item.height}`;
     tile.style.setProperty("--tile-color", item.color);
-    // Per-item active/alert theming -- optional params keys, falling back
-    // to the original hardcoded teal/red so untouched items render
-    // identically to before this existed. Set on every tile (not just
-    // ones that toggle state) so the Volume slider's fill-bar can read
-    // --active-color too, per button.css.
-    tile.style.setProperty("--active-color", (item.params && item.params.active_color) || "#0d9488");
-    tile.style.setProperty("--alert-color", (item.params && item.params.alert_color) || "#dc2626");
+    // Per-item active/alert theming -- optional params keys. Written only when
+    // the item actually carries one, which is the fix, not a tidy-up: this used
+    // to assign "#0d9488"/"#dc2626" unconditionally, and an inline custom
+    // property beats every stylesheet rule. That meant `var(--active-color,
+    // var(--color-active))` in button.css could never reach its fallback, so
+    // Pastel's deliberately darkened --color-active/--color-alert (#0b7c72 and
+    // #b91c1c, chosen to clear AA against a white card -- see css/themes.css)
+    // were dead on every tile. Flat is unaffected: --color-active and
+    // --color-alert in base.css are the same two literals this was assigning.
+    if (item.params && item.params.active_color) {
+      tile.style.setProperty("--active-color", item.params.active_color);
+    }
+    if (item.params && item.params.alert_color) {
+      tile.style.setProperty("--alert-color", item.params.alert_color);
+    }
 
     if (isSlider) {
       tile.classList.add("tile-slider");
+      // A div, so every affordance a native range control would have brought
+      // has to be stated. tabindex puts it in the tab order (which also makes
+      // base.css's .tile:focus-visible ring apply to it); role/aria-value*
+      // are what a screen reader reads and announces on each step. The name
+      // comes from aria-label, not the .label child -- role="slider" does not
+      // take its name from its contents.
+      tile.setAttribute("role", "slider");
+      tile.setAttribute("tabindex", "0");
+      tile.setAttribute("aria-label", item.label);
+      tile.setAttribute("aria-valuemin", "0");
+      tile.setAttribute("aria-valuemax", "100");
       const fillBar = document.createElement("div");
       fillBar.className = "fill-bar";
       tile.appendChild(fillBar);
+      // The agent's first state report replaces this; until then the bar is
+      // empty, and a slider with no aria-valuenow is announced as "0" by some
+      // readers and as nothing by others. Say 0 explicitly.
+      setSliderValue(tile, 0);
     }
 
     if (ICONS[item.icon]) {
@@ -153,17 +242,53 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
           onTileClick(item.id);
         }
       });
+      // The long-press menu's only way in was a held pointer, so its contents
+      // (Force Stop) were unreachable without a touchscreen or a mouse. The
+      // `contextmenu` event is the platform's own name for "the secondary
+      // action on this element" and is what both the Menu key and Shift+F10
+      // fire, so one listener covers the keyboard and desktop right-click at
+      // once. Safe alongside attachLongPress: iOS never fires this here --
+      // base.css/button.css already suppress the native callout -- and
+      // showContextMenu dismisses any open menu before opening its own.
+      tile.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        onTileLongPress(item);
+      });
     }
 
     grid.appendChild(tile);
+    // After appendChild: --tile-state-color has no computed value on a
+    // detached element, so this has to run once the tile is in the document.
+    applyTileInk(tile);
   }
+}
+
+// One arrow press. 5 rather than 1 because the range is 0-100 and this is a
+// volume control: 20 presses end to end is a usable number, 100 is not.
+const SLIDER_STEP = 5;
+// Page Up/Down, the coarse step every range widget is expected to have.
+const SLIDER_PAGE_STEP = 10;
+
+// The single place a slider's value becomes visible -- the painted fill and
+// the value a screen reader announces, written together so they cannot drift.
+// Called from the drag handlers, from the keyboard handler, and from
+// updateTileState when the agent reports the real volume; that last caller is
+// the easy one to miss, and missing it leaves aria-valuenow stuck at whatever
+// this device last set while the bar shows the true value.
+function setSliderValue(tile, value) {
+  tile.style.setProperty("--fill-percent", `${value}%`);
+  tile.setAttribute("aria-valuenow", String(value));
+  // Without this a reader announces a bare "60"; the unit is the whole point.
+  tile.setAttribute("aria-valuetext", `${value}%`);
 }
 
 // Pointer Events (not an overlaid <input type="range">) because the fill
 // itself is a plain styled div driven by --fill-percent, not a native
 // track/thumb -- an <input> would still need JS glue to sync its value
 // into that custom property on every input event, plus fighting
-// -webkit-appearance to make it invisible, for no less code than this.
+// -webkit-appearance to make it invisible, for no less code than this. The
+// cost of that choice is that keyboard support is ours to write, which is
+// what the keydown handler at the end of this function is.
 function attachSliderHandlers(tile, item, onSliderChange) {
   let lastSent = 0;
 
@@ -173,8 +298,12 @@ function attachSliderHandlers(tile, item, onSliderChange) {
     return Math.round(Math.min(1, Math.max(0, ratio)) * 100);
   }
 
+  function currentValue() {
+    return Number(tile.getAttribute("aria-valuenow")) || 0;
+  }
+
   function applyValue(value, { force = false } = {}) {
-    tile.style.setProperty("--fill-percent", `${value}%`);
+    setSliderValue(tile, value);
     const now = Date.now();
     if (force || now - lastSent >= SLIDER_THROTTLE_MS) {
       lastSent = now;
@@ -202,6 +331,44 @@ function attachSliderHandlers(tile, item, onSliderChange) {
 
   tile.addEventListener("pointerup", release);
   tile.addEventListener("pointercancel", release);
+
+  // Up/Right raise and Down/Left lower, per the APG slider pattern -- a
+  // horizontal slider still answers the vertical arrows, because that is what
+  // a reader's own quick-nav keys send.
+  const KEY_DELTAS = {
+    ArrowRight: SLIDER_STEP,
+    ArrowUp: SLIDER_STEP,
+    ArrowLeft: -SLIDER_STEP,
+    ArrowDown: -SLIDER_STEP,
+    PageUp: SLIDER_PAGE_STEP,
+    PageDown: -SLIDER_PAGE_STEP,
+  };
+
+  tile.addEventListener("keydown", (event) => {
+    // A modified arrow is a browser/AT shortcut, not a value change.
+    if (event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+
+    let next;
+    if (event.key in KEY_DELTAS) {
+      next = currentValue() + KEY_DELTAS[event.key];
+    } else if (event.key === "Home") {
+      next = 0;
+    } else if (event.key === "End") {
+      next = 100;
+    } else {
+      return;
+    }
+
+    // Only after we know the key is ours: preventDefault on anything else
+    // would eat Tab and trap focus on the slider.
+    event.preventDefault();
+    // force, because SLIDER_THROTTLE_MS exists to thin a continuous drag --
+    // a single keypress is not one, and swallowing it would leave the fill
+    // moved and the agent never told.
+    applyValue(Math.min(100, Math.max(0, next)), { force: true });
+  });
 }
 
 export function updateTileState(stateData) {
@@ -216,7 +383,15 @@ export function updateTileState(stateData) {
       clearCommandState(tile);
 
       if (typeof value === "number") {
-        tile.style.setProperty("--fill-percent", `${value}%`);
+        // Via setSliderValue, not a bare --fill-percent write: this is the
+        // path the agent's poller drives, and it has to move aria-valuenow
+        // with the bar or the announced value silently goes stale. Guarded on
+        // role, because a non-slider tile could in principle report a number.
+        if (tile.getAttribute("role") === "slider") {
+          setSliderValue(tile, value);
+        } else {
+          tile.style.setProperty("--fill-percent", `${value}%`);
+        }
         continue;
       }
       if (typeof value === "string") {
@@ -257,6 +432,14 @@ export function updateTileState(stateData) {
       } else {
         tile.style.removeProperty("--tile-state-color"); // falls back to item.color via --tile-color
       }
+
+      // The tile just changed colour, so the ink decision it was rendered with
+      // may no longer be the readable one -- a tile going from #2a2f38 (light
+      // ink at 12.3:1) to a pale active colour needs the dark ink instead.
+      // Only this branch needs it: the number branch moves the fill bar and
+      // the string branch writes a subtitle, neither of which touches
+      // --tile-state-color.
+      applyTileInk(tile);
     }
   }
 }
@@ -296,6 +479,10 @@ export function renderWorkspaceSelector(workspaces, onSelect) {
     tile.addEventListener("click", () => onSelect(workspace));
 
     grid.appendChild(tile);
+    // These carry no item, so they have no --tile-color and land on
+    // --tile-default-color. Still needs the ink pass: a theme is free to make
+    // that default light (see css/themes.css).
+    applyTileInk(tile);
   });
 }
 
@@ -435,6 +622,10 @@ export function renderError(message) {
   grid.innerHTML = "";
   const errorEl = document.createElement("div");
   errorEl.className = "error-message";
+  // This replaces the entire deck and is never focused, so without a live
+  // region a screen-reader user is left on a page that has silently gone
+  // empty. Assertive rather than polite: nothing on the deck works now.
+  errorEl.setAttribute("role", "alert");
   errorEl.textContent = message;
   grid.appendChild(errorEl);
 }

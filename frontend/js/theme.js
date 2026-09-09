@@ -4,9 +4,11 @@
 
 import { fetchTheme, putTheme } from "./api.js";
 
-// Must stay in step with backend/app/api/settings.py's THEMES, and with the
-// [data-theme=...] blocks in css/themes.css. Order is the cycle order.
-export const THEMES = ["flat", "pastel", "glossy"];
+// Must stay in step with backend/app/api/settings.py's THEMES, with the
+// inline boot allowlist in index.html's <head>, and with the [data-theme=...]
+// blocks in css/themes.css. Order is the cycle order, so a new theme appended
+// here lands at the end of the cycle rather than in the middle of it.
+export const THEMES = ["flat", "pastel", "glossy", "liquid-glass"];
 
 const DEFAULT_THEME = "flat";
 

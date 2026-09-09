@@ -13,10 +13,17 @@ router = APIRouter()
 # The Dashboard's visual theme. An allowlist, not a free string, and that is
 # load-bearing rather than tidiness: the value ends up written straight into a
 # data-theme attribute on <html> by the client. frontend/js/theme.js re-checks
-# it against the same three names on the way in, because the client also reads
+# it against the same four names on the way in, because the client also reads
 # this value from localStorage and off the WebSocket, neither of which came
 # through this endpoint. Both ends validate; neither trusts the other.
-THEMES = ("flat", "pastel", "glossy")
+#
+# Four places have to agree on these slugs, byte for byte: this tuple,
+# THEMES in frontend/js/theme.js, the inline boot allowlist in the <head> of
+# frontend/index.html, and the [data-theme=...] blocks in css/themes.css.
+# Note that this list ships in the backend image while the other three are
+# bind-mounted -- deploying the frontend ahead of the backend makes a new
+# theme 422 here and silently revert on the phone.
+THEMES = ("flat", "pastel", "glossy", "liquid-glass")
 DEFAULT_THEME = "flat"
 
 
@@ -34,7 +41,7 @@ class ThemeUpdate(BaseModel):
 # What that concedes: anyone who can already reach the backend on the local
 # network can change how the deck looks. It cannot execute a command, reach an
 # agent, or read or alter the item catalog -- the value is constrained to one
-# of three literals before it is stored. Consistent with the single-user,
+# of the four literals in THEMES before it is stored. Consistent with the single-user,
 # local-network scope CLAUDE.md documents; revisit alongside the rest of the
 # auth story if that scope ever changes.
 @router.get("/api/settings")

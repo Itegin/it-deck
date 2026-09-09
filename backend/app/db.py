@@ -256,6 +256,38 @@ def fixup_audio_switch_state_key() -> None:
         conn.close()
 
 
+def fixup_toggle_off_colors() -> None:
+    # 'Mic' and 'VPN' were seeded with an off-state colour drawn from the same
+    # hue as their own on-state, so the tile said nothing about which state it
+    # was in:
+    #
+    #   Mic   off #e0575b vs alert #dc2626 -> 1.31:1
+    #   VPN   off #0d9488 vs active #0d9488 -> 1.00:1, i.e. identical
+    #
+    # WCAG 1.4.11 wants 3:1 between the colours that identify a component's
+    # state. Both move to the neutral tile colour already used by Terminal,
+    # Headphones, Audio Switch and Screenshot -- the schema default, not a new
+    # value -- which puts them at 2.78:1 against the alert red and 3.59:1
+    # against the active teal. (The alert pair is still marginally short of
+    # 3:1; closing it means repainting the shared --color-alert, which is also
+    # every error message and destructive control in the app, so it is left
+    # as a deliberate call rather than made here.)
+    #
+    # Guarded on the exact colour being replaced, not on the label alone: this
+    # must fire once on an unmigrated install and never again, or it would
+    # revert a colour deliberately chosen in Studio on the next restart --
+    # the scar fixup_volume_item() documents. It touches `color` only, which no
+    # other fixup writes for either row, so fixup_mic_item()'s unguarded
+    # params/icon UPDATE cannot undo it either.
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE item SET color = '#2a2f38' WHERE label = 'Mic' AND color = '#e0575b'")
+        conn.execute("UPDATE item SET color = '#2a2f38' WHERE label = 'VPN' AND color = '#0d9488'")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fixup_vpn_item() -> None:
     # Same insert-if-missing idempotency as fixup_day4_items(). Placement
     # is (row=3, col=1): the originally proposed (row=3, col=0) collides
