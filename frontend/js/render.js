@@ -124,7 +124,34 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   setHeaderWorkspace(workspace.name);
 
   grid.style.setProperty("--cols", workspace.grid_cols);
-  grid.style.setProperty("--rows", workspace.grid_rows);
+
+  // How many row tracks the deck gets -- and therefore, since grid.css sizes
+  // every row 1fr, how tall a tile is. Taken from the rows the items actually
+  // reach, not from the workspace's declared grid_rows: Home is 3x5 but its
+  // items stop at row 3, so the declared count left one full empty track at
+  // the bottom of the screen. Items added or deleted in Studio redistribute
+  // the height on the next render for free.
+  //
+  // Placement itself is untouched -- the grid-row/grid-column writes below
+  // still come straight from the item's own row/col/width/height, and
+  // grid_cols still sets the column count. Only the height of a track changes.
+  //
+  // Out-of-bounds items (row + height past grid_rows -- which the API refuses,
+  // but the startup fixups write directly to SQLite) are *included* rather
+  // than clamped, and that strictly helps the collapse bug grid.css documents:
+  // such an item now lands in an explicit 1fr track instead of an implicit
+  // auto one. grid.css keeps its grid-auto-rows guard regardless; this path is
+  // not the only thing that could ever create an implicit track.
+  const occupiedRows = workspace.items.reduce(
+    // `|| 1` because item.height is nullable in the schema (DEFAULT 1, no NOT
+    // NULL); one null row would otherwise make the whole count NaN and empty
+    // the track template.
+    (rows, item) => Math.max(rows, item.row + (item.height || 1)),
+    0,
+  );
+  // A workspace with no items still needs one track for .error-message's
+  // `grid-row: 1 / -1` to span.
+  grid.style.setProperty("--rows", Math.max(occupiedRows, 1));
 
   grid.innerHTML = "";
 

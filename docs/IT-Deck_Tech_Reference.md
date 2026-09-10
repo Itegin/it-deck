@@ -211,14 +211,18 @@ what the backend broadcasts.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `key` | TEXT PRIMARY KEY | Only `theme` exists today |
+| `key` | TEXT PRIMARY KEY | Two keys exist: `theme` and `mode` |
 | `value` | TEXT NOT NULL | |
 
 Rows are created on first write via `INSERT … ON CONFLICT(key) DO UPDATE`, so
 there is no seed and no fixup: an absent row means "never set", and each
 reader supplies its own default. Deliberately not a column on `workspace` —
-the theme is one choice shared by every panel, so putting it on a workspace
+both are one choice shared by every panel, so putting either on a workspace
 row would make switching decks silently change how the app looks.
+
+`theme` holds a `THEMES` slug (`flat` … `liquid-glass`); `mode` holds
+`auto` | `light` | `dark` and is the *light/dark axis*, independent of the
+theme — see §7.
 
 ### Seed and fixups
 
@@ -256,8 +260,9 @@ Every endpoint in `backend/app/` and `backend/app/api/**`.
 | --- | --- | --- | --- |
 | `GET /health` | none | — | `{"status": "ok"}` |
 | `GET /api/workspaces` | **none** | — | `[{id, name, position, grid_cols, grid_rows, items: [item, …]}]` — every column of every item, `params` still a JSON **string** |
-| `GET /api/settings` | **none** | — | `{"theme": "flat"\|"pastel"\|"glossy"\|"liquid-glass"}`; an unknown stored value logs a warning and serves the default |
+| `GET /api/settings` | **none** | — | `{"theme": "flat"\|"pastel"\|"glossy"\|"liquid-glass", "mode": "auto"\|"light"\|"dark"}` — both keys always present; an unknown *stored* value logs a warning and serves that key's default (`flat` / `auto`) |
 | `PUT /api/settings/theme` | **none** | `{"theme": "<slug>"}` | `{"theme": "<slug>"}`; `422` if not in the allowlist. Broadcasts `settings_update` |
+| `PUT /api/settings/mode` | **none** | `{"mode": "auto"\|"light"\|"dark"}` | `{"mode": "<value>"}`; `422` otherwise. Broadcasts `settings_update`. Written by Studio's "Deck background" picker; unauthenticated for the same reason the theme is (§7) |
 | `GET /api/items/{id}` | `X-Agent-Token` | — | The item row, or `404` |
 | `POST /api/items` | `X-Agent-Token` | `ItemCreate` (`workspace_id`, `row`, `col`, `width`=1, `height`=1, `label`, `icon?`, `color`=`#2a2f38`, `kind`, `type`, `target`=`windows`, `params`=`"{}"`, `state_key?`) | The created row. `400` on bad params JSON, bad placement, or FK failure. Broadcasts `workspace_update` |
 | `PUT /api/items/{id}` | `X-Agent-Token` | `ItemUpdate` — every field optional, `exclude_unset` so *omitted* ≠ *explicit null* | The updated row. Placement is re-checked against the **merged** rectangle, not just the submitted fields. `400` if nothing to update. Broadcasts `workspace_update` |
@@ -291,7 +296,11 @@ Notes that matter:
   one tile painted over another, and the buried one still receives no taps.
   `grid.css` handles the other half by sizing implicit tracks
   `minmax(0, 1fr)`: an out-of-bounds row otherwise lands in an `auto` track,
-  which `.tile`'s `container-type: size` measures as **0px**.
+  which `.tile`'s `container-type: size` measures as **0px**. Since
+  `renderWorkspace` started sizing the track count from the rows the items
+  actually occupy (§6, "Row sizing"), an out-of-bounds item gets an *explicit*
+  1fr track and cannot reach that failure from this path at all — the
+  `grid-auto-rows` guard stays as the backstop, not as the only defence.
 
 ---
 
@@ -512,6 +521,27 @@ reason: group opacity composites the label too, dragging it to 3.34:1 —
 illegible rather than de-emphasised. The inset shadow paints above the
 background and below the content, so the label keeps full strength.
 
+### Row sizing: what decides a tile's height
+
+`#grid` is `grid-template-rows: repeat(var(--rows), 1fr)` inside a flex column
+that gives it all the height under the header — so **the track count is the
+tile height**, and `--rows` is the only input.
+
+`renderWorkspace` writes it from the rows the items actually occupy
+(`max(item.row + item.height)`, floored at 1), **not** from the workspace's
+declared `grid_rows`. Home is 3×5 with items reaching row 3, so the declared
+count left one empty track — a strip of dead space along the bottom of the
+phone. Adding or deleting an item in Studio now redistributes the height on
+the next render with no arithmetic anywhere else. `grid_cols` is unchanged:
+columns still come from the workspace, so tile *width* is stable.
+
+Two bounds sit on top of that, both in `grid.css`:
+
+| Bound | Value | Why |
+| --- | --- | --- |
+| `--row-max` | `240px` | 1fr with few rows is unbounded: a two-tile deck or the workspace selector would hand each tile ~390px of height against 115px of width. `max-height: calc(rows × --row-max + gaps + padding)` clamps the grid and `margin-block: auto` centres the remainder, so the slack is split above and below rather than pooling under the deck. Measured on 390×844: 4 rows land at 188px and never reach the cap, 3 rows land 20px short of filling; only 1–2 row decks and the selector are actually centred |
+| no overflow | — | Rows **shrink** rather than scroll (8 rows = 89px each, still well over the 44px touch minimum). `#grid` deliberately has no `overflow` of its own: `html`/`body` are `position: fixed` precisely to keep a scroll chain — and iOS's elastic bounce — off this page |
+
 ### `--tile-ink`: derived text colour
 
 A tile's text colour is **computed, not fixed**. `applyTileInk()` in
@@ -625,6 +655,20 @@ select there means "the agent's list didn't load", not "none".
 
 ## 7. Theme system
 
+The Dashboard's look is **two independent settings**, not one:
+
+| Axis | Setting key | Values | Control |
+| --- | --- | --- | --- |
+| the *material* | `theme` | `flat`, `pastel`, `glossy`, `liquid-glass` | the header pill on the Dashboard, cycling |
+| the *ground* | `mode` | `auto`, `light`, `dark` | Studio's "Deck background" picker |
+
+Four materials × two grounds, and every combination is supported — no theme is
+"the light one" any more. They are separate `setting` rows, separate
+endpoints, and separate DOM attributes (`data-theme` / `data-mode` on `<html>`)
+on purpose: they are orthogonal, so folding them together would mean eight
+theme slugs, eight-step cycling, and no way to say "keep my theme, flip the
+ground".
+
 ### The four themes
 
 | Slug | Look | Where it is defined |
@@ -665,6 +709,114 @@ to 100 %, because the property degrading to *no blur* leaves a 42 %
 translucent tile on a dark ground — unreadably faint, not merely plainer.
 Don't read this theme as a licence for a second blurred surface.
 
+### The light / dark axis
+
+**`auto` is not a browser or OS preference.** It means "whichever ground this
+theme shipped with", and it exists because the setting is new: with only
+`light`/`dark`, no default could leave every existing deck looking the way it
+did — `dark` would have flipped a Pastel deck, `light` would have flipped the
+other three. `auto` is the default, and nobody's deck changes on deploy.
+
+| Theme | `auto` resolves to |
+| --- | --- |
+| `flat` | dark |
+| `pastel` | **light** |
+| `glossy` | dark |
+| `liquid-glass` | dark |
+
+That table exists in **three** places, all of them load-bearing and all of
+them pointing at each other: `NATIVE_MODE` in `frontend/js/theme.js` (the one
+that stamps the resolved attribute), the inline boot script in
+`index.html`'s `<head>` (the pre-paint copy — a classic script cannot import a
+module), and, in selector form, `themes.css`'s
+`:not([data-mode="light"])` / `:not([data-mode="dark"])` guards, which are what
+render correctly when there is no attribute at all. Adding a theme means
+answering "which ground does it ship with" in all three.
+
+**How the CSS is organised.** The light palette is declared **once**, for
+every theme, as one rule with two ways in:
+
+```css
+[data-mode="light"],                          /* an explicit choice, any theme */
+[data-theme="pastel"]:not([data-mode="dark"])  /* Pastel with no choice made  */
+```
+
+Dark needs no shared block: `base.css`'s `:root` *is* the dark palette, so
+dark is the absence of that rule. The values in it are Pastel's own,
+unchanged — so a light deck in any theme inherits ratios that were already
+measured rather than a second, unmeasured light palette. Per-theme blocks are
+two attributes deep (`[data-theme="x"][data-mode="y"]`), so they outrank it,
+and the `:not()` and `[data-mode=…]` arms of a pair can never both match.
+
+What each theme adds on top, and nothing more:
+
+| Theme | Light variant | Dark variant |
+| --- | --- | --- |
+| `flat` | *nothing* — Flat light is the shared light palette exactly, the same way Flat dark is the base stylesheets untouched | — |
+| `pastel` | the hairline `--tile-default-color`, and the inverted `--color-scrim` | a card lifted to `#1f2531` (a base-value card is 1.27:1 on a black page), `--tile-default-color: #7d879b`, and `--pastel-rim` |
+| `glossy` | a softer drop shadow (22% black, not 50% — 50% on a pale page reads as a cut-out) | the `#0b0e13` page the shadow needs |
+| `liquid-glass` | a **stronger** veil, a re-lit `--glass-edge`, light radial pools, a white-ish header pill, `opacity: 1` on the subtitle, and the inverted `--color-scrim` | everything it already had |
+
+**Liquid Glass's dark variant is the shipped one; the *light* one is the new
+work**, and it is not an inversion. Glass scatters what is behind it *toward
+white* in either mode, so the veil gets **stronger** in light (42% → 20%,
+against dark's 14% → 3%) and the specular top edge stays white and goes
+brighter, while only the containing hairline and the drop shadow flip to a
+neutral dark — on a pale ground it is shade, not light, that describes a
+pane's rim. `--glass-tint` deliberately stays **42% in both**: how much state
+colour a pane holds is what the theme says about the *item*, and that should
+not change with the room's lights. The result is frosted white glass on a pale
+ground rather than a dark theme with its numbers flipped.
+
+**`--pastel-rim`**, the one mechanism the axis added. Pastel paints the state
+colour *on* the card as a 1.5px rim and an icon badge. In light mode that is
+always legible (every state colour in the project is dark, the card is white);
+in dark mode it inverts, and the neutral `#2a2f38` that every "off" toggle and
+uncoloured item carries is **1.14:1** on the card — the rim vanishes
+(defensible: an unlit key) and *the icon vanishes with it* (not defensible: it
+is the tile's content, and it was disappearing on five of the ten seeded
+tiles). So dark mode mixes the state colour 60/40 toward the text ink before
+drawing it, via one indirection both rules read:
+`--pastel-rim: color-mix(in srgb, var(--tile-state-color) 60%, var(--color-text))`.
+Light mode declares nothing and uses the `var(--pastel-rim, var(--tile-state-color))`
+fallback, so it is byte-for-byte what it was.
+
+**`--color-scrim` is per-theme, not per-mode**, and that is the one place the
+axis is *not* a palette swap. `.tile-offline`'s wash sits under text whose
+colour was chosen against the item's *undimmed* colour, so which way the wash
+runs follows the tile, not the page:
+
+| Theme | Light mode scrim | Why |
+| --- | --- | --- |
+| `flat`, `glossy` | the **dark** base wash | the tile is the item's colour and the ink is adaptive; the commonest tile on a light deck is still the dark `#2a2f38` carrying light ink, and a light wash over that is **1.82:1** |
+| `pastel`, `liquid-glass` | the light wash | the card / pane is pale whatever the item's colour is, and its text is pinned dark; the dark wash measures 1.96:1 on a Liquid Glass pane |
+
+### Contrast, re-verified across the axis
+
+The check collapses from "4 themes × 7 states × 2 modes" once you notice
+**which themes' tile text is adaptive**:
+
+- **Flat and Glossy** paint the tile in the state colour and take their ink
+  from `applyTileInk`, which reads that colour — neither of which the mode
+  touches. Every tile state therefore measures *identically* in light and
+  dark, and this was confirmed in the browser rather than argued: all eight
+  states (default, active, alert, `false_color`, pending, ok, error, offline)
+  return the same ratio in both modes. Only the page chrome changes, and the
+  light palette's own values cover it (accent 6.1:1 on the page, 7.1:1 on a
+  pill; muted text 5.0:1 / 5.8:1).
+- **Pastel** is state-invariant instead: the card never carries the state
+  colour, so the label is one number per mode — 15.6:1 light, 14.0:1 dark.
+  What varies is the rim, and with `--pastel-rim` the dark side runs 3.8:1
+  (neutral) / 6.9:1 (teal) / 5.4:1 (alert red), all clear of the 3:1 floor for
+  a non-text UI element.
+- **Liquid Glass light** is the only place a pane has to be composited by hand
+  (state colour × 42% tint × veil × ground). Worst case is a pure-black item
+  colour at the bottom of the veil: **6.0:1** for the label; every real state
+  colour lands 7.3:1–14.6:1. The 12px subtitle was the one casualty of
+  `button.css`'s `opacity: 0.65` (3.1–4.4:1), fixed the same way Pastel's
+  light card fixed it — `opacity: 1`, size and weight already carry the
+  hierarchy.
+
 ### The storage / sync chain
 
 ```
@@ -692,10 +844,31 @@ Don't read this theme as a licence for a second blurred surface.
   │
   └─ next page load
         1. index.html's inline <head> script reads localStorage synchronously
-           and stamps data-theme before any stylesheet paints
-        2. theme.js initTheme() applies the cached value, wires the button,
+           and stamps data-theme + data-mode before any stylesheet paints
+        2. theme.js initTheme() applies the cached values, wires the button,
            then GET /api/settings and applies whatever the server says
 ```
+
+The mode runs the same chain from the other end — Studio's picker →
+`theme.js setMode()` (optimistic apply, roll back on failure) →
+`PUT /api/settings/mode` → the same `settings_update` broadcast → every
+Dashboard's `applyMode`, cached under `localStorage["itdeck:mode"]`.
+
+**A `settings_update` frame carries only the key that changed**, so every
+consumer must test a key's *presence*, not its truthiness. This is a real
+trap, not a style note: `applyTheme(undefined)` normalizes to `flat`, so the
+pre-existing `onSettingsUpdate(({ theme }) => applyTheme(theme))` would have
+flipped every other panel's deck to Flat the first time Studio changed the
+mode. `app.js` now checks `!== undefined` on each key. The `GET` is the
+opposite case — it always returns both keys, so an absent one there really does
+mean "no opinion" and the normalizers' defaults are correct.
+
+Because the mode resolves *through* the theme, **`applyTheme` restamps
+`data-mode`**: cycling Pastel → Glossy on an `auto` deck has to move the ground
+with it. `theme.js` holds the *preference* (`auto`|`light`|`dark`) in module
+state and stamps the *resolved* value (`light`|`dark`) on `<html>`, even for
+`auto` — the CSS handles an absent attribute too, but a deck whose JS has run
+is easier to reason about when the attribute says what you are looking at.
 
 Two properties this buys:
 
@@ -732,6 +905,15 @@ Plus documentation: this file (§7), and `CLAUDE.md`'s one-line pointer.
 
 Missing #3 raises **no error at all** — it just flashes Flat on every load,
 which is exactly what that script exists to prevent.
+
+Since the light/dark axis there is one more question to answer, in **three**
+of those places: **which ground does the new theme ship with?**
+`NATIVE_MODE` in `theme.js`, the boot script's
+`(t === "pastel") ? "light" : "dark"` line, and the theme's own
+`:not([data-mode="…"])` guard in `themes.css` all have to agree. Miss the guard
+and the theme renders with the wrong ground until someone picks a mode
+explicitly; miss the boot copy and it flashes the wrong ground on every load.
+Neither errors either.
 
 ### The deploy-ordering constraint
 
@@ -1051,14 +1233,38 @@ Ordered roughly by how likely each is to bite.
    as a deliberate call because closing it means repainting the shared
    `--color-alert`, which is also every error message and destructive control
    in the app. (The active-teal pair clears at 3.59:1.)
-6. **Liquid Glass's contrast claim is a comment, not a check.** `themes.css`
-   says the light ink holds against every tinted pane, "measured, not assumed —
-   see the audit note in `css/themes.css`'s history". That points at git
-   history rather than at a number in the file. **Unverified here.**
-7. **The theme allowlist lives in four places** with no test tying them
+6. **Liquid Glass's *dark* contrast claim is still a comment, not a check.**
+   `themes.css` says the light ink holds against every tinted pane, "measured,
+   not assumed — see the audit note in `css/themes.css`'s history". That points
+   at git history rather than at a number in the file, and it did not hold up
+   when the light variant was measured alongside it: composited by hand, a
+   near-white item colour puts the *dark* pane's label at **3.4:1** and its
+   12px subtitle at 2.3:1. The light variant is now measured in the file
+   (§7, worst case 6.0:1) and had its subtitle fixed; the dark side was left
+   exactly as it shipped rather than being changed under a task about the
+   light/dark axis. *Fix shape: the same `opacity: 1` the light variant now
+   uses, plus either a stronger veil floor or an ink that reads the composited
+   pane rather than the raw state colour.*
+7. **`.tile-offline` dims under an ink chosen before the dimming.**
+   `--tile-ink` is computed from the item's *undimmed* colour, then
+   `.tile-offline` lays `--color-scrim` over the tile — so a mid-to-light item
+   colour, which gets the dark ink, ends up dark-on-dark: the seeded
+   `#f2c14e` measures **2.29:1** offline, `#8e5ff5` 1.43:1, `#0d9488` 1.49:1
+   (the neutral `#2a2f38`, which most tiles use, is fine at 15.8:1). This is
+   pre-existing and mode-independent — `themes.css`'s own comment claims
+   "4.67:1 in the worst case of a near-white item.color", which recomputes to
+   3.25:1 for white and much worse for saturated mid-tones. Found while
+   verifying the light/dark axis and deliberately not fixed there: light mode
+   was given the same dark scrim Flat and Glossy already use, so it inherits
+   these ratios rather than adding new ones. *Fix shape: re-run
+   `applyTileInk` against the scrim-composited colour when `.tile-offline`
+   goes on and off.*
+8. **The theme allowlist lives in four places** with no test tying them
    together, and missing the `index.html` boot copy raises no error at all —
-   it just flashes Flat on every load. See §7.
-8. **Three placeholder tiles are not wired.** `Lights`, `Spotify`, `Sleep PC`
+   it just flashes Flat on every load. The light/dark axis adds a second
+   three-place table (which ground each theme ships with), with the same
+   silent-failure shape. See §7.
+9. **Three placeholder tiles are not wired.** `Lights`, `Spotify`, `Sleep PC`
    still carry the prototype types `toggle`, `launch`, `run`. Pressing one
    returns `unknown command: <type>`.
 

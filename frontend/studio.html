@@ -111,11 +111,33 @@
       gap: 8px;
     }
 
-    /* #item-form select doesn't reach the toolbar's own workspace picker, and
-       an unstyled select renders as an OS-default light control on this dark
-       page. Same field colors as the form's inputs, but the button's padding
-       and font-size so it sits level with the two buttons in the flex row. */
-    .toolbar select {
+    /* The app-settings row under the toolbar. Same flex-row-with-a-gap idiom
+       as .toolbar, plus baseline alignment so the label sits level with the
+       text inside the <select> rather than with the control's box. */
+    .settings-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--color-text-muted);
+    }
+
+    /* The confirmation / failure text beside the picker. Empty most of the
+       time, so it carries no space of its own until studio.js writes to it. */
+    #mode-message.error {
+      /* Same reason as #devices-message.error below: --color-alert is under
+         AA as text on this page. */
+      color: var(--color-alert-text);
+    }
+
+    /* #item-form select doesn't reach the toolbar's own workspace picker or
+       the settings row's mode picker, and an unstyled select renders as an
+       OS-default light control on this dark page. Same field colors as the
+       form's inputs, but the button's padding and font-size so it sits level
+       with the two buttons in the flex row. */
+    .toolbar select,
+    .settings-row select {
       background: var(--color-bg);
       color: var(--color-text);
       border: 1px solid var(--color-border);
@@ -286,6 +308,24 @@
          label would read as a second control in the row. Named for a screen
          reader instead, which otherwise announces it as an unlabelled combo. -->
     <select id="compact-workspace-select" aria-label="Workspace to show and compact"></select>
+  </div>
+
+  <!-- App-wide settings, deliberately its own row rather than a fourth
+       control in the toolbar above: everything in that row acts on items in a
+       workspace, and this acts on how every connected Dashboard looks. This
+       one does carry a visible <label> (unlike the compact picker) because
+       nothing next to it names it.
+
+       Not a duplicate of the Dashboard's theme pill -- that cycles the
+       material (Flat/Pastel/Glossy/Liquid Glass), this picks the ground each
+       material sits on. Two independent axes, two separate settings. -->
+  <div class="settings-row">
+    <label for="mode-select">Deck background</label>
+    <select id="mode-select"></select>
+    <!-- role="status" rather than "alert": the common case here is the
+         confirmation that a shared setting changed, and the same element
+         carries the failure when the PUT is rejected. -->
+    <span id="mode-message" role="status"></span>
   </div>
 
   <table>

@@ -1,7 +1,7 @@
 import { fetchWorkspaces } from "./api.js";
 import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setTileCommandState, getTileMeta } from "./render.js";
 import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate, onSettingsUpdate } from "./ws.js";
-import { initTheme, applyTheme } from "./theme.js";
+import { initTheme, applyTheme, applyMode } from "./theme.js";
 import { showContextMenu } from "./contextmenu.js";
 import { showToast } from "./toast.js";
 
@@ -148,10 +148,23 @@ onWorkspaceUpdate(() => init());
 // and it must not be re-fetched every time a Studio edit re-renders the grid.
 initTheme((err) => showToast(`Couldn't save the theme: ${err.message}`));
 
-// Another panel pressed the theme button. Applied, not re-fetched -- the
-// frame already carries the new value, and applyTheme re-checks it against
-// the allowlist before it reaches the DOM.
-onSettingsUpdate(({ theme }) => applyTheme(theme));
+// Another panel pressed the theme button, or Studio changed the light/dark
+// mode. Applied, not re-fetched -- the frame already carries the new value,
+// and applyTheme/applyMode re-check it against their allowlists before it
+// reaches the DOM.
+//
+// Each key is tested for *presence*, and that is load-bearing rather than
+// defensive: settings.py broadcasts only the key that changed, so a mode frame
+// carries no theme at all. Calling applyTheme(undefined) would normalize to
+// the default and silently flip every other panel's deck to Flat.
+onSettingsUpdate((settings) => {
+  if (settings.mode !== undefined) {
+    applyMode(settings.mode);
+  }
+  if (settings.theme !== undefined) {
+    applyTheme(settings.theme);
+  }
+});
 
 // iOS Safari only applies :active styles on tap if some element has a touch
 // listener attached; this empty listener exists solely to enable that.

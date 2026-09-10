@@ -32,8 +32,58 @@ body {
      means that content now measures as nothing anyway). */
   flex: 1;
   min-height: 0;
+
+  /* Gap and padding as tokens purely so the max-height calc below can add
+     them up. Nothing else reads them; they are not a theming surface. */
+  --grid-gap: 10px;
+  --grid-pad: 12px;
+
+  /* The ceiling on how tall a row may get.
+     Rows are 1fr, so a deck with *few* rows makes each one enormous: a
+     two-row deck, or the workspace selector (--cols:1), would hand each tile
+     390px of height against 115px of width on a 390px phone. Past roughly
+     this point a tile stops reading as a key on a deck and starts reading as
+     a panel, and its label and icon don't grow with it anyway -- both are
+     clamped against `cqmin`, i.e. against the tile's *narrow* axis, which is
+     the width. So row height is capped and the leftover goes to the auto
+     margins below, which centre the deck rather than letting it hang from
+     the header with the slack pooled underneath.
+     Measured on the phone this deck is built for (390x844, 804px under the
+     header): 4 rows land at 188px and never reach the cap; 3 rows land 20px
+     short of filling, which reads as a normal edge; only 1-2 row decks and
+     the selector actually get centred with visible slack. Raising this
+     further would let a two-tile deck become two full-height slabs. */
+  --row-max: 240px;
+
+  /* What "fill the space, but no taller than --row-max per row" comes to as
+     one length. box-sizing is border-box (base.css's `*` rule), so the
+     padding has to be counted in. --rows is a unitless number written by
+     render.js, and `<number> * <length>` is valid in calc.
+     flex:1 above still grows #grid to the full available height; this only
+     clamps the result, and margin-block:auto then takes whatever the clamp
+     left over and splits it above and below -- so a sparse deck sits centred
+     in the viewport instead of hanging from the header with a gap under it.
+     (Auto margins on a flex item absorb main-axis free space; there is only
+     free space here when this max-height actually bites.) */
+  max-height: calc(var(--rows, 5) * var(--row-max)
+                   + (var(--rows, 5) - 1) * var(--grid-gap)
+                   + 2 * var(--grid-pad));
+  margin-block: auto;
+
   display: grid;
   grid-template-columns: repeat(var(--cols, 3), 1fr);
+  /* 1fr rows divide the height above between them, so the track *count* is
+     what decides a tile's height -- and render.js now writes --rows from the
+     rows the items actually occupy rather than from the workspace's declared
+     grid_rows. A 3x5 deck whose items stop at row 3 therefore gets four
+     rows that fill the screen instead of five with one empty at the bottom,
+     and adding or deleting an item in Studio redistributes the height on the
+     next render with no further arithmetic here.
+     Note what this deliberately does *not* do: rows shrink rather than
+     scroll. #grid has no overflow of its own on purpose -- html/body above
+     are position:fixed specifically to keep a scroll chain (and iOS's
+     elastic bounce) off this page, and a deck deep enough for 1fr rows to
+     become untappable needs its grid_rows widened, not a scrollbar. */
   grid-template-rows: repeat(var(--rows, 5), 1fr);
   /* Every tile is placed *explicitly* -- render.js writes grid-row/grid-column
      straight from the item's own row/col/width/height -- so a row the
@@ -52,8 +102,8 @@ body {
      above: 1fr is minmax(auto, 1fr), whose auto floor refuses to shrink. */
   grid-auto-rows: minmax(0, 1fr);
   grid-auto-columns: minmax(0, 1fr);
-  gap: 10px;
-  padding: 12px;
+  gap: var(--grid-gap);
+  padding: var(--grid-pad);
 }
 
 /* renderError() drops this straight into #grid, which is still a track grid

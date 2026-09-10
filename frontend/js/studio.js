@@ -1,7 +1,17 @@
+// Studio's first module import, and it is only for the two settings this page
+// now writes -- the value list, the display names, and the optimistic PUT.
+// Note what it deliberately does not do: nothing here applies a theme or a
+// mode to *this* page. css/themes.css is linked from index.html only, which is
+// what keeps Studio on its own look, and that is unchanged by the new axis.
+import { MODES, modeLabel, setMode } from "./theme.js";
+import { fetchSettings } from "./api.js";
+
 const tbody = document.getElementById("items-tbody");
 const form = document.getElementById("item-form");
 const paramsError = document.getElementById("params-error");
 const devicesMessage = document.getElementById("devices-message");
+const modeSelect = document.getElementById("mode-select");
+const modeMessage = document.getElementById("mode-message");
 // Compact layout's target workspace. Kept out of `fields` on purpose --
 // that map is the item-edit form, and this picker exists precisely so
 // Compact no longer depends on it.
@@ -544,6 +554,61 @@ async function compactLayout() {
   await loadItems();
 }
 
+// ── Deck background (the light/dark axis) ──────────────────────────────────
+// One shared, server-stored setting, same as the theme -- so this picker shows
+// what the server currently holds and every connected Dashboard repaints off
+// the settings_update broadcast the PUT triggers. Studio itself does not
+// change appearance; see the import note at the top of this file.
+
+function setModeMessage(text, isError) {
+  modeMessage.textContent = text;
+  modeMessage.classList.toggle("error", Boolean(isError));
+}
+
+function populateModeSelect(selected) {
+  modeSelect.innerHTML = "";
+  for (const mode of MODES) {
+    const option = document.createElement("option");
+    option.value = mode;
+    option.textContent = modeLabel(mode);
+    modeSelect.appendChild(option);
+  }
+  modeSelect.value = selected;
+}
+
+async function loadMode() {
+  try {
+    const { mode } = await fetchSettings();
+    // normalizeMode inside theme.js guards the value that reaches the DOM;
+    // here an unknown value would just leave the <select> on nothing, so the
+    // fallback to the first option (MODES[0], i.e. "auto") is explicit.
+    populateModeSelect(MODES.includes(mode) ? mode : MODES[0]);
+  } catch (err) {
+    // The picker is useless without knowing the current value -- setting it
+    // blind would show a choice nobody made -- so it is disabled rather than
+    // left looking authoritative.
+    populateModeSelect(MODES[0]);
+    modeSelect.disabled = true;
+    setModeMessage(`Couldn't read the current setting: ${err.message}`, true);
+  }
+}
+
+modeSelect.addEventListener("change", async () => {
+  const chosen = modeSelect.value;
+  setModeMessage("Saving…", false);
+  try {
+    await setMode(chosen);
+    setModeMessage(`Saved. Every connected deck is now ${modeLabel(chosen)}.`, false);
+  } catch (err) {
+    setModeMessage(`Save failed: ${err.message}`, true);
+    // setMode has already put its own state back, but the <select> is showing
+    // a value the server rejected. Re-read rather than guess which one it
+    // kept -- and deliberately after the message above, which loadMode leaves
+    // alone on success.
+    loadMode();
+  }
+});
+
 document.getElementById("new-item-btn").addEventListener("click", () => openForm(null));
 document.getElementById("compact-btn").addEventListener("click", compactLayout);
 document.getElementById("cancel-btn").addEventListener("click", closeForm);
@@ -639,3 +704,6 @@ form.addEventListener("submit", async (event) => {
 });
 
 loadItems();
+// Independent of loadItems: a settings read must not be able to take the item
+// table down with it, or the other way round.
+loadMode();

@@ -30,7 +30,8 @@
        lists in step; both are four literals long. Miss this one when adding
        a theme and nothing errors -- every load just flashes Flat before the
        module corrects it, which is precisely what this script exists to
-       prevent.
+       prevent. The same applies to the theme's *native ground* below: miss it
+       and a new dark theme flashes light, or the reverse.
 
        localStorage is only a cache of the server's value. js/theme.js
        re-applies whatever GET /api/settings answers a moment later, so a
@@ -38,10 +39,22 @@
   <script>
     try {
       var t = localStorage.getItem("itdeck:theme");
-      document.documentElement.dataset.theme =
-        (t === "pastel" || t === "glossy" || t === "liquid-glass") ? t : "flat";
+      t = (t === "pastel" || t === "glossy" || t === "liquid-glass") ? t : "flat";
+      document.documentElement.dataset.theme = t;
+
+      // The light/dark ground, same deal: cached here so a light deck doesn't
+      // flash dark (or vice versa) for a round trip. "auto" -- the default,
+      // and anything unrecognised -- means "whichever ground this theme
+      // shipped with", which is the third copy of js/theme.js's NATIVE_MODE
+      // table. Pastel is the only light one.
+      var m = localStorage.getItem("itdeck:mode");
+      if (m !== "light" && m !== "dark") {
+        m = (t === "pastel") ? "light" : "dark";
+      }
+      document.documentElement.dataset.mode = m;
     } catch (e) {
       document.documentElement.dataset.theme = "flat";
+      document.documentElement.dataset.mode = "dark";
     }
   </script>
 </head>

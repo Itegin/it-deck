@@ -7,9 +7,20 @@
    paint, by the small inline script in index.html's <head>). Four values,
    allowlisted at every point they are read; see api/settings.py.
 
-   Flat has no block here on purpose. It is the base stylesheets rendering
-   untouched, so data-theme="flat" matches nothing below and there is no way
-   for this file to drift away from it.
+   TWO independent axes now: data-theme picks the *material* (flat, pastel,
+   glossy, liquid-glass) and data-mode picks the *ground* (light or dark).
+   Every theme supports both, so nothing below special-cases a theme into
+   being "the light one" -- the light palette is declared once, in the block
+   directly under this comment, and each theme adds only what it alone needs.
+   See the "light / dark axis" section below for how the attribute-absent
+   case (a deck whose JS hasn't run, or which has never chosen a mode) keeps
+   each theme on the ground it shipped with.
+
+   Flat has no [data-theme="flat"] block here on purpose. It is the base
+   stylesheets rendering untouched, so data-theme="flat" matches nothing
+   theme-specific below and there is no way for this file to drift away from
+   it. Flat's *light* variant is exactly the shared light palette with no
+   additions, which is the same idea one axis over.
 
    Nearly everything here is a token override rather than a new rule. The tile
    already resolves its state colour to one custom property (button.css's
@@ -25,58 +36,155 @@
    feedback and the transitions button.css already had. */
 
 
-/* ── Pastel ──────────────────────────────────────────────────────────────
-   A light deck: near-white cards on a soft grey page, the state colour
-   carried by a thin border and a circular icon badge rather than by flooding
-   the card. Dark text, because the card is now the light surface.
+/* ── The light / dark axis ───────────────────────────────────────────────
+   The light palette, declared once for every theme. Dark needs no block at
+   all: base.css's :root *is* the dark palette, so "dark" is simply the
+   absence of this one, and a theme that wants a dark-specific value states it
+   in its own [data-mode="dark"] block below.
 
-   The state colour appears at three strengths -- full on the border and the
-   icon, ~14% behind the icon -- which is what keeps default/active/alert
-   distinguishable without a saturated card. */
-[data-theme="pastel"] {
+   Read the two selectors as one rule with two ways in:
+
+     [data-mode="light"]                          an explicit choice, any theme
+     [data-theme="pastel"]:not([data-mode="dark"]) Pastel with no choice made
+
+   That second arm is what keeps this change invisible to an existing deck.
+   The mode is a *new* setting, so until someone picks one there is no
+   data-mode attribute at all -- and Pastel shipped as the one light theme,
+   while Flat, Glossy and Liquid Glass shipped dark. So Pastel-with-no-mode
+   has to resolve light and the other three have to resolve dark, which is
+   exactly what this arm plus the :not([data-mode="light"]) guards further
+   down do. Nobody's deck flips on deploy; picking a mode is what changes it.
+   (js/theme.js does stamp a concrete data-mode once it runs, resolving
+   "auto" through the same per-theme table. These selectors are what make the
+   pre-JS paint -- and a deck whose JS never runs -- agree with it.)
+
+   The values are Pastel's, unchanged and already measured: this block is
+   where they now live, so a light deck in any theme gets the same verified
+   ratios rather than a second, unmeasured light palette.
+
+   Specificity: both arms are attribute selectors, and themes.css loads after
+   base.css, so this beats :root without needing to out-specify it. Per-theme
+   blocks below are two attributes deep, so they beat this in turn. */
+[data-mode="light"],
+[data-theme="pastel"]:not([data-mode="dark"]) {
   /* The same brand purple, stepped down for a light ground. #8e5ff5 is only
      4.1:1 on white -- under AA for the 14px header links and for the focus
      ring it also draws. This value is already the project's purple in
      generated docs, so it is a step within the palette, not a new hue: 7.1:1
-     on the card, 6.4:1 on the page. */
+     on the surface, 6.1:1 on the page. */
   --color-accent: #6d28d9;
   --color-bg: #e9edf3;
-  /* The card, and the header pills that sit on the same page. */
+  /* The header pills, the toast and the context sheet -- and, in Pastel, the
+     tile's own card. */
   --color-surface: #ffffff;
   --color-border: #d3dae4;
-  /* 13.9:1 on the white card. */
+  /* 15.6:1 on the white surface, 13.3:1 on the page. */
   --color-text: #1c2430;
-  /* 4.9:1 on the white card -- still AA at the subtitle's 12px. */
+  /* 5.8:1 on the white surface, 5.0:1 on the page -- still AA at the
+     subtitle's 12px on either. */
   --color-text-muted: #5b6675;
   /* Darkened from the shared teal/red so they hold up as *text and hairlines
      on white* rather than as fills behind white text: #0d9488 is 3.0:1 on
      #ffffff and #dc2626 is 4.3:1, both short. These are the same two hues,
-     stepped down until they clear AA (4.7:1 and 5.9:1). They are only the
-     fallbacks -- an item's own --active-color/--alert-color still wins, the
-     same as in Flat. */
+     stepped down until they clear AA on white (5.1:1 and 6.5:1). They are
+     only the fallbacks -- an item's own --active-color/--alert-color still
+     wins, the same as in Flat. */
   --color-active: #0b7c72;
   --color-alert: #b91c1c;
   /* base.css brightens the text variant of the alert colour to clear AA on a
-     dark sheet; on Pastel's white context panel that same brightening runs the
-     wrong way (3.0:1). The darkened fill value is already the right answer for
-     text here, so the two collapse back into one. */
+     dark sheet; on a white context panel that same brightening runs the wrong
+     way (3.0:1). The darkened fill value is already the right answer for text
+     here, so the two collapse back into one. */
   --color-alert-text: #b91c1c;
 
-  /* A tile with no colour of its own. Cannot be left at --color-surface (its
-     value everywhere else), because Pastel makes --color-surface the card --
-     so the "state colour" drawn in the border and the icon badge would be the
-     card's own white, on white. The workspace selector's tiles are exactly
-     this case and were rendering as an invisible border on a white card. The
-     hairline grey the rest of the theme uses for borders is the honest answer
-     for "this tile is not telling you anything". */
+  /* A tile with no colour of its own -- the workspace selector's tiles, which
+     carry no item and so never get a --tile-color. In Flat and Glossy this is
+     a *fill*, so it has to read as a card against the page: #c9d2de is one
+     step down from the hairline grey, which is enough separation without
+     inventing a border Flat has never had. Pastel and Liquid Glass use the
+     same token as a *line* and a *tint* respectively, and both override it
+     below with a value that suits that job instead.
+     Cannot be left at --color-surface (its value in base.css), because Pastel
+     makes --color-surface the card -- the "state colour" in its border and
+     icon badge would then be the card's own white, on white. */
+  --tile-default-color: #c9d2de;
+
+  /* --color-scrim is deliberately NOT here, and the reason is measured. It is
+     the wash .tile-offline dims a tile with, and which way it should run
+     depends on the *tile*, not on the page: the ink over it is
+     button.css's adaptive --tile-ink, chosen against the item's own colour
+     before any dimming.
+     In Flat and Glossy the tile is the item's colour, so on a light deck the
+     commonest tile is still the dark neutral #2a2f38 carrying light ink -- and
+     a light wash over that lands at 1.82:1, illegible. Those two therefore
+     keep base.css's dark wash in light mode, which puts light-mode offline
+     tiles at exactly the ratios dark mode already has (15.8:1 on the neutral).
+     Only the two themes whose tile surface is light *whatever the item colour
+     is* -- Pastel's card and Liquid Glass's frosted pane -- invert it, and
+     each says so in its own block below. */
+}
+
+
+/* ── Pastel ──────────────────────────────────────────────────────────────
+   Near-white cards on a soft grey page -- or, in dark mode, the same cards
+   in the base palette's near-black on black. Either way the state colour is
+   carried by a thin border and a circular icon badge rather than by flooding
+   the card, and the card is the surface, so the text colour comes from
+   --color-text rather than from the adaptive --tile-ink.
+
+   The state colour appears at three strengths -- full on the border and the
+   icon, ~14% behind the icon -- which is what keeps default/active/alert
+   distinguishable without a saturated card.
+
+   So neither variant needs a token block of any size: light needs one value
+   (what a *colourless* tile's border is) and dark needs two (that, plus a
+   card lifted far enough off a pure-black page to read as a card). Everything
+   else follows from the shared palette above or from base.css -- which is the
+   whole reason this theme, the one that was already light, needed no
+   restructuring to grow a dark variant. */
+[data-theme="pastel"]:not([data-mode="dark"]) {
+  /* The hairline grey the rest of the light palette uses for borders -- the
+     honest answer for "this tile is not telling you anything". Overrides the
+     shared light block's fill-oriented value above. */
   --tile-default-color: #d3dae4;
 
-  /* Offline inverts here. --color-scrim is a 60% near-black wash designed to
-     dim a dark tile; laid over a white card it reads as a *darker* tile, i.e.
-     as more emphasis, which is the opposite of what offline means. A light
-     wash washes the card out toward the page instead, which is what "we don't
-     know" should look like on a light deck. */
+  /* Offline inverts here, and this is the theme it was written for. The 60%
+     near-black base wash is designed to dim a dark tile; laid over this
+     theme's white card it reads as a *darker* tile, i.e. as more emphasis,
+     which is the opposite of what offline means. A light wash washes the card
+     out toward the page instead -- and the card's text is pinned dark, so it
+     stays legible (13.9:1) rather than depending on an ink chosen for the
+     item's colour. Both halves of that sentence are why this belongs to
+     Pastel-light specifically and not to light mode in general; see the note
+     in the shared light block above. */
   --color-scrim: rgba(233, 237, 243, 0.72);
+}
+
+[data-theme="pastel"][data-mode="dark"] {
+  /* The card, lifted one step off base.css's #1A1F26. Pastel is the one theme
+     whose tile is *not* painted in the state colour, so on a pure-black page a
+     base-value card is the only thing describing the tile's shape -- and at
+     1.27:1 it barely does. #1f2531 takes that to 1.37:1, which reads as a card
+     without turning the deck grey, and it costs nothing elsewhere: the label
+     is 14.0:1 on it, the subtitle 6.0:1, the header pills' accent 5.6:1.
+     Deliberately NOT lifted further. Every state colour is drawn *on* this
+     card, so each step lighter costs all of them contrast at once -- at
+     #2a2f38 (the obvious "dark tile" value this project already uses) the
+     alert border falls to 2.8:1, under the 3:1 UI floor. */
+  --color-surface: #1f2531;
+
+  /* What a colourless tile's 1.5px border and icon badge are drawn in -- the
+     same job as the light variant's hairline grey, measured the same way.
+     base.css's --color-border (#2a2f38) is 1.14:1 on the card above, i.e.
+     invisible: exactly the failure the light variant's note describes, one
+     axis over. #7d879b is 4.25:1, clearing the 3:1 floor a non-text UI
+     element needs with room to spare.
+     The state borders that carry actual meaning clear it too, on the same
+     card: teal #0d9488 at 4.10:1 and red #dc2626 at 3.18:1. The one border
+     that stays invisible is the neutral #2a2f38 an "off" toggle is painted
+     with (1.14:1) -- which is the intent, not an oversight: an off key on a
+     dark deck reads as unlit, and the card and its label still carry it. */
+  --tile-default-color: #7d879b;
 }
 
 [data-theme="pastel"] .tile {
@@ -97,9 +205,35 @@
      rather than background-color: there is no inline background left on the
      element for this rule to have to outrank. */
   background-color: var(--color-surface);
-  /* The state colour, at full strength but only 1.5px of it. */
-  border: 1.5px solid var(--tile-state-color);
+  /* The state colour, at full strength but only 1.5px of it -- via --pastel-rim
+     rather than straight off --tile-state-color, because the dark variant has
+     to lift a dark state colour off a dark card before drawing it. The
+     fallback is what light mode uses, so light needs no declaration and stays
+     exactly as it shipped. See the [data-mode="dark"] .tile rule below. */
+  border: 1.5px solid var(--pastel-rim, var(--tile-state-color));
   border-radius: 14px;
+}
+
+/* The one thing Pastel's dark variant cannot get from a token swap. The rim
+   and the icon are both painted *in the state colour on the card*, and in
+   light mode that is always legible -- every state colour this project uses is
+   dark, and the card is white. In dark mode it inverts: the neutral #2a2f38
+   that every "off" toggle and every uncoloured item carries is 1.14:1 on the
+   card, so the rim vanishes (arguably fine -- an unlit key) and with it the
+   *icon* (not fine at all -- the icon is the tile's content, and it was
+   disappearing entirely on five of the ten seeded tiles).
+   So in dark mode the state colour is mixed 60/40 toward the text ink before
+   it is drawn. Measured: the darkest realistic state colour comes out at
+   3.77:1 on the card (pure black at 3.6:1), clearing the 3:1 floor for a
+   non-text UI element, while every saturated colour stays obviously itself --
+   teal 6.9:1, alert red 5.4:1, the amber 10.8:1. 40% was the smallest lift
+   that clears the floor for the neutral; more of it starts washing the hues
+   toward pastel-in-the-paint-sense, which is not what this theme means.
+   Set on .tile, so --tile-state-color resolves per tile -- including the
+   .state-active/.state-alert class overrides and render.js's inline
+   false_color write, all of which land on this same element. */
+[data-theme="pastel"][data-mode="dark"] .tile {
+  --pastel-rim: color-mix(in srgb, var(--tile-state-color) 60%, var(--color-text));
 }
 
 /* Turns the plain sizing box button.css uses into the badge. .icon is a real
@@ -117,8 +251,9 @@
   align-items: center;
   justify-content: center;
   /* Feeds both the plate below and the icon's own stroke, which is
-     stroke="currentColor" in every ICONS entry in render.js. */
-  color: var(--tile-state-color);
+     stroke="currentColor" in every ICONS entry in render.js. Same --pastel-rim
+     indirection as the border, and for the same reason. */
+  color: var(--pastel-rim, var(--tile-state-color));
 }
 
 /* The tint. A pseudo-element at low opacity rather than a translucent
@@ -179,13 +314,16 @@
    Deliberately NOT glass. No backdrop-filter and no blur anywhere -- both are
    direct GPU cost on an iPhone X already holding a WebSocket open, and this
    project has no build step to optimise around them. Everything below is two
-   gradient layers and one box-shadow. */
-[data-theme="glossy"] {
-  /* A step off pure black so the drop shadow under each tile has something to
-     fall on -- on #000 the shadow is invisible and the tiles read as flat
-     again, which is the one thing this theme exists not to be. */
-  --color-bg: #0b0e13;
+   gradient layers and one box-shadow.
 
+   Both gradients are achromatic and compose *over* whatever colour the tile
+   already is, so they are mode-agnostic and stay in this one block. The
+   light/dark split costs this theme exactly two values: the ground the tiles
+   are moulded out of, and how hard the shadow under them falls. The tiles
+   themselves are the state colour in both modes, and their text colour is
+   still the adaptive --tile-ink render.js computes from that colour -- which
+   is why no tile-state contrast here changes with the mode at all. */
+[data-theme="glossy"] {
   /* The body: transparent at the top so the tile's own state colour shows
      through unchanged, deepening to 30% black at the bottom. This is how the
      "gradient to a darker shade of itself" is produced without having to
@@ -208,6 +346,30 @@
      inset line is the top edge catching light, and doubles as the tile's
      border without costing layout the way a real border would. */
   --tile-gloss-shadow: 0 2px 3px rgba(0, 0, 0, 0.5),
+                       inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* Dark, including the attribute-absent case -- Glossy shipped dark, so
+   :not([data-mode="light"]) is what keeps it there until a mode is chosen.
+   The light block below can never match at the same time, so the two need no
+   ordering between them. */
+[data-theme="glossy"]:not([data-mode="light"]) {
+  /* A step off pure black so the drop shadow under each tile has something to
+     fall on -- on #000 the shadow is invisible and the tiles read as flat
+     again, which is the one thing this theme exists not to be. */
+  --color-bg: #0b0e13;
+}
+
+[data-theme="glossy"][data-mode="light"] {
+  /* The ground comes from the shared light palette (#e9edf3), which already
+     satisfies the requirement the dark value exists for -- it is not pure
+     white, so the shadow under each tile has somewhere to fall.
+     What does have to change is the shadow's weight: 50% black under a tile
+     on a near-white page reads as a hard cut-out rather than as a moulded
+     key. Dropped to 22%, which is the same shadow at the strength a light
+     ground carries. The inset highlight is untouched -- it is the tile's own
+     lit edge and belongs to the material, not to the page. */
+  --tile-gloss-shadow: 0 2px 3px rgba(0, 0, 0, 0.22),
                        inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 
@@ -270,8 +432,29 @@
        Glossy, which is pure gradient work.
 
    Everything else is the usual token override: the state logic is untouched,
-   and --tile-state-color is still the only thing any state mechanism writes. */
+   and --tile-state-color is still the only thing any state mechanism writes.
+
+   The light variant is the one place in this change where a mode is not just
+   a palette swap, because inverting a frost's numbers does not produce a
+   frost. What glass does to light runs the same way in both modes -- it
+   scatters what is behind it toward white -- so the *veil* gets stronger in
+   light mode, not weaker, and the specular edge stays white while the drop
+   shadow and the containing hairline turn to a neutral dark. That is the
+   difference between frosted white glass on a pale ground (which is what a
+   light Liquid Glass should be, and what the light block below builds) and a
+   dark theme with its colours flipped (which would be a grey pane with a
+   black rim and no frost in it at all). The tint is deliberately left at the
+   same 42% in both: how much state colour the pane holds is what the theme
+   says about the *item*, and that shouldn't change with the room's lights. */
 [data-theme="liquid-glass"] {
+  /* How much of the state colour the pane holds. Below ~35% a neutral tile
+     stops reading as a tile at all; above ~50% it stops reading as glass.
+     Mode-agnostic -- see the note above. */
+  --glass-tint: 42%;
+}
+
+/* Dark, and the attribute-absent default: this theme shipped dark. */
+[data-theme="liquid-glass"]:not([data-mode="light"]) {
   /* Not pure black. backdrop-filter can only reveal what is behind the pane,
      and a flat ground blurs to itself -- the frost would be invisible and the
      tiles would read as flat translucent rectangles. This is a deep blue-black
@@ -284,10 +467,6 @@
   /* A tile carrying no colour of its own still has to read as a pane. This is
      the frost's own grey rather than a transparent nothing. */
   --tile-default-color: #47506a;
-
-  /* How much of the state colour the pane holds. Below ~35% a neutral tile
-     stops reading as a tile at all; above ~50% it stops reading as glass. */
-  --glass-tint: 42%;
 
   /* The veil: a flat white wash over the tint. It does two jobs -- it lifts
      every pane off the ground (including the neutral ones, which the tint
@@ -309,15 +488,70 @@
                 0 6px 16px rgba(0, 0, 0, 0.42);
 }
 
+[data-theme="liquid-glass"][data-mode="light"] {
+  /* The ground keeps the shared light palette's #e9edf3 and gets the same two
+     pools (see the body rule below), for the same functional reason the dark
+     ground has them: a frost over a flat colour blurs to that colour.
+
+     The surface and border tokens are the shared light ones -- unlike the
+     dark variant, which lifts them off its near-black ground, white and the
+     hairline grey are already right here. */
+
+  /* A colourless pane. Warmer and lighter than the dark variant's #47506a for
+     the same reason the veil is stronger: what has to read here is milky
+     glass, not a grey plate. Composites to about #cdd3dd once the tint and
+     veil are over it, which separates from the page without a border. */
+  --tile-default-color: #7c88a3;
+
+  /* The veil, and the one number in this theme that gets *bigger* in light
+     mode. In dark it lifts the pane off the ground; here it is doing the
+     actual optical job of frost -- scattering the tinted backdrop toward
+     white -- so it runs 42% down to 20% instead of 14% down to 3%. It is
+     also what buys the contrast: with it, dark text on the worst-case pane
+     (a pure-black item colour, at the bottom of the gradient) is 6.0:1, and
+     every real state colour is 7.3:1 or better. */
+  --glass-veil: linear-gradient(180deg,
+                                rgba(255, 255, 255, 0.42) 0%,
+                                rgba(255, 255, 255, 0.26) 42%,
+                                rgba(255, 255, 255, 0.20) 100%);
+
+  /* The same three layers as dark, re-lit: the specular top edge stays white
+     (and goes brighter -- it is a highlight, and a highlight on a pale
+     material has to out-light the material), while the containing hairline
+     and the drop shadow flip to a neutral dark, because on a light ground the
+     thing that describes a pane's rim is shade, not light. */
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.85),
+                inset 0 0 0 1px rgba(28, 36, 48, 0.08),
+                0 6px 16px rgba(31, 41, 55, 0.16);
+
+  /* Offline inverts, for exactly Pastel-light's reason: the pane is pale
+     whatever the item's colour is, and its text is pinned dark, so the 60%
+     near-black base wash would dim the pane past its own text (1.96:1
+     measured). The light wash washes the pane toward the page and the dark
+     text stays legible on it (11.6:1). */
+  --color-scrim: rgba(233, 237, 243, 0.72);
+}
+
 /* The ground the panes frost. Two large, low-alpha radial pools in the
    project's existing purple and teal -- large enough that no tile ever sits
    over a hard edge, faint enough to read as depth rather than as a gradient
    wash. background-attachment is left alone: grid.css already pins html/body
    with position:fixed, so this never scrolls. */
-[data-theme="liquid-glass"] body {
+[data-theme="liquid-glass"]:not([data-mode="light"]) body {
   background-image:
     radial-gradient(70% 55% at 18% 8%, rgba(142, 95, 245, 0.20) 0%, rgba(142, 95, 245, 0) 100%),
     radial-gradient(60% 50% at 88% 82%, rgba(13, 148, 136, 0.16) 0%, rgba(13, 148, 136, 0) 100%);
+}
+
+/* The same two pools, in the light palette's darkened purple and teal
+   (#6d28d9 / #0b7c72 -- the values that were already chosen to hold up
+   against white) and at slightly lower alpha, since a tint reads harder on a
+   pale ground than on a near-black one. Same sizes and positions, so a pane
+   sits over the same soft field in either mode. */
+[data-theme="liquid-glass"][data-mode="light"] body {
+  background-image:
+    radial-gradient(70% 55% at 18% 8%, rgba(109, 40, 217, 0.13) 0%, rgba(109, 40, 217, 0) 100%),
+    radial-gradient(60% 50% at 88% 82%, rgba(11, 124, 114, 0.11) 0%, rgba(11, 124, 114, 0) 100%);
 }
 
 [data-theme="liquid-glass"] .tile {
@@ -326,7 +560,12 @@
      would pick a dark ink for a pale state and paint it on a dark pane. Pinned
      for the same reason Pastel pins it, and it holds for every state: the tint
      never lightens the pane past the point where the light ink drops below AA.
-     Measured, not assumed -- see the audit note in css/themes.css's history. */
+     Measured, not assumed -- see the audit note in css/themes.css's history.
+     One declaration covers both modes, because --color-text is itself
+     mode-dependent. Re-measured for light, where the pane is pale and the ink
+     is dark: the label clears AA on every state (worst case 6.0:1, a
+     pure-black item colour at the bottom of the veil; the real state colours
+     land between 7.3:1 and 14.6:1). */
   color: var(--color-text);
 
   /* color-mix, because --tile-state-color arrives as an opaque hex and rgba()
@@ -356,6 +595,14 @@
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   [data-theme="liquid-glass"] .tile {
     --glass-tint: 100%;
+    /* And with the tile now painted in the state colour rather than in frost,
+       the pinned ink above is no longer the right answer -- it is the answer
+       for a pane. The adaptive ink is: this fallback tile *is* a Flat tile, so
+       it takes Flat's ink decision. The light variant is what surfaced this
+       (a dark item colour under pinned dark text is illegible), but it was
+       already wrong the other way in dark mode, where a pale item colour got
+       pinned light text. Same fallback, both modes. */
+    color: var(--tile-ink, var(--color-text));
   }
 }
 
@@ -379,13 +626,36 @@
   box-shadow: inset 0 0 0 999px var(--color-scrim), var(--glass-edge);
 }
 
+/* The subtitle -- the Audio Switch tile's live device name -- is the one piece
+   of tile text this theme's light variant has to state a rule for. button.css
+   dims it to 0.65 against a light-on-dark label; on a pale pane under dark
+   text that same dimming drops it to 3.1-4.4:1, under AA at 12px. Pastel's
+   light card hit this first and fixed it the same way, for the same reason:
+   the size and weight difference already carry the hierarchy, so the opacity
+   is not paying for itself. Scoped to light only -- dark keeps the shipped
+   behaviour untouched. */
+[data-theme="liquid-glass"][data-mode="light"] .tile .subtitle {
+  opacity: 1;
+}
+
 /* The header gets the material's *look* -- translucent fill, hairline rim --
    but no backdrop-filter. Three more blurred layers above ten already-blurred
    tiles is the stacking this theme's budget exists to avoid, and at 30px tall
    the pills have almost no backdrop to reveal anyway. */
-[data-theme="liquid-glass"] #workspace-header a,
-[data-theme="liquid-glass"] #workspace-header .header-btn {
+[data-theme="liquid-glass"]:not([data-mode="light"]) #workspace-header a,
+[data-theme="liquid-glass"]:not([data-mode="light"]) #workspace-header .header-btn {
   background-color: rgba(255, 255, 255, 0.08);
   background-image: var(--glass-veil);
   border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* The same pill, lit the other way. A 8% white fill is invisible on a pale
+   ground, so the fill goes most of the way to white instead and the rim is
+   left to the shared light palette's hairline grey -- on this ground a white
+   border would erase the pill's edge, which is the same swap the pane's
+   --glass-edge makes one block up. The accent text on it stays AA (6.9:1). */
+[data-theme="liquid-glass"][data-mode="light"] #workspace-header a,
+[data-theme="liquid-glass"][data-mode="light"] #workspace-header .header-btn {
+  background-color: rgba(255, 255, 255, 0.72);
+  background-image: var(--glass-veil);
 }

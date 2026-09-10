@@ -14,13 +14,16 @@ function loadFailure(kind, detail) {
 // params parsing to go wrong -- so these throw plainly and let theme.js decide
 // what a failure means, rather than carrying the tagged `kind` that exists
 // purely so app.js can name which part of a workspace payload was bad.
-export async function fetchTheme() {
+//
+// Returns the whole object ({theme, mode}), not one field: there are two
+// independent settings now and one GET answers both, so a caller that wants
+// only one still costs a single request. Callers destructure.
+export async function fetchSettings() {
   const response = await fetch("/api/settings");
   if (!response.ok) {
     throw new Error(`GET /api/settings returned HTTP ${response.status}`);
   }
-  const settings = await response.json();
-  return settings.theme;
+  return await response.json();
 }
 
 export async function putTheme(theme) {
@@ -33,6 +36,21 @@ export async function putTheme(theme) {
     throw new Error(`PUT /api/settings/theme returned HTTP ${response.status}`);
   }
   return (await response.json()).theme;
+}
+
+// The light/dark axis. Its own endpoint rather than a field on the theme PUT,
+// mirroring the two independent keys on the server -- writing one must never
+// have to restate the other.
+export async function putMode(mode) {
+  const response = await fetch("/api/settings/mode", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!response.ok) {
+    throw new Error(`PUT /api/settings/mode returned HTTP ${response.status}`);
+  }
+  return (await response.json()).mode;
 }
 
 export async function fetchWorkspaces() {
