@@ -1,8 +1,9 @@
 # IT-Deck
 
 Self-hosted universal control surface that turns an old iPhone into a deck
-for your PC. Single-user, single-process app — no multi-tenancy, no auth
-beyond the agent token.
+for your PC. Single-user, single-process app — no multi-tenancy, and no auth
+beyond two shared secrets: `AGENT_TOKEN` (every write endpoint and `/ws/agent`)
+and `CLIENT_TOKEN` (the Dashboard's `/ws/client`).
 
 Three pieces, one persistent WebSocket each: **backend/** (FastAPI + SQLite,
 one Docker container), **frontend/** (vanilla JS/CSS PWA, no build step,
@@ -51,6 +52,18 @@ These three are non-negotiable and get checked on every relevant change:
   *inside* the image while `theme.js` / `index.html` / `themes.css` are
   bind-mounted — frontend-first means a new theme `422`s and silently reverts
   on the phone, with no error banner.
+- **`CLIENT_TOKEN` must be set in `.env` before deploying the backend.**
+  `/ws/client` fails closed: with it unset, every Dashboard connection is
+  refused with close code `4001` and the deck shows no tiles. Hand it to the
+  phone once via `http://<server>:8000/?token=<value>` (stored in
+  `localStorage`, stripped from the URL) or the prompt the Dashboard shows.
+- **⚠ For the `/ws/client` handshake specifically, deploy the frontend *first* —
+  the reverse of the theme rule above.** The two orderings are opposites because
+  the compatibility runs opposite ways: a new `ws.js` against an old backend is
+  harmless (the `hello` frame carries no `cmd`, so the old message loop ignores
+  it), but a new backend against a *cached* old `ws.js` sends no `hello` at all
+  and every connection dies at `4008` after 5 s. The phone's cache is the real
+  hazard here, so **Ctrl+Shift+R before restarting the backend**, not after.
 - **`./check.sh`** is the read-only status readout (git sync, container
   freshness, `/health`, agent connected).
 - **The Windows agent is started manually**, from the "IT-Deck Agent" desktop

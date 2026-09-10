@@ -60,8 +60,8 @@ allowed to do to the item catalog:
 | Audience | the phone | desktop only |
 | Reads catalog | `GET /api/workspaces` (unauthenticated) | `GET /api/workspaces` (unauthenticated) |
 | Mutates catalog | never | `POST`/`PUT`/`DELETE /api/items` |
-| WebSocket | `/ws/client` — `execute`, `set_value` | none |
-| Token | none | `X-Agent-Token`, prompted per page load, held in memory only |
+| WebSocket | `/ws/client` — `hello`, then `execute`, `set_value` | none |
+| Token | `CLIENT_TOKEN` in the `hello` frame; stored in `localStorage`, seeded from `?token=` or a prompt | `X-Agent-Token`, prompted per page load, held in memory only |
 | Themed | yes (`css/themes.css` linked) | no (`themes.css` deliberately not linked) |
 
 ### Windows agent
@@ -274,7 +274,8 @@ Notes that matter:
   helper in `items.py`, `workspaces.py` and `agents.py` and inline in
   `screenshot.py`. All four fail closed when `AGENT_TOKEN` is unset — without
   the `not expected_token` guard, a missing env var (`None`) would equal a
-  missing header (`None`).
+  missing header (`None`). `/ws/client` applies the same guard to its own
+  separate `CLIENT_TOKEN` (§5).
 - **There is no `GET /api/items` list endpoint.** Studio reads the catalog
   through the unauthenticated `GET /api/workspaces`; the token goes only on
   the four mutations and on `list_devices`.
@@ -366,11 +367,39 @@ namespaced form. Unchanged ticks broadcast nothing.
 
 ### `/ws/client`
 
-No handshake and **no auth** — the socket is accepted and registered
-immediately, then sent the full state snapshot at once, because it has missed
-every diff broadcast so far.
+**Authenticated by a `hello` handshake**, modelled on `/ws/agent`'s. The socket
+is accepted, then the first frame must be:
 
-**Client → backend:**
+```json
+{"type": "hello", "token": "<CLIENT_TOKEN>"}
+```
+
+Only once that validates is the socket registered in the hub and sent the full
+state snapshot (which it needs, having missed every diff broadcast so far).
+The ordering is the point: a socket in `hub.clients` already receives every
+broadcast, and the snapshot is itself part of what the gate protects.
+
+| Condition | Close code |
+| --- | --- |
+| First frame is not a `hello`, or the token is wrong | `4001` |
+| `CLIENT_TOKEN` unset on the server (fails closed) | `4001` |
+| No frame at all within `HELLO_TIMEOUT` (5 s) | `4008` |
+
+**Deploy ordering for this handshake is the reverse of the theme rule** in §7.
+A new `ws.js` against an old backend is harmless — the `hello` frame carries no
+`cmd`, so the old message loop ignores it — but a new backend against a *cached*
+old `ws.js` sends no `hello` and every connection dies at `4008` after 5 s.
+Frontend first, and **Ctrl+Shift+R on the phone before restarting the backend**.
+
+`CLIENT_TOKEN` is deliberately a **different secret from `AGENT_TOKEN`**: it
+ships to a phone browser over plain http, so leaking it must not also hand over
+`/api/items` and agent impersonation. It buys exactly what `/ws/client` already
+exposes and nothing more. `frontend/js/ws.js` sends the frame from inside the
+socket's `open` handler, so every reconnect down the backoff ladder
+re-authenticates for free; a `4001` close clears the stored token so a wrong
+secret asks again instead of retrying itself forever.
+
+**Client → backend** (after the handshake):
 
 ```json
 {"cmd": "execute", "item_id": 7, "req_id": "1725800000000-k3n9x"}
@@ -676,7 +705,8 @@ Two properties this buys:
 - **The value is validated at every point it is read**, because it arrives from
   three sources that can each lie: the server (a different process), the
   `localStorage` cache (writable by anything on this origin), and a
-  `settings_update` frame (an unauthenticated channel on a plain-http LAN).
+  `settings_update` frame (a token-gated channel since `/ws/client` grew its
+  `hello` handshake, but still a plain-http LAN one).
 
 The pill's label is **derived from the slug** in `theme.js`'s `themeLabel()`
 (kebab-case → Title Case, so `liquid-glass` → "Liquid Glass"), deliberately
@@ -989,28 +1019,25 @@ Ordered roughly by how likely each is to bite.
 
 ### Security / auth
 
-1. **`/ws/client` has no auth at all.** `client_ws()` accepts and registers
-   every connection unconditionally, so anything that can reach the backend on
-   the LAN can open it and send `execute` for any item in the catalog. This is
-   the widest hole in the current design, and it is precisely what the token on
-   `/api/items` does *not* cover. Not currently listed in `CLAUDE.md`'s Known
-   limitations.
-2. **Auth is one shared secret with no identity, expiry or rate limiting.**
+1. **Auth is shared secrets with no identity, expiry or rate limiting.**
    `POST /api/screenshot`, the four `/api/items` endpoints, the two
    `/api/workspaces` mutations, and `list_devices` all check the same
-   `AGENT_TOKEN` the agent's WebSocket uses. Documented as sufficient for the
-   single-user local-network scope; revisit if that scope changes.
-3. **`GET /api/workspaces` is unauthenticated** and returns the full catalog,
+   `AGENT_TOKEN` the agent's WebSocket uses; `/ws/client` checks a second,
+   separate `CLIENT_TOKEN` (§5). Neither carries an identity, an expiry, or a
+   rate limit, and a phone holds its token in `localStorage` on a plain-http
+   LAN. Documented as sufficient for the single-user local-network scope;
+   revisit if that scope changes.
+2. **`GET /api/workspaces` is unauthenticated** and returns the full catalog,
    including every item's `params` — which can hold executable paths and device
    identifiers.
-4. **`PUT /api/settings/theme` is an unauthenticated write** — deliberate (the
+3. **`PUT /api/settings/theme` is an unauthenticated write** — deliberate (the
    phone has no token and nowhere safe to keep one over plain http), and
    constrained to four literals, so what it concedes is that anyone on the LAN
    can change how the deck looks.
 
 ### Frontend / theming
 
-5. **Studio bypasses the theme tokens.** Every Save writes
+4. **Studio bypasses the theme tokens.** Every Save writes
    `active_color`/`alert_color`/`false_color` into `params` unconditionally,
    `render.js` turns the first two into inline custom properties, and an inline
    custom property cannot be outranked — so a Studio-saved item can never again
@@ -1018,47 +1045,47 @@ Ordered roughly by how likely each is to bite.
    AA-corrected `#0b7c72`/`#b91c1c` are the concrete casualty. Full mechanism
    in §6. *Fix shape: write the three keys only when the user actually changed
    them from the pre-fill, or move theme-aware defaults out of the item row.*
-6. **Marginal contrast, knowingly left.** `fixup_toggle_off_colors`'s own
+5. **Marginal contrast, knowingly left.** `fixup_toggle_off_colors`'s own
    comment measures the neutral off-state `#2a2f38` against the alert red at
    **2.78:1**, short of WCAG 1.4.11's 3:1 for state-identifying colours. Left
    as a deliberate call because closing it means repainting the shared
    `--color-alert`, which is also every error message and destructive control
    in the app. (The active-teal pair clears at 3.59:1.)
-7. **Liquid Glass's contrast claim is a comment, not a check.** `themes.css`
+6. **Liquid Glass's contrast claim is a comment, not a check.** `themes.css`
    says the light ink holds against every tinted pane, "measured, not assumed —
    see the audit note in `css/themes.css`'s history". That points at git
    history rather than at a number in the file. **Unverified here.**
-8. **The theme allowlist lives in four places** with no test tying them
+7. **The theme allowlist lives in four places** with no test tying them
    together, and missing the `index.html` boot copy raises no error at all —
    it just flashes Flat on every load. See §7.
-9. **Three placeholder tiles are not wired.** `Lights`, `Spotify`, `Sleep PC`
+8. **Three placeholder tiles are not wired.** `Lights`, `Spotify`, `Sleep PC`
    still carry the prototype types `toggle`, `launch`, `run`. Pressing one
    returns `unknown command: <type>`.
 
 ### Deploy / operations
 
-10. **`agents/windows/` is never deployed by anything.** No CI job, no
+9. **`agents/windows/` is never deployed by anything.** No CI job, no
     `deploy.sh` step, no Ansible task touches it. A stale agent silently runs
     old code with no error until a handler bug that "should have been fixed"
     surfaces live. The restart is a GUI action on the Windows PC that Claude
     Code cannot perform.
-11. **No CD and no tests in CI** — see §9.
-12. **The deploy-ordering hazard** (frontend before backend ⇒ a new theme 422s
+10. **No CD and no tests in CI** — see §9.
+11. **The deploy-ordering hazard** (frontend before backend ⇒ a new theme 422s
     and silently reverts) is structural, not a bug to fix: it follows directly
     from the image/bind-mount split. See §7.
-13. **Mixed content over the nginx proxy.** `js/ws.js` opens
+12. **Mixed content over the nginx proxy.** `js/ws.js` opens
     `ws://${location.host}/ws/client` unconditionally. Correct on
     `http://<ip>:8000`; through the TLS proxy Ansible installs, a plain `ws://`
     from an `https://` page is blocked as mixed content. Only the direct HTTP
     path works end to end today.
-14. **`ansible/site.yml` runs `docker compose up -d --build`,** but
+13. **`ansible/site.yml` runs `docker compose up -d --build`,** but
     `docker-compose.yml` declares only `image:` and no `build:` context, so
     there is nothing for `--build` to build — the image always comes from GHCR.
     Harmless, but a stale flag.
 
 ### Correctness / consistency
 
-15. **`SERVER_PORT` is read from `.env` by the agent only.**
+14. **`SERVER_PORT` is read from `.env` by the agent only.**
     `backend/app/config.py` reads it and **nothing imports `config.py`**; the
     container's real port comes from the Dockerfile's hardcoded
     `uvicorn --port 8000` plus `docker-compose.yml`'s hardcoded mapping. That
@@ -1068,25 +1095,25 @@ Ordered roughly by how likely each is to bite.
     files listed in §10 (`.env`, `docker-compose.yml`, `Dockerfile`);
     `config.py` is a fourth place the value is *read*, but since nothing
     imports it, editing it alone changes nothing.
-16. **`item.color` and `item.params` shapes are unvalidated.** `color` is a
+15. **`item.color` and `item.params` shapes are unvalidated.** `color` is a
     bare `str | None`, so `"notacolor"` is storable (`button.css` splits
     `background-color`/`background-image` into two declarations precisely so a
     bad colour can't also kill the sheen). `params` is checked for
     parseability, never for shape — which keys a `type` understands is the
     handler's business and nothing enforces it.
-17. **`fixup_vpn_item` hardcodes `workspace_id = 1`,** unlike
+16. **`fixup_vpn_item` hardcodes `workspace_id = 1`,** unlike
     `fixup_day4_items`'s dynamic lookup. Safe today (there has only ever been
     one seeded workspace, and it gets id 1) but it would silently insert
     against the wrong workspace if that ever changed.
-18. **`fixup_mic_item`'s second UPDATE is unguarded** and re-applies
+17. **`fixup_mic_item`'s second UPDATE is unguarded** and re-applies
     `params`/`icon` on every startup for any row labelled `Mic` — the same
     always-on-reapply pattern that `fixup_volume_item` had to be fixed out of
     because it reverted Studio edits.
-19. **`POST /api/screenshot` is retained but unused.** The screenshot handler
+18. **`POST /api/screenshot` is retained but unused.** The screenshot handler
     copies to the PC's clipboard now; the endpoint is kept for a possible
     future remote-viewable-screenshot feature. It still accepts uploads from
     any token-bearing caller and writes them to disk.
-20. **Single-user, single-process by design.** `ConnectionHub` and `state.py`
+19. **Single-user, single-process by design.** `ConnectionHub` and `state.py`
     are module-level singletons in one process; a second backend replica would
     split the agent registry and the state snapshot in half.
 

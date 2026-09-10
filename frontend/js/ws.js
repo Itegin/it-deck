@@ -10,8 +10,106 @@ const MAX_BACKOFF = 30000;
 // so something has to close those two holes on this side.
 const COMMAND_TIMEOUT_MS = 8000;
 
+// Where the client credential lives. /ws/client now opens with a hello frame
+// carrying this token (see backend/app/ws/client.py), mirroring the handshake
+// the Windows agent has always used on /ws/agent.
+//
+// It is a shared secret typed into a phone, not an identity: it says "you are
+// allowed to drive this deck", nothing more. That is the same trust model the
+// AGENT_TOKEN already sets for every write endpoint, and deliberately a
+// *different* secret from it -- this one ships to a browser on a plain-http
+// LAN, so leaking it must not also hand over /api/items and agent
+// impersonation.
+const TOKEN_STORAGE_KEY = "itdeck.client_token";
+
+// Reads the token, accepting a one-time handoff via ?token=... so the phone can
+// be set up by opening a link instead of typing a secret into a prompt on a
+// touch keyboard. The param is stripped from the URL immediately after it is
+// stored: leaving it there would park the secret in history, in the PWA's saved
+// start URL, and in any screenshot of the address bar.
+function readStoredToken() {
+  let stored = null;
+  try {
+    stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch (e) {
+    // Private mode / blocked site data. Fall through to the query param and
+    // the prompt, both of which still work for this one page load.
+  }
+
+  const fromQuery = new URLSearchParams(location.search).get("token");
+  if (fromQuery) {
+    stored = fromQuery;
+    try {
+      localStorage.setItem(TOKEN_STORAGE_KEY, fromQuery);
+    } catch (e) {
+      // Not fatal: the value below still authenticates this session.
+    }
+    const url = new URL(location.href);
+    url.searchParams.delete("token");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
+
+  return stored;
+}
+
+function forgetToken() {
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch (e) {
+    // Nothing to do -- the prompt below will ask again regardless.
+  }
+}
+
+// The resolved token, and whether the user has already dismissed being asked
+// for one. Held at module scope because acquiring it must happen *before* the
+// socket opens -- see acquireToken().
+let clientToken = null;
+let tokenPromptDismissed = false;
+
+// Asked for only when there is nothing stored, so the ordinary case (the deck
+// on the phone, already set up) never sees a dialog.
+//
+// Called from connect(), before the WebSocket is constructed, and deliberately
+// NOT from the "open" handler: prompt() blocks the main thread, the server
+// starts its 5s HELLO_TIMEOUT the moment the socket opens, and nobody types a
+// token on a phone keyboard in five seconds. Asking first means the hello frame
+// goes out immediately on open, with a value already in hand.
+//
+// Returns "" rather than null when dismissed, so a hello is still sent and the
+// server still answers with a close code -- a dismissed prompt should reach the
+// same visible "rejected" state as a wrong token, not a different silent one.
+function acquireToken() {
+  const stored = readStoredToken();
+  if (stored) {
+    return stored;
+  }
+  if (tokenPromptDismissed) {
+    return "";
+  }
+  const entered = window.prompt("IT-Deck: enter the client token to connect");
+  if (entered) {
+    try {
+      localStorage.setItem(TOKEN_STORAGE_KEY, entered);
+    } catch (e) {
+      // As above.
+    }
+    return entered;
+  }
+  tokenPromptDismissed = true;
+  return "";
+}
+
 let socket = null;
 let backoff = 1000;
+
+// readyState === OPEN is no longer sufficient to mean "this socket may carry
+// commands": between open and the server's verdict on the hello frame there is
+// a window where the socket is OPEN but unauthenticated. A command sent into
+// that window is discarded server-side, and its req_id would then strand until
+// ws.js's own 8s backstop -- past the 5s resolution budget CLAUDE.md calls
+// non-negotiable. Any inbound frame proves the handshake passed, because the
+// server sends nothing at all until it has.
+let authenticated = false;
 const resultCallbacks = [];
 const stateChangeCallbacks = [];
 const agentStatusCallbacks = [];
@@ -34,15 +132,29 @@ const inFlight = new Map();
 const inFlightPerItem = new Map();
 
 function connect() {
+  // Before the socket exists, so a prompt cannot race the server's handshake
+  // timeout (see acquireToken).
+  if (!clientToken) {
+    clientToken = acquireToken();
+  }
+  authenticated = false;
   socket = new WebSocket(`ws://${location.host}/ws/client`);
 
   socket.addEventListener("open", () => {
     // Connection succeeded, so the next disconnect should start backing off
     // from scratch again instead of continuing to climb.
     backoff = 1000;
+    // The server expects this as the *first* frame and will close the socket
+    // after HELLO_TIMEOUT without it. Sent from inside the open handler rather
+    // than once at startup so every reconnect down the backoff ladder
+    // re-authenticates on its own, with no extra bookkeeping.
+    socket.send(JSON.stringify({ type: "hello", token: clientToken }));
   });
 
   socket.addEventListener("message", (event) => {
+    // The server sends nothing before the hello is accepted, so the arrival of
+    // any frame is itself the proof. No extra ack message needed.
+    authenticated = true;
     const message = JSON.parse(event.data);
     if (message.type === "result") {
       settleRequest(message.req_id, message.status, message.message);
@@ -71,7 +183,27 @@ function connect() {
     }
   });
 
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
+    // 4001 is the server's "your hello was rejected" (ws/client.py's
+    // CLOSE_UNAUTHORIZED). Dropping the stored token on that code is what stops
+    // a wrong secret from retrying itself forever: without it the reconnect
+    // ladder would re-present the same bad token every time and never ask the
+    // user for a better one. Any other code is an ordinary disconnect and must
+    // *not* clear it -- a backend restart would otherwise log the phone out.
+    authenticated = false;
+    if (event.code === 4001) {
+      console.warn("[IT-Deck] client token rejected; will ask again on reconnect");
+      forgetToken();
+      if (clientToken) {
+        // A real value was presented and refused: drop it and ask again on the
+        // next connect().
+        clientToken = null;
+        tokenPromptDismissed = false;
+      }
+      // If clientToken was already "" the user dismissed the prompt, and
+      // tokenPromptDismissed stays set -- otherwise every backoff tick would
+      // re-open the dialog and trap them in it.
+    }
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, MAX_BACKOFF);
   });
@@ -144,7 +276,7 @@ function settleRequest(reqId, status, message) {
 }
 
 export function sendExecute(itemId, { overrideType } = {}) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
+  if (!socket || socket.readyState !== WebSocket.OPEN || !authenticated) {
     return;
   }
   const reqId = generateReqId();
@@ -169,7 +301,7 @@ export function sendExecute(itemId, { overrideType } = {}) {
 }
 
 export function sendSetValue(itemId, value) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
+  if (!socket || socket.readyState !== WebSocket.OPEN || !authenticated) {
     return;
   }
   socket.send(
