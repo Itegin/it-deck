@@ -51,12 +51,24 @@
     <div class="header-links">
       <a href="#" id="switch-workspace-link">Switch deck</a>
       <a href="studio.html">Studio</a>
-      <!-- aria-label and title are both set from js/theme.js, which names the
-           theme a press will switch *to*; the static one here only covers the
-           moment before that runs. A real <button> so Enter/Space and
-           focusability come from the browser, matching the tiles. -->
-      <button type="button" id="theme-cycle" class="header-btn" aria-label="Switch theme" title="Switch theme">
+      <!-- The .theme-name span, the aria-label and the title are all rewritten
+           by js/theme.js's applyTheme on every theme change. The static values
+           here only cover the moment before the module runs, and they say
+           "Flat" because that is also what the boot script above falls back to
+           -- so the pre-module and post-module states agree on the default
+           deck and there is no flash of a wrong name.
+
+           The span cannot be filled by the boot script in <head> for the
+           obvious reason that this element hasn't been parsed yet; a non-Flat
+           deck therefore shows "Flat" for the few milliseconds until the
+           module loads, exactly as the aria-label already did.
+
+           A real <button> so Enter/Space and focusability come from the
+           browser, matching the tiles. The svg is aria-hidden because the
+           span next to it now names the control. -->
+      <button type="button" id="theme-cycle" class="header-btn" aria-label="Theme: Flat. Switch to Pastel." title="Theme: Flat. Switch to Pastel.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="13" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="10" cy="19" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20c1.4 0 2-.8 2-1.7 0-1.5-1.4-1.9-1.4-3.3 0-1 .8-1.7 1.8-1.7H16a6 6 0 0 0 6-6c0-4.2-4.5-7.3-10-7.3Z"/></svg>
+        <span class="theme-name">Flat</span>
       </button>
     </div>
   </header>

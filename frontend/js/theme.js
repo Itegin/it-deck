@@ -27,12 +27,27 @@ function normalizeTheme(value) {
   return THEMES.includes(value) ? value : DEFAULT_THEME;
 }
 
-// Human-readable, and it names the theme the button will switch *to* -- the
-// control cycles, so what a person needs from it is where the next press
-// lands, not a restatement of what they can already see.
-function describeNext(current) {
+// Slug -> display name, derived rather than looked up in a table. "flat" ->
+// "Flat", "liquid-glass" -> "Liquid Glass". Deliberately not a sixth list to
+// keep in step with the five THEMES copies CLAUDE.md enumerates: every slug in
+// this project is lowercase kebab-case, so the name falls straight out of the
+// slug and a new theme gets a correct label for free.
+function themeLabel(theme) {
+  return theme
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+// The accessible name. It still says where the next press lands -- that is
+// what a person actually needs from a cycling control -- but it now leads with
+// the current theme, and both halves use the same display names the button
+// shows. That last part is not cosmetic: WCAG 2.5.3 (Label in Name) wants the
+// accessible name to contain the visible label, and the visible label is now
+// themeLabel(current).
+function describeTheme(current) {
   const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
-  return `Theme: ${current}. Switch to ${next}.`;
+  return `Theme: ${themeLabel(current)}. Switch to ${themeLabel(next)}.`;
 }
 
 export function applyTheme(theme) {
@@ -53,9 +68,18 @@ export function applyTheme(theme) {
 
   const button = document.getElementById("theme-cycle");
   if (button) {
-    const label = describeNext(safe);
-    button.setAttribute("aria-label", label);
-    button.title = label;
+    const description = describeTheme(safe);
+    button.setAttribute("aria-label", description);
+    button.title = description;
+
+    // The visible half. Which theme is *on* was previously only in the title
+    // -- which iOS Safari never shows, and the phone is the whole point of
+    // this deck -- so the name is painted into the pill instead. Guarded
+    // because index.html is not the only possible host for this button id.
+    const name = button.querySelector(".theme-name");
+    if (name) {
+      name.textContent = themeLabel(safe);
+    }
   }
 
   return safe;

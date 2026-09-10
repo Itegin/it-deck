@@ -36,12 +36,12 @@ const fields = {
 
 const AUDIO_SWITCH_TYPE = "audio_switch";
 
-// The two params keys the device pickers write. Named after the env vars
-// handle_audio_switch (agents/windows/handlers/audio.py) actually reads:
-// today it reads OUTPUT_DEVICE_PRIMARY/SECONDARY from os.getenv() only and
-// has no per-item params path at all, so nothing consumes these keys yet.
-// Teaching the agent to prefer params over .env is a deliberate follow-up;
-// no Windows agent file is touched by this change.
+// The two params keys the device pickers write, named after the env vars they
+// take priority over. Setting BOTH pins the Audio Switch tile to an A/B toggle
+// between exactly these two devices; leaving either empty lets the agent cycle
+// the default through every output device the PC currently has, which is what
+// picks up a newly plugged speaker. See handle_audio_switch in
+// agents/windows/handlers/audio.py.
 const PRIMARY_PARAM = "output_device_primary";
 const SECONDARY_PARAM = "output_device_secondary";
 
@@ -218,7 +218,17 @@ function populateDeviceSelect(select, devices, selectedId, devicesLoaded = true)
     // Name alone is not a unique label: two endpoints on the same machine
     // can both be called "Микрофон", so the direction is part of the label,
     // not decoration.
-    option.textContent = `${device.name} (${device.direction})`;
+    //
+    // Windows keeps a row for every endpoint it has ever seen, so this list
+    // mixes the speaker currently on the desk with HDMI ports nothing is
+    // plugged into and headsets from months ago. They are still selectable --
+    // configuring a device you are about to plug back in is legitimate -- but
+    // they are marked, because picking one silently gets you a pair that only
+    // half works. is_active is undefined against an agent still running the
+    // previous build, which reads as "don't claim either way" rather than as
+    // "disconnected".
+    const disconnected = device.is_active === false ? ", disconnected" : "";
+    option.textContent = `${device.name} (${device.direction}${disconnected})`;
     select.appendChild(option);
   }
 
@@ -327,6 +337,34 @@ function syncDeviceFields(selected) {
   loadDevices(fields.target.value, selected);
 }
 
+// Scans the workspace's grid in reading order for a cell no item covers, the
+// same rectangle test backend/app/api/items.py's _validate_placement applies.
+// Reads allWorkspaces (the last /api/workspaces response) rather than
+// refetching: the table the user is looking at was rendered from it, so it is
+// already the state they expect this answer to be about.
+function firstFreeCell(workspaceId) {
+  const workspace = allWorkspaces.find((w) => String(w.id) === String(workspaceId));
+  if (!workspace) {
+    return null;
+  }
+  const taken = new Set();
+  for (const item of workspace.items) {
+    for (let r = item.row; r < item.row + item.height; r++) {
+      for (let c = item.col; c < item.col + item.width; c++) {
+        taken.add(`${r},${c}`);
+      }
+    }
+  }
+  for (let row = 0; row < workspace.grid_rows; row++) {
+    for (let col = 0; col < workspace.grid_cols; col++) {
+      if (!taken.has(`${row},${col}`)) {
+        return { row, col };
+      }
+    }
+  }
+  return null;
+}
+
 // What had focus when the form opened -- an Edit button, or "+ New Item".
 // closeForm hands focus back to it, so Cancel/Save returns the keyboard to the
 // row it came from rather than dropping it on <body> at the top of the page.
@@ -395,6 +433,20 @@ function openForm(item) {
     fields.width.value = 1;
     fields.height.value = 1;
     fields.params.value = "{}";
+
+    // Row/Col are `required` with no value in the markup, so this form used to
+    // open with both blank and leave the user to work out which cell was free
+    // by reading the table. That was merely tedious before; now that
+    // POST /api/items refuses a placement that overlaps an existing item, it
+    // would be a guess that fails. Prefill the first free 1x1 cell instead.
+    const firstFree = firstFreeCell(fields.workspaceId.value);
+    if (firstFree) {
+      fields.row.value = firstFree.row;
+      fields.col.value = firstFree.col;
+    }
+    // No free cell (or no workspace resolved yet) leaves them blank, exactly
+    // as before -- `required` still stops an empty submit, and the backend
+    // still has the final say on whatever is typed.
   }
 
   form.hidden = false;

@@ -204,6 +204,14 @@ body {
      axis that matters (they are 30px tall in a 12px-padded header, and the
      press target extends to the header's own bounds). */
   padding: 5px 10px;
+  /* All three controls to one height. They were not: 13px text with
+     line-height 1 makes a 25px pill, while the theme button's 16px glyph makes
+     a 28px one, so the row carried a 3px step nobody chose. The header's own
+     height was already set by the tallest of them, so levelling up rather than
+     down costs no layout and grows two touch targets by 3px. Sized off the
+     glyph -- if .header-btn svg changes size, this is the number that has to
+     follow it. */
+  min-height: 28px;
   font-family: inherit;
   font-size: 13px;
   line-height: 1;
@@ -224,16 +232,29 @@ body {
   -webkit-touch-callout: none;
 }
 
-/* Icon-only, so it gets a squarer padding than the text pills rather than a
-   wide one wrapped around a 16px glyph. */
-#workspace-header .header-btn {
-  padding: 5px 8px;
-}
+/* No squarer icon-only padding any more: the button carries the current
+   theme's name beside its glyph (see .theme-name below), so it is a text pill
+   like the other two and takes the shared 5px 10px above. */
 
 #workspace-header .header-btn svg {
   display: block;
   width: 16px;
   height: 16px;
+}
+
+/* The current theme's name, written by js/theme.js. 11px rather than the
+   pill's own 13px, and the reason is measured: at 390px -- the phone this deck
+   is built for -- the header is already over-subscribed, and the h1 is the
+   flex item that gives way (see the min-width: 0 note above). Adding this at
+   13px left the deck name 80px of a needed 176px on the longest theme name
+   ("Liquid Glass"); 11px gives back 9px of that. The label still reads as the
+   pill's own text rather than as a second-class annotation because it keeps
+   the pill's colour and weight. line-height: 1 matches the pill's, so the
+   label never drives the button's height -- the glyph and the min-height above
+   settle that between them. */
+#workspace-header .header-btn .theme-name {
+  font-size: 11px;
+  line-height: 1;
 }
 
 /* The pill already carries the affordance, so hover lifts the surface the way

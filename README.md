@@ -136,6 +136,6 @@ as mixed content on an HTTPS page.
 v0.2.1 (tagged; `main` is one commit ahead) — personal project, active
 development, API may change.
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for the full architecture
-reference — message shapes, file-by-file map, platform constraints, and known
-limitations.
+See [docs/IT-Deck_Tech_Reference.md](docs/IT-Deck_Tech_Reference.md) for the
+full architecture reference — message shapes, file-by-file map, database
+schema, tile and theme internals, platform constraints, and known limitations.
