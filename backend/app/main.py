@@ -21,6 +21,7 @@ from app.api.settings import router as settings_router
 from app.api.workspaces import router as workspaces_router
 from app.db import (
     fixup_audio_switch_state_key,
+    fixup_close_agent_item,
     fixup_day4_items,
     fixup_legacy_seed,
     fixup_mic_item,
@@ -28,6 +29,7 @@ from app.db import (
     fixup_toggle_off_colors,
     fixup_volume_item,
     fixup_vpn_item,
+    fixup_vpn_tile_type,
     init_db,
     seed_if_empty,
 )
@@ -55,6 +57,9 @@ def on_startup() -> None:
     # cell that Volume's move vacates, so the ordering here is load-bearing.
     fixup_day4_items()
     fixup_vpn_item()
+    # After fixup_vpn_item(), which is what creates the row on a fresh db.
+    fixup_vpn_tile_type()
+    fixup_close_agent_item()
     fixup_audio_switch_state_key()
     # Last: it rewrites the colour of rows the fixups above create, so it has
     # to see them in their settled state (VPN in particular does not exist

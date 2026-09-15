@@ -22,7 +22,7 @@ documented under "Deploy" as the legacy path.
 > the code. Release-by-release history is in
 > [`CHANGELOG.md`](CHANGELOG.md).
 
-Current version: **v0.3.4** (`ITDECK_VERSION` in `standalone/launcher.py` --
+Current version: **v0.3.5** (`ITDECK_VERSION` in `standalone/launcher.py` --
 bump it in the same commit as the tag). The bullets below are the constraints that are
 easy to break; the reference doc explains the same mechanisms at length.
 
@@ -50,7 +50,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+, current as of v0.3.4)
+## Standalone mode (v0.3.0+, current as of v0.3.5)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`
@@ -243,6 +243,39 @@ These three are non-negotiable and get checked on every relevant change:
   already travels that way and neither the agent nor the backend needed a
   single change. `config.env` still wins (setdefault semantics), and the
   legacy Docker path is untouched because it sets the variable itself.
+- **`kill_process()` refuses to kill IT-Deck's own processes or its console
+  host** (`protected_pids()`). Force Stop matches by *name* and kills every
+  match, and on Windows 11 the default console host is Windows Terminal — so
+  a Force Stop on the Terminal tile (`WindowsTerminal.exe`) killed the process
+  hosting IT-Deck's own console and took the launcher, backend and agent with
+  it. Reported from a real install. The protected set is three sources
+  because no one of them suffices: `GetConsoleProcessList` (our sibling
+  processes), our own PID plus ancestors (backstop — `GetConsoleWindow()`
+  returns 0 under a ConPTY), and the console host **plus its ancestors**
+  (under Windows Terminal the host is `OpenConsole.exe` whose *parent* is the
+  `WindowsTerminal.exe` that gets matched by name). Verified in a real
+  console that the HWND survives `SW_HIDE`, which this depends on. It makes
+  Force Stop safe for IT-Deck, **not** safe in general — every other process
+  with that name still dies.
+- **The seeded VPN tile is a `launch_app`, not a `process_toggle`** — that is
+  what the author's own reference deck on Athlon uses. `process_toggle` was
+  the wrong shape: it needs params nothing seeds, and being a toggle its
+  second press stops the VPN. `fixup_vpn_tile_type()` converts only
+  *unconfigured* toggles, so a deliberate toggle setup survives.
+  `handle_launch_app` answers a pathless tile with what to set.
+  `watched_process_name()` in the launcher now keys on
+  `state_key = 'vpn.running'` rather than on type, and derives the process
+  name from `path` when no explicit `process_name` is given — selecting by
+  type missed every launch_app tile.
+- **`fixup_close_agent_item()` seeds the "Close Agent" tile** the reference
+  deck has and standalone lacked. **Its cell is computed, not hardcoded** —
+  a fresh database and an already-migrated one lay the same tiles out in
+  different rows (verified), so any fixed cell collides on one of them. It
+  scans from the last occupied row so the tile lands beside VPN rather than
+  in the top-left corner, which is a bad place for a stop button. Pressing it
+  exits the agent with code 0, which the supervisor leaves stopped by design
+  — and with the console hidden there is no way to restart just the agent, so
+  the recovery is "quit IT-Deck from its window and relaunch".
 - **The printed "primary" LAN address comes from the UDP-connect-to-8.8.8.8
   trick, not from ranking candidates by local reachability.** A self-connect
   from this same machine succeeds against *any* of its own bound interfaces
@@ -251,14 +284,17 @@ These three are non-negotiable and get checked on every relevant change:
   when an earlier version of this logic promoted a `172.16.x.x` Hyper-V
   address over the real one. `check_reachable()` is now only a soft
   "check the firewall" hint, not what selects the address.
-- **A stale `%LOCALAPPDATA%\IT-Deck\config.env` from before `CLIENT_TOKEN`
-  defaulted to `admin` is not migrated automatically.** An install that
-  already generated a random token keeps it (this is still the deliberate
-  load-if-exists behavior) — if a phone or person assumes it's `admin` and
-  it isn't, the wrong token gets rejected (`4001`). Fix is to delete that
-  one file and relaunch, not a code change; `frontend/js/ws.js` also no
-  longer loops `window.prompt()` forever on repeated rejection of the same
-  wrong token (see below), but the clean fix is still the right token.
+- **Random tokens from a pre-v0.3.0 `config.env` ARE migrated to `admin`**
+  (`_looks_auto_generated()` + the loop at the top of
+  `load_or_create_config()`). This reverses the earlier "deliberately not
+  migrated" rule, which was wrong in practice: an old install kept its random
+  pair forever, and a fresh download on a new PC showing 32-hex tokens in its
+  window reads as a bug every time. The requirement is "admin everywhere".
+  The match is deliberately narrow — exactly 32 lowercase hex characters,
+  the old `secrets.token_hex(16)` shape — so a hand-picked secret in
+  `config.env` survives. **`SERVER_PORT` is not migrated alongside it**:
+  moving the port orphans the phone's `localStorage` on top of the token
+  change, which is two breakages where one was asked for.
 - **Studio's agent token is persisted in `localStorage`
   (`itdeck.agent_token`), not held in memory for one page load.** Entered
   once, then forgotten about — which is the actual requirement; a prompt on

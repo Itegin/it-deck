@@ -357,6 +357,116 @@ def fixup_toggle_off_colors() -> None:
         conn.close()
 
 
+def fixup_close_agent_item() -> None:
+    # The reference deck (the author's own, running on the Athlon server) has
+    # a "Close Agent" tile and standalone installs did not -- reported as
+    # "there's no button to close the agent". The agent_shutdown handler has
+    # existed all along; only the tile was missing.
+    #
+    # The cell is chosen at run time rather than hardcoded, unlike every
+    # fixup above it. Those were written against one known layout and this
+    # one cannot be: a freshly seeded db and an already-migrated one put the
+    # same tiles in different rows (verified -- a fresh db lays out rows 1-3
+    # where an older one uses 0-2), so any fixed cell collides on one of
+    # them. First free cell in row-major order, within the workspace's own
+    # declared grid.
+    #
+    # Worth knowing before pressing it: the agent exits with code 0, which the
+    # launcher's supervisor deliberately treats as "stopped on request" and
+    # does not respawn (see AGENT_DELIBERATE_EXIT_CODES). With the console now
+    # hidden there is no way to start it again from the desktop -- quit
+    # IT-Deck from its window and relaunch.
+    conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM item WHERE label = 'Close Agent'").fetchone():
+            return
+
+        grid = conn.execute(
+            "SELECT grid_cols, grid_rows FROM workspace WHERE id = 1"
+        ).fetchone()
+        if grid is None:
+            return
+        cols, rows = grid["grid_cols"], grid["grid_rows"]
+        taken = {
+            (r["row"], r["col"])
+            for r in conn.execute("SELECT row, col FROM item WHERE workspace_id = 1")
+        }
+        # Scanned from the last occupied row, not from (0,0). The first free
+        # cell overall is the top-left corner, and putting a "stop everything"
+        # button in the most prominent, most mis-tappable spot on the deck is
+        # the wrong place for it. Starting at the bottom of the existing
+        # tiles lands it beside VPN in both layouts, which is where the
+        # reference deck keeps it.
+        first_row = max((r for r, _ in taken), default=0) if taken else 0
+        cell = next(
+            (
+                (r, c)
+                for r in range(first_row, rows)
+                for c in range(cols)
+                if (r, c) not in taken
+            ),
+            None,
+        )
+        if cell is None:
+            # Nothing free below; fall back to anywhere at all before giving up.
+            cell = next(
+                ((r, c) for r in range(rows) for c in range(cols) if (r, c) not in taken),
+                None,
+            )
+        if cell is None:
+            # A full grid is not an error worth failing startup over -- the
+            # tile can be added by hand in Studio, which is also where a
+            # person would make room for it.
+            return
+
+        conn.execute(
+            """
+            INSERT INTO item (workspace_id, row, col, width, height, label, icon,
+                color, kind, type, target, params, state_key)
+            VALUES (1, ?, ?, 1, 1, 'Close Agent', 'power', '#2a2f38', 'action',
+                'agent_shutdown', 'windows', '{}', NULL)
+            """,
+            cell,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fixup_vpn_tile_type() -> None:
+    """Move an unconfigured VPN tile from `process_toggle` to `launch_app`.
+
+    The reference deck's VPN tile is a `launch_app` holding the client's path,
+    with `state_key = vpn.running` so the poller lights it. Standalone seeded
+    a `process_toggle` instead, and that was the wrong shape for the job:
+
+    - it needs `process_name`/`path` params that nothing seeds, so an
+      untouched tile could only ever answer "not configured yet";
+    - it is a *toggle*, so the second press stops the VPN. Combined with a
+      state that read false on a freshly started agent, that is how a tap
+      meaning "connect" turned into "disconnect".
+
+    Only unconfigured tiles are converted. A `process_toggle` someone gave
+    real params to is a deliberate setup -- toggling is a legitimate thing to
+    want -- and is left exactly as it is.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE item
+            SET type = 'launch_app'
+            WHERE label = 'VPN'
+              AND type = 'process_toggle'
+              AND params NOT LIKE '%process_name%'
+              AND params NOT LIKE '%"path"%'
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fixup_vpn_item() -> None:
     # Same insert-if-missing idempotency as fixup_day4_items(). Placement
     # is (row=3, col=1): the originally proposed (row=3, col=0) collides
@@ -376,7 +486,7 @@ def fixup_vpn_item() -> None:
             INSERT INTO item (workspace_id, row, col, width, height, label, icon,
                 color, kind, type, target, params, state_key)
             SELECT 1, 3, 1, 1, 1, 'VPN', 'shield', '#0d9488', 'action',
-                'process_toggle', 'windows', '{"active_style":"normal"}', 'vpn.running'
+                'launch_app', 'windows', '{"active_style":"normal"}', 'vpn.running'
             WHERE NOT EXISTS (SELECT 1 FROM item WHERE label='VPN')
             """
         )

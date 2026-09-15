@@ -146,10 +146,78 @@ def start_process(path: str) -> None:
         raise failure[0]
 
 
+def _with_ancestors(pid: int, out: set) -> None:
+    try:
+        proc = psutil.Process(pid)
+    except psutil.Error:
+        return
+    out.add(pid)
+    try:
+        for parent in proc.parents():
+            out.add(parent.pid)
+    except psutil.Error:
+        pass
+
+
+def protected_pids() -> set:
+    """PIDs that Force Stop must never terminate.
+
+    This exists because Force Stop took IT-Deck down with its target.
+    `kill_process` matches by *name* and kills every match, and on Windows 11
+    the default console host is Windows Terminal -- so a Force Stop on the
+    Terminal tile (process name `WindowsTerminal.exe`) killed the very process
+    hosting IT-Deck's own console, and the launcher, backend and agent went
+    with it. Reported from a real install: "force stop closes the agent along
+    with the terminal and the exe".
+
+    Three sources, because no single one covers the case:
+
+    - `GetConsoleProcessList` -- every process attached to our console, i.e.
+      the launcher, the backend and the agent. Works even with the console
+      hidden.
+    - our own PID and its ancestors, as a backstop for when the console call
+      fails (measured: `GetConsoleWindow()` returns 0 under a ConPTY, so it
+      cannot be relied on alone).
+    - the console host **and its ancestors**. The host is `conhost.exe` on a
+      classic console, but under Windows Terminal it is `OpenConsole.exe`
+      whose parent is `WindowsTerminal.exe` -- and the parent is the one that
+      would be matched by name, so walking up is the whole point.
+
+    Note what this does and does not promise: it makes Force Stop safe for
+    IT-Deck, not safe in general. Killing by name still ends every *other*
+    process with that name, including the user's own terminals. That is the
+    pre-existing Force Stop semantic, deliberately left alone here.
+    """
+    protected: set = set()
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        buffer = (ctypes.c_uint * 64)()
+        count = kernel32.GetConsoleProcessList(buffer, 64)
+        protected.update(buffer[:count])
+
+        hwnd = kernel32.GetConsoleWindow()
+        if hwnd:
+            host_pid = ctypes.c_uint()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(host_pid))
+            if host_pid.value:
+                _with_ancestors(host_pid.value, protected)
+    except Exception:
+        pass  # the own-process walk below is the backstop
+
+    _with_ancestors(os.getpid(), protected)
+    protected.discard(0)
+    return protected
+
+
 def kill_process(name: str) -> None:
     target = name.lower()
+    protected = protected_pids()
     for proc in psutil.process_iter():
         try:
+            if proc.pid in protected:
+                continue
             if proc.name().lower() == target:
                 proc.terminate()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -158,6 +226,19 @@ def kill_process(name: str) -> None:
 
 def handle_launch_app(params: dict) -> dict:
     try:
+        if not params.get("path"):
+            # The seeded VPN tile is a launch_app with no path until someone
+            # sets one, so this is the first thing a fresh install sees from
+            # it. A named message beats a KeyError traceback, and beats the
+            # tile silently doing nothing.
+            return {
+                "status": "error",
+                "message": (
+                    "This tile has no program set yet -- add a \"path\" to its params "
+                    "in Studio, e.g. "
+                    r'{"path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}'
+                ),
+            }
         # Through start_process(), not os.startfile() directly, so a tile
         # launch gets the same two guarantees the VPN toggle needs: the
         # launched app is detached from IT-Deck (closing the deck must not

@@ -77,7 +77,7 @@ command resolves within 5 seconds — ok, error, or timeout — and the tile sho
 which. Long-pressing a tile opens a context menu with a **Force Stop** option
 for killing a stuck process.
 
-A fresh install seeds 7 tiles, all wired to a real command:
+A fresh install seeds 8 tiles, all wired to a real command:
 
 - **Terminal** — launch an app (`launch_app`; opens Windows Terminal by default)
 - **Mic** — mute/unmute the microphone; turns red while muted
@@ -86,7 +86,9 @@ A fresh install seeds 7 tiles, all wired to a real command:
 - **Audio Switch** — swap between two configured output devices, showing the
   current one under the label
 - **Screenshot** — capture the PC's primary monitor to the **PC's clipboard**
-- **VPN** — start/stop a VPN client process (**needs configuring — see below**)
+- **VPN** — launch your VPN client, lit while it's running (**needs configuring — see below**)
+- **Close Agent** — stop the agent. It stays stopped: quit IT-Deck from its
+  window and relaunch to bring it back
 
 (Three earlier placeholder tiles — Lights, Spotify, Sleep PC — had no
 handler behind them and just returned `unknown command`; they're gone from
@@ -100,8 +102,26 @@ Dashboard never mutates the catalog.
 ### Configuring the VPN tile
 
 It's the one seeded tile that can't work out of the box — it has to be told
-which process to toggle. In Studio Mode, edit the VPN item's `params`. It's
+which program to launch. In Studio Mode, edit the VPN item's `params`. It's
 JSON, so Windows paths need doubled backslashes:
+
+```json
+{"active_style": "normal",
+ "path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}
+```
+
+The tile then lights up whenever that program is running — including before
+you ever press it. Until it's configured, pressing it tells you what to set
+rather than doing nothing.
+
+Pressing it **starts** your VPN; it doesn't stop it. To stop one, long-press
+the tile and use **Force Stop**.
+
+<details>
+<summary>If you'd rather have one tile that toggles it on and off</summary>
+
+Change the item's `type` to `process_toggle` in Studio and give it both a
+`path` and a `process_name`:
 
 ```json
 {"active_style": "normal",
@@ -109,12 +129,11 @@ JSON, so Windows paths need doubled backslashes:
  "path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}
 ```
 
-The tile then lights up whenever that process is running — including before
-you ever press it. Until it's configured, pressing it returns a "not
-configured yet" error rather than doing anything.
+Then one press starts it and the next stops it. There's no confirmation step,
+so a mis-tap on a lit tile disconnects you — which is why it isn't the
+default.
 
-> It's a **toggle** with no confirmation step: pressing it while the VPN is
-> running stops the VPN. That's the intent, but there's no undo.
+</details>
 
 ## Legacy: multi-device server deployment
 
@@ -237,4 +256,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.4 (tagged) — personal project, active development, API may change.
+v0.3.5 (tagged) — personal project, active development, API may change.

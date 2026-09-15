@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.3.4"
+ITDECK_VERSION = "0.3.5"
 
 # Python fully-buffers stdout when it isn't a real console (piped, redirected,
 # or -- the case that bit this in testing -- launched under a process
@@ -171,11 +171,43 @@ def write_config(path: Path, values: dict) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _looks_auto_generated(token: str) -> bool:
+    # What the pre-v0.3.0 launcher produced: secrets.token_hex(16), i.e.
+    # exactly 32 lowercase hex characters. Narrow on purpose -- a token a
+    # person chose (including "admin") never matches, so the migration below
+    # cannot overwrite a deliberate secret.
+    return len(token) == 32 and all(c in "0123456789abcdef" for c in token)
+
+
 def load_or_create_config(data_dir: Path) -> dict:
     data_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_dir / CONFIG_FILENAME
     values = parse_config(config_path)
     changed = False
+
+    # Migrate the random tokens early installs generated to "admin".
+    #
+    # This reverses an earlier deliberate decision not to migrate, and the
+    # reason is that the decision was wrong in practice: an install created
+    # before the "admin" default keeps its random pair forever, and the
+    # symptom -- a fresh download on a new PC showing 32-hex tokens in its
+    # window -- reads as a bug every single time. The stated requirement is
+    # "admin everywhere".
+    #
+    # Scoped tightly: only values matching the exact shape the old generator
+    # produced (see _looks_auto_generated). A hand-picked secret in
+    # config.env survives untouched, which is the whole point of that file
+    # being editable.
+    #
+    # SERVER_PORT is deliberately NOT migrated alongside it. Moving the port
+    # changes the origin and orphans whatever the phone has in localStorage,
+    # on top of the token change -- two breakages where the request was for
+    # one. An old install stays on its old port until config.env is deleted.
+    for key in ("AGENT_TOKEN", "CLIENT_TOKEN"):
+        if _looks_auto_generated(values.get(key, "")):
+            values[key] = "admin"
+            changed = True
+
     if not values.get("AGENT_TOKEN"):
         # Same reasoning as CLIENT_TOKEN below: on a self-hosted single-PC
         # LAN install, a random secret here buys little real security (it
@@ -280,23 +312,36 @@ def watched_process_name(data_dir: Path) -> Optional[str]:
         # worth coupling this to that import order.
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
+            # Keyed on state_key, not on type. `vpn.running` IS the thing the
+            # poller reports and the tile lights from, and the tile driving it
+            # can legitimately be either a `launch_app` (what the reference
+            # deck uses) or a `process_toggle`. Selecting by type missed the
+            # launch_app case entirely, which is every fresh install since the
+            # seed changed.
             rows = conn.execute(
-                "SELECT params FROM item WHERE type = 'process_toggle' ORDER BY id"
+                "SELECT params FROM item WHERE state_key = 'vpn.running' ORDER BY id"
             ).fetchall()
         finally:
             conn.close()
     except sqlite3.Error:
         return None
 
-    # First match wins, and one name is the right shape here rather than a
-    # list: these tiles all report through the single state key `vpn.running`
-    # (see the seeded item in backend/app/db.py), so the state model has only
-    # ever had room for one watched process anyway.
+    # One name, not a list: everything here reports through the single state
+    # key `vpn.running`, so the state model has only ever had room for one
+    # watched process.
     for (params,) in rows:
         try:
-            name = json.loads(params).get("process_name")
+            values = json.loads(params)
         except (TypeError, ValueError):
             continue
+        # An explicit process_name wins; otherwise derive it from the launch
+        # path, which is all a launch_app tile carries. Deriving is safe here
+        # in a way it isn't for the Terminal tile (whose `wt.exe` is an alias
+        # for a differently-named process) because a VPN client's exe and its
+        # process share a name.
+        name = values.get("process_name")
+        if not name and values.get("path"):
+            name = os.path.basename(values["path"])
         if name:
             return name
     return None
