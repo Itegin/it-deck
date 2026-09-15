@@ -1,5 +1,13 @@
 services:
   backend:
+    # build+image together: `docker compose up -d --build` (what deploy.sh
+    # runs) always rebuilds from ./backend and tags it with this same name,
+    # so the running container can never drift from a stale pulled image --
+    # that drift is exactly what made deploy.sh's step 5 freshness check
+    # fail and led to deploy.sh being deleted rather than fixed (see commit
+    # 87ff3bc). CI still publishes this same tag to GHCR on version tags,
+    # for anyone who wants to `docker compose pull` instead of building.
+    build: ./backend
     image: ghcr.io/itegin/it-deck-backend:latest
     # Must match SERVER_PORT in .env and the uvicorn --port in backend/Dockerfile -- change all three together.
     ports:

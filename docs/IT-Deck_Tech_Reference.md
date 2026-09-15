@@ -1083,7 +1083,7 @@ important thing about the pipeline:
 
 | Half | Mechanism | What updating it takes |
 | --- | --- | --- |
-| **Backend** (`backend/app/**`) | Baked into the Docker image (`Dockerfile` does `COPY app ./app`), published to `ghcr.io/itegin/it-deck-backend` | `docker compose pull && docker compose up -d` — i.e. a new **image** |
+| **Backend** (`backend/app/**`) | Baked into the Docker image (`Dockerfile` does `COPY app ./app`); `docker-compose.yml` declares both `build: ./backend` and `image: ghcr.io/itegin/it-deck-backend:latest` | `docker compose up -d --build` — rebuilds locally from the checked-out code, tags it with the same name CI publishes to GHCR |
 | **Frontend** (`frontend/**`) | **Bind-mounted** (`./frontend:/app/frontend` in `docker-compose.yml`); the Dockerfile deliberately does not `COPY frontend/` | A `git pull` on the host, then **Ctrl+Shift+R** in the browser. No image rebuild ever busts the browser cache |
 | **Windows agent** (`agents/windows/**`) | Nothing. It is a manually launched local process | Close the console window, relaunch the "IT-Deck Agent" desktop shortcut, **by hand on the Windows PC** |
 
@@ -1095,10 +1095,13 @@ Russian; the marker lines are what to read.
 1. **Refuse to run with uncommitted edits on the server** — `✗ На сервере есть
    правки` means someone edited files directly on the host.
 2. **`git pull --rebase`**, and warn about unpushed commits on the server.
-3. **`docker compose pull` then `docker compose up -d`.** Note this **pulls the
-   prebuilt GHCR image**; it does not build locally. (`CLAUDE.md`'s older
-   wording "rebuilds" and the `ship` skill's `--build` timeout note both
-   predate commit `d2a7567`, which switched this to a pull.)
+3. **`docker compose up -d --build`.** Rebuilds locally from `./backend` —
+   deliberately not `docker compose pull`. Commit `d2a7567` switched this to
+   a GHCR pull; a pulled image only exists for tagged releases and lags
+   behind plain `main` commits, which broke step 5's freshness guarantee and
+   got the whole script deleted (commit `87ff3bc`) rather than fixed. v0.3.0
+   restored both `deploy.sh` and `docker-compose.yml`'s `build:` context to
+   the original local-build design — see `CLAUDE.md`'s Deploy section.
 4. **Health check** — polls `http://localhost:8000/health` for 20 s.
 5. **md5 the `.py` files on disk against the same files inside the container**
    — `✓ Код в контейнере актуален` is the only line that proves the container
@@ -1122,7 +1125,10 @@ Three separate statements, all true:
   `./backend` and pushes `ghcr.io/itegin/it-deck-backend:<tag>` and `:latest`.
 - **CD: does not exist.** Nothing deploys automatically. A release reaches
   Athlon only when a human runs `./deploy.sh` there over SSH (the `/ship`
-  skill automates the sequence, but a person still triggers it).
+  skill automates the sequence, but a person still triggers it). This is
+  deliberately decoupled from the GHCR/tag pipeline above — `deploy.sh`
+  builds locally rather than waiting on or pulling a CI-built image (see
+  §9's deploy.sh section).
 - **Tests in CI: none.** Nothing is run against the code at any point. The only
   test-shaped file in the repo is `agents/windows/test_mic.py`, a manual probe.
   `check.sh` and `deploy.sh`'s md5 step are the entire verification story.
@@ -1284,10 +1290,15 @@ Ordered roughly by how likely each is to bite.
     `http://<ip>:8000`; through the TLS proxy Ansible installs, a plain `ws://`
     from an `https://` page is blocked as mixed content. Only the direct HTTP
     path works end to end today.
-13. **`ansible/site.yml` runs `docker compose up -d --build`,** but
+13. ~~**`ansible/site.yml` runs `docker compose up -d --build`,** but
     `docker-compose.yml` declares only `image:` and no `build:` context, so
-    there is nothing for `--build` to build — the image always comes from GHCR.
-    Harmless, but a stale flag.
+    there is nothing for `--build` to build — the image always comes from
+    GHCR.~~ **Fixed in v0.3.0.** This was not harmless: it's the same gap
+    that made `deploy.sh`'s own `--build` a silent no-op, discovered live
+    during a v0.3.0 deploy (container stayed stale after a successful `git
+    pull` + `docker compose up -d --build`). `docker-compose.yml` now
+    declares `build: ./backend` alongside `image:`, so both `deploy.sh` and
+    `ansible/site.yml`'s `--build` actually rebuild.
 
 ### Correctness / consistency
 

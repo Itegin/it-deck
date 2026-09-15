@@ -73,9 +73,16 @@ These three are non-negotiable and get checked on every relevant change:
 ## Deploy (legacy: Docker on a separate server)
 
 - **`./deploy.sh` (on Athlon, via `ssh athlon`) updates the backend only.** It
-  pulls git, pulls the prebuilt GHCR image, restarts the container, health-checks
-  it, and md5s the container's code against disk. `✓ Код в контейнере актуален`
-  is the only line that proves the container isn't stale.
+  pulls git, **rebuilds the image locally** (`docker compose up -d --build`),
+  restarts the container, health-checks it, and md5s the container's code
+  against disk. `✓ Код в контейнере актуален` is the only line that proves
+  the container isn't stale. Local build, not a GHCR pull: a pulled image
+  only exists for tagged releases and lags behind plain `main` commits,
+  which is exactly what broke this script once already (commit `87ff3bc`
+  deleted it after a GHCR-pull version went stale; it was restored to the
+  local-build design in v0.3.0). CI still publishes the same image tag to
+  GHCR on version tags — that's for anyone who wants to `docker compose
+  pull` elsewhere, not part of Athlon's own deploy path.
 - **The frontend is bind-mounted, not baked into the image.** A `git pull` on
   the host is the whole deploy; no rebuild busts the browser cache, so finish
   with **Ctrl+Shift+R** on the phone.
