@@ -74,6 +74,30 @@ def is_process_running(name: str) -> bool:
 _LAUNCH_BUDGET_SECONDS = 2.0
 
 
+ERROR_ELEVATION_REQUIRED = 740
+
+
+class ElevationRequired(Exception):
+    """The target refuses to start without administrator rights.
+
+    Measured, not guessed: `CreateProcessW` on the maintainer's v2RayTun.exe
+    fails with winerror 740 every single time, because the exe carries the
+    per-user `RUNASADMIN` AppCompat layer (in HKCU, under AppCompatFlags) --
+    it has no embedded manifest at all, so nothing about the file itself says
+    so. ShellExecute then handles it by raising a UAC consent dialog **on the
+    PC**, and that is the whole story behind "the VPN button doesn't work":
+    the press is being answered by a dialog nobody is standing in front of,
+    because the entire point of the deck is that the person is holding a
+    phone. The launch also took the slow ShellExecute path, which is why a
+    VPN press always came back at exactly the 2.0s budget.
+
+    Reported as an *error* rather than an "ok" with a note, deliberately:
+    app.js shows no toast on success (frontend/js/app.js -- the colour change
+    is the confirmation), so an explanatory message on an "ok" would be
+    invisible, which is the silence being fixed here.
+    """
+
+
 def _spawn_detached(path: str) -> None:
     """CreateProcess the target with no console and its own process group.
 
@@ -129,11 +153,18 @@ def start_process(path: str) -> None:
     """
     failure: list[BaseException] = []
 
+    needs_elevation: list[bool] = []
+
     def launch() -> None:
         try:
             _spawn_detached(path)
-        except Exception:
+        except Exception as spawn_exc:
+            if getattr(spawn_exc, "winerror", None) == ERROR_ELEVATION_REQUIRED:
+                needs_elevation.append(True)
             try:
+                # Still attempted even when elevation is the known cause: it
+                # is what puts the UAC prompt on screen, so a person who *is*
+                # at the PC can simply confirm it and have the app start.
                 os.startfile(path)
             except Exception as exc:
                 failure.append(exc)
@@ -144,6 +175,8 @@ def start_process(path: str) -> None:
     worker.join(timeout=_LAUNCH_BUDGET_SECONDS)
     if failure:
         raise failure[0]
+    if needs_elevation:
+        raise ElevationRequired(path)
 
 
 def _with_ancestors(pid: int, out: set) -> None:
@@ -224,6 +257,14 @@ def kill_process(name: str) -> None:
             continue
 
 
+_ELEVATION_MESSAGE = (
+    "This program is set to run as administrator, so Windows put a UAC prompt "
+    "on the PC's screen -- confirm it there. To launch it from the phone with "
+    "no prompt, either clear \"Run this program as an administrator\" in the "
+    "exe's Properties > Compatibility, or run IT-Deck itself as administrator."
+)
+
+
 def handle_launch_app(params: dict) -> dict:
     try:
         if not params.get("path"):
@@ -247,6 +288,11 @@ def handle_launch_app(params: dict) -> dict:
         # UAC-elevated exes, .lnk shortcuts and documents launch as before.
         try:
             start_process(params["path"])
+        except ElevationRequired:
+            # Not a fallback case: the target was found and Windows is asking
+            # a human to approve it. Trying fallback_path here would launch
+            # PowerShell instead of the VPN, which is worse than saying so.
+            return {"status": "error", "message": _ELEVATION_MESSAGE}
         except Exception:
             # fallback_path exists for one real case: the seeded Terminal tile
             # launches `wt.exe`, and Windows Terminal is not present on every
@@ -323,7 +369,10 @@ def handle_process_toggle(params: dict) -> dict:
             # FileNotFoundError traceback string.
             if not Path(vpn_path).exists():
                 return {"status": "error", "message": f"VPN_PATH does not exist: {vpn_path}"}
-            start_process(vpn_path)
+            try:
+                start_process(vpn_path)
+            except ElevationRequired:
+                return {"status": "error", "message": _ELEVATION_MESSAGE}
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

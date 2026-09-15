@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.3.6"
+ITDECK_VERSION = "0.3.7"
 
 # The frozen exe is built --windowed, so it has NO console: sys.stdout and
 # sys.stderr are None and a bare print() would raise AttributeError. They are
@@ -498,7 +498,7 @@ _STRINGS = {
         "open_studio": "Open Studio",
         "agent_token_hint": "If Studio asks for an agent token:",
         "logs_hint": "Logs (for troubleshooting):",
-        "close": "Hide this window",
+        "close": "Minimize",
         "quit": "Quit IT-Deck",
         "quit_confirm": "Stop IT-Deck? The deck on your phone will go offline.",
     },
@@ -512,7 +512,7 @@ _STRINGS = {
         "open_studio": "Открыть Studio",
         "agent_token_hint": "Если Studio спросит токен агента:",
         "logs_hint": "Логи (для отладки):",
-        "close": "Скрыть окно",
+        "close": "Свернуть",
         "quit": "Выйти из IT-Deck",
         "quit_confirm": "Остановить IT-Deck? Дека на телефоне отключится.",
     },
@@ -745,13 +745,14 @@ def show_info_window(
 
         label(f"{s['logs_hint']} {logs_dir}", muted=True, size=8).pack(anchor="w", padx=16, pady=(4, 10))
 
-        # Two buttons, and the distinction is load-bearing now that the
-        # console is hidden rather than minimized: "Hide this window" closes
-        # only the window (IT-Deck keeps running, the phone stays connected),
-        # while "Quit" is the actual stop button. Before this, the only way
-        # to stop IT-Deck was Ctrl+C in a console the user first had to
-        # restore from the taskbar -- and with SW_HIDE there is no taskbar
-        # button left to restore, so this is the only stop affordance.
+        # Two buttons, and the distinction is load-bearing: this window is
+        # now the *only* interface IT-Deck has. The exe is built --windowed,
+        # so there is no console to fall back to -- no Ctrl+C, and nothing to
+        # restore from the taskbar. "Minimize" therefore iconifies rather
+        # than destroys: destroying it (which is what it used to do, under
+        # the label "Hide this window") left IT-Deck running with no way to
+        # see the URL again and no way to stop it short of Task Manager.
+        # "Quit" is the actual stop button, and the only one.
         buttons = tk.Frame(root, bg=g["bg"])
         buttons.pack(padx=16, pady=(0, 16), fill="x")
 
@@ -766,8 +767,16 @@ def show_info_window(
             on_quit()
             root.destroy()
 
-        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.destroy).pack(side="left")
+        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.iconify).pack(side="left")
         ttk.Button(buttons, text=s["quit"], style="Glass.TButton", command=quit_itdeck).pack(side="right")
+
+        # The title bar's X goes to Quit, not to Tk's default destroy. With
+        # no console behind it, a destroyed window is an IT-Deck nobody can
+        # see, reach or stop -- so the close box means what it means in every
+        # other desktop app, and the confirmation dialog is what keeps a
+        # stray click from taking the phone offline. Minimize is the button
+        # for "get it off my screen".
+        root.protocol("WM_DELETE_WINDOW", quit_itdeck)
 
         # After every widget is packed, not before: applying this earlier
         # (when the window was still its default un-sized shape) meant

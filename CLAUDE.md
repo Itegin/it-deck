@@ -22,7 +22,7 @@ documented under "Deploy" as the legacy path.
 > the code. Release-by-release history is in
 > [`CHANGELOG.md`](CHANGELOG.md).
 
-Current version: **v0.3.6** (`ITDECK_VERSION` in `standalone/launcher.py` --
+Current version: **v0.3.7** (`ITDECK_VERSION` in `standalone/launcher.py` --
 bump it in the same commit as the tag). The bullets below are the constraints that are
 easy to break; the reference doc explains the same mechanisms at length.
 
@@ -50,7 +50,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+, current as of v0.3.6)
+## Standalone mode (v0.3.0+, current as of v0.3.7)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`
@@ -155,6 +155,22 @@ These three are non-negotiable and get checked on every relevant change:
   reproduced IT-Deck killing a launched process. The flags are also not new:
   commit `341426b` added them for this reason and `0176612` silently dropped
   them.
+- **A launch target that needs elevation is now reported, not swallowed**
+  (`ElevationRequired` in `agents/windows/handlers/process.py`). Measured on
+  the maintainer's PC: `CreateProcessW` on `v2RayTun.exe` fails with
+  **winerror 740 (ERROR_ELEVATION_REQUIRED)** every time -- the exe has no
+  embedded manifest at all, it carries the per-user `RUNASADMIN` AppCompat
+  layer in HKCU, and the running instance's token confirms it is elevated.
+  So every VPN press fell through to the `os.startfile()` fallback, which
+  raises a **UAC consent dialog on the PC** and blocks until someone answers
+  it -- which is why a VPN press always came back at exactly the 2.0s budget,
+  and is the long-missing diagnosis for "the VPN button doesn't work": the
+  press was being answered by a dialog nobody was standing in front of.
+  Reported as `status: error` with an actionable message rather than an "ok"
+  carrying a note, because `frontend/js/app.js` shows **no toast on success** --
+  a note there would be invisible. `handle_launch_app` must not fall through
+  to `fallback_path` on this exception: the target was found, so launching
+  PowerShell instead of the VPN would be worse than saying so.
 - **Launches run off the receive loop** (`start_process()`, worker thread,
   `_LAUNCH_BUDGET_SECONDS = 2.0`). `handle_process_toggle` runs synchronously
   inside the agent's single `_receive_loop`, so a slow `os.startfile()` broke
@@ -201,10 +217,19 @@ These three are non-negotiable and get checked on every relevant change:
   reported with a screenshot; that is what Windows draws for a minimized
   window with no taskbar button, and no amount of repaint tidying fixes it.
   Hiding removes Ctrl+C as the stop path, so **the info window now owns
-  stopping IT-Deck**: a "Quit" button next to "Hide this window". Quit only
-  sets a `threading.Event`; `run_launcher()`'s supervisor loop still owns the
-  actual teardown, because tearing down from the tkinter thread would race it
-  and leave orphans. Don't reintroduce `SW_MINIMIZE`.
+  stopping IT-Deck**. Quit only sets a `threading.Event`; `run_launcher()`'s
+  supervisor loop still owns the actual teardown, because tearing down from
+  the tkinter thread would race it and leave orphans. Don't reintroduce
+  `SW_MINIMIZE`.
+- **Nothing may destroy the info window -- it is the only interface IT-Deck
+  has.** With `--windowed` there is no console to fall back to, no Ctrl+C and
+  nothing to restore from the taskbar. The left button therefore calls
+  `root.iconify()` and is labelled "Minimize"/"Свернуть"; it used to say
+  "Hide this window" and call `root.destroy()`, which left IT-Deck running
+  with no way to see the URL again and no way to stop it short of Task
+  Manager. The title bar's X is bound via `WM_DELETE_WINDOW` to the same
+  confirmed Quit the button uses, rather than Tk's default destroy, so the
+  close box means what it means in every other desktop app.
 - **The console window used to minimize itself a couple seconds after startup**
   (`shrink_and_minimize_console()`, via `GetConsoleWindow()` +
   `ShowWindow`) — the info window duplicates everything it prints, so

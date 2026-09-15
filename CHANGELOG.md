@@ -7,6 +7,31 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.3.7 — 2026-09-15
+
+### Fixed
+
+- **The VPN tile's silence finally has a diagnosis: UAC.** `CreateProcessW`
+  on the maintainer's `v2RayTun.exe` fails with winerror 740
+  (`ERROR_ELEVATION_REQUIRED`) every single time — the exe has no embedded
+  manifest, but carries the per-user `RUNASADMIN` compatibility flag, and its
+  running instance's token confirms it is elevated. Every press therefore fell
+  through to the `os.startfile()` fallback, which puts a **UAC consent dialog
+  on the PC** and waits for someone to answer it — which is also why a VPN
+  press always came back at exactly the 2.0s launch budget. The press was
+  being answered by a dialog nobody was standing in front of. The tile now
+  says so, with the two ways out (clear the exe's "Run as administrator"
+  flag, or run IT-Deck itself as administrator), instead of reporting a
+  success no toast would ever show.
+- **"Hide this window" destroyed the only interface IT-Deck has.** Since
+  v0.3.6 the exe is built `--windowed`, so there is no console behind that
+  window: destroying it left IT-Deck running with no way to see the
+  connection URL again and no way to stop it short of Task Manager. The
+  button now minimizes (and is labelled that way), and the title bar's X is
+  wired to the same confirmed Quit as the button.
+
+---
+
 ## v0.3.6 — 2026-09-15
 
 ### Fixed

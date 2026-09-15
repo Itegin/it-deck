@@ -116,6 +116,15 @@ rather than doing nothing.
 Pressing it **starts** your VPN; it doesn't stop it. To stop one, long-press
 the tile and use **Force Stop**.
 
+**If the tile reports that the program runs as administrator**, that is the
+single most common reason a VPN tile looks dead: Windows answers the launch
+with a UAC prompt *on the PC*, and you're holding a phone. Two ways out —
+right-click the exe → Properties → Compatibility → clear **Run this program
+as an administrator**, or run `ITDeck.exe` itself as administrator, after
+which it can start elevated programs with no prompt. (Note this flag can be
+set per user by the installer, so the same VPN can need it on one PC and not
+another.)
+
 <details>
 <summary>If you'd rather have one tile that toggles it on and off</summary>
 
@@ -241,6 +250,7 @@ as mixed content on an HTTPS page.
 | The printed link doesn't open on the phone | The "primary" address can be a virtual adapter (Hyper-V, a VPN). Try the addresses on the "this PC also has" line |
 | No address works | Windows Firewall — a cancelled prompt leaves **Block** rules for `itdeck.exe`. Delete them in the firewall's inbound rules, or make the network Private |
 | The phone asks for a token | Its stored token no longer matches. Open the freshly printed `?token=…` link once |
+| The VPN tile does nothing | Most likely it has no `path` yet — a fresh install seeds it unconfigured (see "Configuring the VPN tile"). If it's configured, check whether that program runs as administrator |
 | A tile that needs the PC does nothing | The agent is down. The launcher restarts it automatically — check its console for restart lines and `%LOCALAPPDATA%\IT-Deck\logs\agent.log` for why |
 | Nothing starts at all | `%LOCALAPPDATA%\IT-Deck\logs\backend.log` |
 
@@ -255,4 +265,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.6 (tagged) — personal project, active development, API may change.
+v0.3.7 (tagged) — personal project, active development, API may change.
