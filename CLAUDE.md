@@ -5,9 +5,13 @@ for your PC. Single-user, single-process app — no multi-tenancy, and no auth
 beyond two shared secrets: `AGENT_TOKEN` (every write endpoint and `/ws/agent`)
 and `CLIENT_TOKEN` (the Dashboard's `/ws/client`).
 
-Three pieces, one persistent WebSocket each: **backend/** (FastAPI + SQLite,
-one Docker container), **frontend/** (vanilla JS/CSS PWA, no build step,
-bind-mounted), **agents/windows/** (Python agent on the controlled PC).
+Three pieces, one persistent WebSocket each: **backend/** (FastAPI + SQLite),
+**frontend/** (vanilla JS/CSS PWA, no build step), **agents/windows/**
+(Python agent on the controlled PC). As of v0.3.0, **standalone/** bundles
+all three into one `ITDeck.exe` that runs directly on the controlled PC —
+see "Standalone mode" below. The pre-v0.3.0 layout (backend as a Docker
+container on a separate server, frontend bind-mounted) still works and is
+documented under "Deploy" as the legacy path.
 
 > **Anything detailed lives in
 > [`docs/IT-Deck_Tech_Reference.md`](docs/IT-Deck_Tech_Reference.md)** —
@@ -36,10 +40,37 @@ These three are non-negotiable and get checked on every relevant change:
 - **Every execute command must resolve within 5s: ok, error, or timeout.** A
   `req_id` that never gets a matching result is a bug, not an edge case.
 - **`SERVER_PORT` must be read from `.env`, never hardcoded.** (Honoured by
-  the agent; the backend still hardcodes it in three places — see the
-  reference doc's tech-debt section.)
+  the agent and by standalone mode, which wires `backend/app/config.py`'s
+  previously-dead `SERVER_PORT` into real use. The legacy Docker path still
+  hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Deploy
+## Standalone mode (v0.3.0+)
+
+- **`standalone/launcher.py`** is the single entry point, for both
+  `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`
+  (`standalone/build.ps1`, PyInstaller `--onefile`). It generates
+  `AGENT_TOKEN`/`CLIENT_TOKEN`/`SERVER_PORT` once into
+  `%LOCALAPPDATA%\IT-Deck\config.env` (load-if-exists, generate-if-missing —
+  never regenerate on restart, or the phone's stored token stops working),
+  then re-invokes itself via `sys.executable` with `--role backend` /
+  `--role agent` to run both as separate OS processes from one exe (there's
+  no bundled `python.exe` to spawn otherwise).
+- **Backend and agent stay separate processes on purpose** — closing/
+  restarting one doesn't take down the other, matching the existing
+  "close the console window, relaunch" agent recovery story. The agent
+  connects to `ws://127.0.0.1:<port>/ws/agent`, unmodified from how it talks
+  to a remote backend.
+- **`ITDECK_DATA_DIR`/`ITDECK_FRONTEND_DIR` env vars are additive.**
+  `backend/app/db.py`'s `DB_PATH` and `backend/app/main.py`'s `StaticFiles`
+  directory both default to their original Docker-only values (`/app/data`,
+  cwd-relative `"frontend"`) when unset, so the legacy Docker/Ansible path
+  is unaffected — only the standalone launcher sets them, to real absolute
+  paths, since a desktop shortcut/frozen exe has no fixed cwd.
+- **Rebuilding `ITDeck.exe` after any `backend/`, `frontend/`, or
+  `agents/windows/` change is required** — none of it is bind-mounted like
+  the Docker path. Run `standalone\build.ps1`.
+
+## Deploy (legacy: Docker on a separate server)
 
 - **`./deploy.sh` (on Athlon, via `ssh athlon`) updates the backend only.** It
   pulls git, pulls the prebuilt GHCR image, restarts the container, health-checks

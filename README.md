@@ -37,7 +37,45 @@ a separate desktop-only admin page for editing it directly (add/edit/delete
 tiles, pick audio devices from the live agent, compact the layout). The phone
 Dashboard never mutates the catalog.
 
-## Requirements
+## Standalone mode (recommended)
+
+As of v0.3.0, IT-Deck runs entirely on the PC you want to control — no
+separate server, no Docker, no Ansible. Download `ITDeck.exe`, run it, and
+it:
+
+1. Generates its own `AGENT_TOKEN`/`CLIENT_TOKEN` and picks a free port on
+   first run (kept across restarts in `%LOCALAPPDATA%\IT-Deck\config.env` —
+   deleting that file invalidates the URL your phone already has).
+2. Starts the backend and the Windows agent as two separate processes (so
+   closing/relaunching one doesn't take down the other).
+3. Prints a URL for every LAN address it finds, e.g.
+   `http://192.168.0.15:8000/?token=...` — open one on your phone once (the
+   token is stored in the browser and stripped from the URL after).
+
+Press Ctrl+C in the console window to stop everything. Building it yourself:
+
+```
+standalone\build.ps1
+```
+
+This produces `standalone\dist\ITDeck.exe`. It bundles the backend, the
+frontend, and the Windows agent (including `agents\windows\tools\
+SoundVolumeView.exe`) into one file — see `standalone/launcher.py` for how
+config generation, LAN detection, and the two-process split work.
+
+**Requirements**: a Windows PC to control (the agent depends on
+`pycaw`/`comtypes` — Windows COM audio APIs — and `pywin32`, so it only runs
+on Windows, by design, in the interactive user session), and an iPhone or any
+modern phone with a browser on the same LAN.
+
+## Legacy: multi-device server deployment
+
+Before v0.3.0, IT-Deck's backend ran as a Docker container on a separate
+server, reached by a Windows agent and a phone over the LAN. This still
+works and is documented below, but standalone mode above is the recommended
+path for a single controlled PC.
+
+### Requirements
 
 - A Debian/Linux server (or any Docker host) to run the backend container
 - A Windows PC to control. The agent depends on `pycaw`/`comtypes` (Windows
@@ -47,7 +85,7 @@ Dashboard never mutates the catalog.
 - An iPhone or any modern phone with a browser — it's a PWA served over the
   LAN, not a native app
 
-## Setup
+### Setup
 
 1. Clone this repo onto the server that will run the backend:
    ```
@@ -98,7 +136,7 @@ Dashboard never mutates the catalog.
 5. On the phone, open `http://<server-lan-ip>:8000` in the browser and add it
    to the home screen.
 
-## Automated server setup
+### Automated server setup
 
 Steps 1–2 above can be done in one shot with the Ansible playbook in
 `ansible/` against a fresh Debian 12 server:

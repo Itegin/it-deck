@@ -1,4 +1,5 @@
 import logging
+import os
 
 # Without force=True, uvicorn's own dictConfig (which sets
 # disable_existing_loggers) wins and app loggers stay silent.
@@ -91,4 +92,10 @@ app.include_router(settings_router)
 # and returns 500 for anything else, so mounting it earlier than the
 # websocket routes above would swallow /ws/agent and /ws/client (and shadow
 # /health and /api). Keep this mount at the bottom of the file.
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+#
+# Default "frontend" is unchanged (cwd-relative, matches Docker's WORKDIR
+# /app where the bind mount lands at /app/frontend). The standalone launcher
+# passes an absolute path instead, since a desktop shortcut/frozen exe has
+# no fixed cwd to resolve "frontend" against.
+FRONTEND_DIR = os.environ.get("ITDECK_FRONTEND_DIR", "frontend")
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

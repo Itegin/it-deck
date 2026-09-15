@@ -1,7 +1,11 @@
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path("/app/data/controlhub.db")
+# Default matches the Docker bind mount (./data:/app/data) unchanged. The
+# standalone launcher points this at %LOCALAPPDATA%\IT-Deck instead, since
+# there's no /app there.
+DB_PATH = Path(os.environ.get("ITDECK_DATA_DIR", "/app/data")) / "controlhub.db"
 
 
 def get_connection() -> sqlite3.Connection:

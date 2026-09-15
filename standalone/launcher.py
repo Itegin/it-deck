@@ -1,0 +1,314 @@
+"""Standalone launcher for IT-Deck.
+
+Generates config on first run, starts the backend and the Windows agent as
+two separate OS processes, and prints the phone connection URL. No Docker,
+no separate home server -- this runs directly on the PC being controlled.
+
+Also the entry point for the frozen single .exe build (see build.ps1):
+PyInstaller bundles this one script, and it re-invokes itself (via
+sys.executable) with --role backend / --role agent to get two processes out
+of one exe -- there's no bundled python.exe to spawn otherwise. Keeping
+backend and agent as separate processes (rather than merging them into one)
+reuses each side's own working reconnect/dispatch logic untouched and keeps
+the existing "close the console window, relaunch" recovery story intact.
+"""
+import argparse
+import os
+import secrets
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Python fully-buffers stdout when it isn't a real console (piped, redirected,
+# or -- the case that bit this in testing -- launched under a process
+# supervisor). Without this, the connection URL below can sit in a buffer
+# and never reach the user at all.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def self_invocation(role: str) -> list[str]:
+    # Frozen: sys.executable IS the script (PyInstaller onefile), so no
+    # extra path argument. Dev: sys.executable is python.exe, so the script
+    # path has to be passed explicitly.
+    if is_frozen():
+        return [sys.executable, "--role", role]
+    return [sys.executable, str(Path(__file__).resolve()), "--role", role]
+
+
+# --- config: generate once, reuse across restarts -------------------------
+
+CONFIG_FILENAME = "config.env"
+# Keys a user might hand-edit for their own hardware -- see
+# agents/windows/.env.example for what each one does. Preserved verbatim
+# across restarts; never auto-generated (no safe default exists for them).
+OPTIONAL_AGENT_KEYS = (
+    "OUTPUT_DEVICE_PRIMARY",
+    "OUTPUT_DEVICE_SECONDARY",
+    "VPN_PROCESS_NAME",
+    "VPN_PATH",
+)
+
+
+def default_data_dir() -> Path:
+    override = os.environ.get("ITDECK_DATA_DIR")
+    if override:
+        return Path(override)
+    return Path(os.environ["LOCALAPPDATA"]) / "IT-Deck"
+
+
+def find_free_port(preferred: int, attempts: int = 20) -> int:
+    port = preferred
+    for _ in range(attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("0.0.0.0", port))
+                return port
+            except OSError:
+                port += 1
+    # Give up silently -- uvicorn will fail loudly on bind if this is also taken.
+    return preferred
+
+
+def parse_config(path: Path) -> dict:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def write_config(path: Path, values: dict) -> None:
+    lines = [
+        "# IT-Deck standalone config -- auto-generated on first run.",
+        "# AGENT_TOKEN / CLIENT_TOKEN / SERVER_PORT are generated once and kept",
+        "# across restarts. Deleting this file invalidates the URL your phone",
+        "# already has stored -- you'd need to open the new printed URL again.",
+        "#",
+        "# The keys below are optional and safe to hand-edit for your own",
+        "# hardware -- see agents/windows/.env.example in the source repo.",
+        "",
+        f"AGENT_TOKEN={values['AGENT_TOKEN']}",
+        f"CLIENT_TOKEN={values['CLIENT_TOKEN']}",
+        f"SERVER_PORT={values['SERVER_PORT']}",
+        "",
+    ]
+    for key in OPTIONAL_AGENT_KEYS:
+        if values.get(key):
+            lines.append(f"{key}={values[key]}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def load_or_create_config(data_dir: Path) -> dict:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    config_path = data_dir / CONFIG_FILENAME
+    values = parse_config(config_path)
+    changed = False
+    if not values.get("AGENT_TOKEN"):
+        values["AGENT_TOKEN"] = secrets.token_hex(16)
+        changed = True
+    if not values.get("CLIENT_TOKEN"):
+        values["CLIENT_TOKEN"] = secrets.token_hex(16)
+        changed = True
+    if not values.get("SERVER_PORT"):
+        values["SERVER_PORT"] = str(find_free_port(8000))
+        changed = True
+    if changed:
+        write_config(config_path, values)
+    return values
+
+
+# --- LAN discovery / reachability ------------------------------------------
+
+
+def detect_lan_ips() -> list[str]:
+    ips: set[str] = set()
+    # UDP-connect trick: no packet is actually sent, this just makes the OS
+    # pick a source interface/IP as if routing to an external address.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ips.add(s.getsockname()[0])
+    except OSError:
+        pass
+    # Also enumerate every adapter: this app has a first-class VPN toggle,
+    # so a VPN adapter shadowing the real LAN IP in the trick above is a
+    # real scenario -- print every candidate rather than guess one.
+    try:
+        import psutil
+
+        for addrs in psutil.net_if_addrs().values():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    ips.add(addr.address)
+    except Exception:
+        pass
+    return sorted(ips)
+
+
+def wait_for_health(port: int, timeout: float = 20.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def check_reachable(ip: str, port: int, timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+# --- role: backend -----------------------------------------------------
+
+
+def run_backend() -> int:
+    if is_frozen():
+        os.environ.setdefault("ITDECK_FRONTEND_DIR", str(Path(sys._MEIPASS) / "frontend"))
+    else:
+        sys.path.insert(0, str(REPO_ROOT / "backend"))
+        os.environ.setdefault("ITDECK_FRONTEND_DIR", str(REPO_ROOT / "frontend"))
+
+    import uvicorn
+    from app.config import SERVER_PORT
+    from app.main import app
+
+    uvicorn.run(app, host="0.0.0.0", port=SERVER_PORT, log_level="info")
+    return 0
+
+
+# --- role: agent -----------------------------------------------------
+
+
+def run_agent() -> int:
+    if not is_frozen():
+        sys.path.insert(0, str(REPO_ROOT / "agents" / "windows"))
+
+    import asyncio
+
+    import agent
+
+    asyncio.run(agent.main())
+    return 0
+
+
+# --- role: launcher (default) -----------------------------------------
+
+
+def run_launcher() -> int:
+    data_dir = default_data_dir()
+    config = load_or_create_config(data_dir)
+    port = int(config["SERVER_PORT"])
+    agent_token = config["AGENT_TOKEN"]
+    client_token = config["CLIENT_TOKEN"]
+
+    backend_env = {
+        **os.environ,
+        "AGENT_TOKEN": agent_token,
+        "CLIENT_TOKEN": client_token,
+        "SERVER_PORT": str(port),
+        "ITDECK_DATA_DIR": str(data_dir),
+    }
+    agent_env = {
+        **os.environ,
+        "AGENT_TOKEN": agent_token,
+        "SERVER_IP": "127.0.0.1",
+        "SERVER_PORT": str(port),
+        "AGENT_NAME": "windows",
+    }
+    for key in OPTIONAL_AGENT_KEYS:
+        if config.get(key):
+            agent_env[key] = config[key]
+
+    print("IT-Deck starting...")
+    print(f"Data/config: {data_dir}")
+    backend_proc = subprocess.Popen(self_invocation("backend"), env=backend_env)
+
+    if not wait_for_health(port):
+        print("Backend did not come up in time -- check the output above for errors.")
+        backend_proc.terminate()
+        return 1
+
+    agent_proc = subprocess.Popen(self_invocation("agent"), env=agent_env)
+
+    lan_ips = detect_lan_ips()
+    print()
+    print("=" * 64)
+    if not lan_ips:
+        print("Could not detect a LAN address. On this PC:")
+        print(f"  http://127.0.0.1:{port}/?token={client_token}")
+    for ip in lan_ips:
+        reachable = check_reachable(ip, port)
+        note = "" if reachable else "  <-- not reachable, check the Windows Firewall prompt"
+        print(f"  http://{ip}:{port}/?token={client_token}{note}")
+    print("=" * 64)
+    print("Open one of the URLs above on your phone's browser once.")
+    print("Press Ctrl+C to stop IT-Deck.")
+    print()
+
+    agent_exit_reported = False
+    try:
+        while True:
+            if backend_proc.poll() is not None:
+                print("Backend process exited -- stopping.")
+                break
+            if agent_proc.poll() is not None and not agent_exit_reported:
+                print(
+                    "Agent process exited -- tiles that need the PC (audio, apps, "
+                    "VPN) won't respond until it's restarted. Backend keeps running."
+                )
+                agent_exit_reported = True
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopping...")
+    finally:
+        for proc in (agent_proc, backend_proc):
+            if proc.poll() is None:
+                proc.terminate()
+        for proc in (agent_proc, backend_proc):
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="IT-Deck standalone launcher")
+    parser.add_argument("--role", choices=["launcher", "backend", "agent"], default="launcher")
+    args = parser.parse_args()
+
+    if args.role == "backend":
+        return run_backend()
+    if args.role == "agent":
+        return run_agent()
+    return run_launcher()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

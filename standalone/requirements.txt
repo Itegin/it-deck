@@ -1,0 +1,6 @@
+# Standalone mode runs backend and agent code in the same environment (as
+# two subprocesses of one launcher, see launcher.py) -- pull in both sets of
+# pinned deps rather than duplicating versions here.
+-r ../backend/requirements.txt
+-r ../agents/windows/requirements.txt
+pyinstaller==6.22.3

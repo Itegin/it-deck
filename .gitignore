@@ -7,3 +7,7 @@ agents/windows/crash_log.txt
 .vscode/
 ansible/inventory.yml
 agents/windows/icon.ico
+standalone/venv/
+standalone/build/
+standalone/dist/
+standalone/ITDeck.spec
