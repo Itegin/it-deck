@@ -85,7 +85,33 @@ These three are non-negotiable and get checked on every relevant change:
   paths, since a desktop shortcut/frozen exe has no fixed cwd.
 - **Rebuilding `ITDeck.exe` after any `backend/`, `frontend/`, or
   `agents/windows/` change is required** — none of it is bind-mounted like
-  the Docker path. Run `standalone\build.ps1`.
+  the Docker path. Run `standalone\build.ps1`, which also auto-installs a
+  compatible Python (3.12 via winget) if nothing suitable is on PATH.
+- **The launcher's console only ever prints what `run_launcher()` itself
+  writes.** Backend/agent stdout goes to
+  `%LOCALAPPDATA%\IT-Deck\logs\{backend,agent}.log` instead — uvicorn logs
+  every request and the agent logs a state line roughly once a second, and
+  on a real install that scrolled the connection URL off the screen within
+  seconds. A GUI window (`show_info_window()`, tkinter in a daemon thread —
+  spiked frozen under `--onefile` before relying on it) shows the same
+  Dashboard/Studio links, plus a copy button, so the console isn't the only
+  place to find them.
+- **The printed "primary" LAN address comes from the UDP-connect-to-8.8.8.8
+  trick, not from ranking candidates by local reachability.** A self-connect
+  from this same machine succeeds against *any* of its own bound interfaces
+  — including a Hyper-V vSwitch or VPN adapter a phone can never reach — so
+  it cannot tell a real LAN IP from a virtual one; confirmed the hard way
+  when an earlier version of this logic promoted a `172.16.x.x` Hyper-V
+  address over the real one. `check_reachable()` is now only a soft
+  "check the firewall" hint, not what selects the address.
+- **A stale `%LOCALAPPDATA%\IT-Deck\config.env` from before `CLIENT_TOKEN`
+  defaulted to `admin` is not migrated automatically.** An install that
+  already generated a random token keeps it (this is still the deliberate
+  load-if-exists behavior) — if a phone or person assumes it's `admin` and
+  it isn't, the wrong token gets rejected (`4001`). Fix is to delete that
+  one file and relaunch, not a code change; `frontend/js/ws.js` also no
+  longer loops `window.prompt()` forever on repeated rejection of the same
+  wrong token (see below), but the clean fix is still the right token.
 
 ## Deploy (legacy: Docker on a separate server)
 

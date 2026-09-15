@@ -1,6 +1,6 @@
 import { fetchWorkspaces } from "./api.js";
 import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setTileCommandState, getTileMeta } from "./render.js";
-import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate, onSettingsUpdate } from "./ws.js";
+import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
 import { initTheme, applyTheme, applyMode } from "./theme.js";
 import { showContextMenu } from "./contextmenu.js";
 import { showToast } from "./toast.js";
@@ -142,6 +142,9 @@ onAgentStatus(({ agent, status }) => setAgentOffline(agent, status === "offline"
 // refetching and fully re-rendering is simplest and cheap enough here
 // (edits are infrequent), same as init()'s own first load.
 onWorkspaceUpdate(() => init());
+onAuthError(() =>
+  showToast("Token rejected -- reopen the link IT-Deck printed, or check config.env.")
+);
 
 // The theme is a shared, server-stored choice, so it is wired up on its own
 // rather than through init(): it must survive a workspace that fails to load,

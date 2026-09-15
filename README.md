@@ -36,10 +36,13 @@ Run `ITDeck.exe` once. On first launch it:
    `config.env` invalidates the URL your phone already has.
 3. Starts the backend and the Windows agent as two separate processes, so
    closing/relaunching one doesn't take down the other.
-4. Prints a URL for every LAN address it finds, e.g.
-   `http://192.168.0.15:8000/?token=admin`.
+4. Opens a small window with the Dashboard and Studio links (and a copy
+   button) — and prints the same links in the console, e.g.
+   `http://192.168.0.15:8000/?token=admin`. Backend/agent logs go to
+   `%LOCALAPPDATA%\IT-Deck\logs\`, not the console, so that link doesn't
+   scroll out of view.
 
-Open one of those URLs on your phone's browser once (same Wi-Fi as the PC)
+Open the Dashboard link on your phone's browser once (same Wi-Fi as the PC)
 — no typing needed, the token's in the link and gets stored and stripped
 from the URL after. Press Ctrl+C in the console window to stop everything.
 
@@ -61,7 +64,7 @@ command resolves within 5 seconds — ok, error, or timeout — and the tile sho
 which. Long-pressing a tile opens a context menu with a **Force Stop** option
 for killing a stuck process.
 
-Of the 10 tiles a fresh install seeds, 7 are wired to a real command:
+A fresh install seeds 7 tiles, all wired to a real command:
 
 - **Terminal** — launch an app (`launch_app`; the seeded config opens Notepad)
 - **Mic** — mute/unmute the microphone; turns red while muted
@@ -72,10 +75,9 @@ Of the 10 tiles a fresh install seeds, 7 are wired to a real command:
 - **Screenshot** — capture the PC's primary monitor to the **PC's clipboard**
 - **VPN** — start/stop a configured VPN client process
 
-The remaining 3 (**Lights**, **Spotify**, **Sleep PC**) are still placeholder
-tiles left over from the very first prototype: their `type` values (`toggle`,
-`launch`, `run`) have no handler registered in the agent, so pressing them
-comes back as `unknown command`.
+(Three earlier placeholder tiles — Lights, Spotify, Sleep PC — had no
+handler behind them and just returned `unknown command`; they're gone from
+new installs, and a startup fixup removes them from existing databases too.)
 
 That catalog is only the starting point — **Studio Mode** (`/studio.html`) is
 a separate desktop-only admin page for editing it directly (add/edit/delete

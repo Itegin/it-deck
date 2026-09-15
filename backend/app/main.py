@@ -24,6 +24,7 @@ from app.db import (
     fixup_day4_items,
     fixup_legacy_seed,
     fixup_mic_item,
+    fixup_remove_placeholder_tiles,
     fixup_toggle_off_colors,
     fixup_volume_item,
     fixup_vpn_item,
@@ -46,6 +47,7 @@ app = FastAPI()
 def on_startup() -> None:
     init_db()
     seed_if_empty()
+    fixup_remove_placeholder_tiles()
     fixup_legacy_seed()
     fixup_mic_item()
     fixup_volume_item()

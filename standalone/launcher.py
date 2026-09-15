@@ -18,9 +18,12 @@ import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
+import webbrowser
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -144,29 +147,41 @@ def load_or_create_config(data_dir: Path) -> dict:
 # --- LAN discovery / reachability ------------------------------------------
 
 
-def detect_lan_ips() -> list[str]:
-    ips: set[str] = set()
-    # UDP-connect trick: no packet is actually sent, this just makes the OS
-    # pick a source interface/IP as if routing to an external address.
+def detect_primary_and_other_ips() -> tuple[Optional[str], list[str]]:
+    # The UDP-connect trick (no packet actually sent) asks the OS which
+    # source interface it would use to route to an external address --
+    # this is the best available proxy for "the real, phone-reachable LAN
+    # adapter", and it's *not* something a same-machine reachability check
+    # can substitute for: a socket bound to 0.0.0.0 accepts a local connect
+    # to ANY of its own interfaces, including virtual ones (Hyper-V vSwitch,
+    # a VPN's virtual adapter) that a phone on the real Wi-Fi can never
+    # reach -- confirmed the hard way when this used to rank candidates by
+    # local reachability and it happily promoted a 172.16.x.x Hyper-V
+    # address over the real 192.168.x.x one.
+    primary = None
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            ips.add(s.getsockname()[0])
+            primary = s.getsockname()[0]
     except OSError:
         pass
-    # Also enumerate every adapter: this app has a first-class VPN toggle,
-    # so a VPN adapter shadowing the real LAN IP in the trick above is a
-    # real scenario -- print every candidate rather than guess one.
+
+    # Every other adapter, for the secondary "other addresses" line -- this
+    # app has a first-class VPN toggle, so a VPN becoming the default route
+    # (and thus `primary` above) is a real scenario; listing the rest gives
+    # the user something to try by hand if the primary guess is wrong.
+    others: set[str] = set()
     try:
         import psutil
 
         for addrs in psutil.net_if_addrs().values():
             for addr in addrs:
                 if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                    ips.add(addr.address)
+                    if addr.address != primary:
+                        others.add(addr.address)
     except Exception:
         pass
-    return sorted(ips)
+    return primary, sorted(others)
 
 
 def wait_for_health(port: int, timeout: float = 20.0) -> bool:
@@ -257,6 +272,90 @@ def ensure_desktop_shortcut() -> None:
         pass  # convenience only -- never let this block IT-Deck from starting
 
 
+# --- info window -------------------------------------------------------
+
+
+def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs_dir: Path) -> None:
+    # A real GUI window, not another thing to read off the console: the
+    # console fills with backend/agent noise (that's why it's redirected to
+    # log files below), and a URL a person has to scroll to find is a URL
+    # they'll give up on -- which is exactly what happened on a real install.
+    # Runs tkinter's mainloop() in a daemon thread rather than on the main
+    # thread: run_launcher()'s own poll loop is what actually keeps the
+    # process alive and responds to Ctrl+C (per the module's own
+    # backend/agent-as-separate-processes design), and tkinter's mainloop()
+    # doesn't reliably notice a Ctrl+C on its own. A daemon thread means
+    # closing this window or leaving it open never affects that shutdown
+    # path either way -- it dies with the process, not before it.
+    def worker() -> None:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.title("IT-Deck")
+        root.attributes("-topmost", True)
+        root.resizable(False, False)
+
+        pad = {"padx": 16, "pady": 4}
+
+        tk.Label(
+            root, text="IT-Deck is running.", font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w", **pad)
+
+        tk.Label(
+            root,
+            text="Open this on your phone once (same Wi-Fi as this PC):",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=16, pady=(8, 2))
+
+        dash_entry = tk.Entry(root, width=52, font=("Consolas", 10))
+        dash_entry.insert(0, dashboard_url)
+        dash_entry.configure(state="readonly")
+        dash_entry.pack(padx=16, pady=(0, 4), fill="x")
+
+        def copy_dashboard() -> None:
+            root.clipboard_clear()
+            root.clipboard_append(dashboard_url)
+
+        tk.Button(root, text="Copy link", command=copy_dashboard).pack(anchor="w", padx=16, pady=(0, 10))
+
+        tk.Label(
+            root,
+            text="Studio (edit tiles, this PC only):",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=16, pady=(0, 2))
+
+        studio_entry = tk.Entry(root, width=52, font=("Consolas", 10))
+        studio_entry.insert(0, studio_url)
+        studio_entry.configure(state="readonly")
+        studio_entry.pack(padx=16, pady=(0, 4), fill="x")
+
+        tk.Button(root, text="Open Studio", command=lambda: webbrowser.open(studio_url)).pack(
+            anchor="w", padx=16, pady=(0, 10)
+        )
+
+        tk.Label(
+            root,
+            text=f"If Studio asks for an agent token: {agent_token}",
+            font=("Segoe UI", 8),
+            fg="#555555",
+        ).pack(anchor="w", padx=16)
+        tk.Label(
+            root,
+            text=f"Logs (for troubleshooting): {logs_dir}",
+            font=("Segoe UI", 8),
+            fg="#555555",
+        ).pack(anchor="w", padx=16, pady=(0, 4))
+
+        tk.Button(root, text="Close", command=root.destroy).pack(padx=16, pady=(4, 14))
+
+        root.mainloop()
+
+    try:
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception:
+        pass  # convenience only -- the console block below still has everything
+
+
 # --- role: launcher (default) -----------------------------------------
 
 
@@ -286,31 +385,62 @@ def run_launcher() -> int:
         if config.get(key):
             agent_env[key] = config[key]
 
+    # Backend/agent logs go to files, not this console: uvicorn logs every
+    # request and the agent logs a state line roughly once a second, so
+    # within a few seconds either one scrolls the connection URL below off
+    # the screen entirely -- confirmed the hard way on a real install, where
+    # it was the actual reason the URL looked "impossible to find". This
+    # console now only ever prints what run_launcher() itself writes.
+    logs_dir = data_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    backend_log = open(logs_dir / "backend.log", "a", encoding="utf-8")
+    agent_log = open(logs_dir / "agent.log", "a", encoding="utf-8")
+
     print("IT-Deck starting...")
     print(f"Data/config: {data_dir}")
-    backend_proc = subprocess.Popen(self_invocation("backend"), env=backend_env)
+    backend_proc = subprocess.Popen(
+        self_invocation("backend"), env=backend_env, stdout=backend_log, stderr=subprocess.STDOUT
+    )
 
     if not wait_for_health(port):
-        print("Backend did not come up in time -- check the output above for errors.")
+        print(f"Backend did not come up in time -- check {logs_dir / 'backend.log'} for errors.")
         backend_proc.terminate()
         return 1
 
-    agent_proc = subprocess.Popen(self_invocation("agent"), env=agent_env)
+    agent_proc = subprocess.Popen(
+        self_invocation("agent"), env=agent_env, stdout=agent_log, stderr=subprocess.STDOUT
+    )
 
-    lan_ips = detect_lan_ips()
+    # Pick one link to lead with, not three -- a phone user has no way to
+    # tell which of several printed addresses is the right one.
+    primary_ip, other_ips = detect_primary_and_other_ips()
+    if primary_ip is None:
+        primary_ip = other_ips[0] if other_ips else "127.0.0.1"
+        other_ips = other_ips[1:]
+    dashboard_url = f"http://{primary_ip}:{port}/?token={client_token}"
+    studio_url = f"http://{primary_ip}:{port}/studio.html"
+
+    # A same-machine connect only proves the port is listening -- it cannot
+    # prove another device can reach this address (see
+    # detect_primary_and_other_ips()) -- so this stays a soft hint, not the
+    # thing that picked primary_ip.
+    reachable = check_reachable(primary_ip, port)
+
     print()
     print("=" * 64)
-    if not lan_ips:
-        print("Could not detect a LAN address. On this PC:")
-        print(f"  http://127.0.0.1:{port}/?token={client_token}")
-    for ip in lan_ips:
-        reachable = check_reachable(ip, port)
-        note = "" if reachable else "  <-- not reachable, check the Windows Firewall prompt"
-        print(f"  http://{ip}:{port}/?token={client_token}{note}")
+    print(f"  Dashboard (open on your phone, same Wi-Fi): {dashboard_url}")
+    print(f"  Studio (this PC): {studio_url}")
+    if not reachable:
+        print("  <-- not reachable from another device yet -- check the Windows")
+        print("      Firewall prompt (Allow access) if one appeared.")
+    if other_ips:
+        print(f"  If that doesn't work, this PC also has: {', '.join(other_ips)}")
     print("=" * 64)
-    print("Open one of the URLs above on your phone's browser once.")
+    print("A window with these links (and a copy button) should also have opened.")
     print("Press Ctrl+C to stop IT-Deck.")
     print()
+
+    show_info_window(dashboard_url, studio_url, agent_token, logs_dir)
 
     agent_exit_reported = False
     try:
@@ -336,6 +466,8 @@ def run_launcher() -> int:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        backend_log.close()
+        agent_log.close()
     return 0
 
 

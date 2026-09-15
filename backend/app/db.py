@@ -90,11 +90,13 @@ def seed_if_empty() -> None:
         )
         workspace_id = cur.lastrowid
 
-        # row, col, label, icon, color, kind, type -- just enough to render a grid on day 1
+        # row, col, label, icon, color, kind, type -- just enough to render a grid on day 1.
+        # No placeholder rows here (an earlier version seeded Lights/Spotify/
+        # Sleep PC with types no handler ever implemented) -- a fresh install
+        # should only ever show tiles that actually do something. See
+        # fixup_remove_placeholder_tiles() for the equivalent cleanup on an
+        # already-seeded DB.
         fake_items = [
-            (0, 0, "Lights", "lightbulb", "#f2c14e", "action", "toggle"),
-            (0, 1, "Spotify", "music", "#1db954", "action", "launch"),
-            (0, 2, "Sleep PC", "moon", "#4e6ef2", "action", "run"),
             (1, 0, "Terminal", "terminal", "#2a2f38", "action", "launch"),
             (1, 1, "Camera", "camera", "#e0575b", "action", "toggle"),
             (1, 2, "Volume", "speaker", "#8e5ff5", "action", "run"),
@@ -126,6 +128,24 @@ def fixup_legacy_seed() -> None:
             WHERE label = 'Terminal'
             """
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fixup_remove_placeholder_tiles() -> None:
+    # seed_if_empty() used to seed Lights/Spotify/Sleep PC with types
+    # (toggle/launch/run) that no handler was ever registered for -- pressing
+    # any of them just returns "unknown command". Deleting them from
+    # seed_if_empty only stops NEW installs from getting them; an
+    # already-seeded DB (this project's own dev DB, Athlon's, anyone who
+    # installed before this fixup existed) keeps them forever otherwise,
+    # and nobody deletes three dead tiles by hand. Plain DELETE, not an
+    # UPDATE-based rename like fixup_mic_item() -- there's no real feature
+    # to migrate these into, they're just gone.
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM item WHERE label IN ('Lights', 'Spotify', 'Sleep PC')")
         conn.commit()
     finally:
         conn.close()

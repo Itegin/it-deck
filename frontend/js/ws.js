@@ -116,6 +116,14 @@ const agentStatusCallbacks = [];
 const workspaceUpdateCallbacks = [];
 const commandStateCallbacks = [];
 const settingsUpdateCallbacks = [];
+const authErrorCallbacks = [];
+
+// Consecutive 4001s since the last successful hello. Distinguishes "the
+// very first connection lost a race" (worth one more prompt) from "this
+// token is just wrong" (looping window.prompt() forever, once per backoff
+// tick, traps the page behind a stack of blocking dialogs with no way out
+// except reopening the app) -- see the close handler below.
+let authFailureCount = 0;
 
 // req_id -> {itemId, timer}. The correlation lives here because req_ids are
 // generated here and nowhere else; every consumer downstream works in
@@ -155,6 +163,7 @@ function connect() {
     // The server sends nothing before the hello is accepted, so the arrival of
     // any frame is itself the proof. No extra ack message needed.
     authenticated = true;
+    authFailureCount = 0;
     const message = JSON.parse(event.data);
     if (message.type === "result") {
       settleRequest(message.req_id, message.status, message.message);
@@ -192,13 +201,26 @@ function connect() {
     // *not* clear it -- a backend restart would otherwise log the phone out.
     authenticated = false;
     if (event.code === 4001) {
-      console.warn("[IT-Deck] client token rejected; will ask again on reconnect");
       forgetToken();
       if (clientToken) {
-        // A real value was presented and refused: drop it and ask again on the
-        // next connect().
+        // A real value was presented and refused: drop it.
         clientToken = null;
-        tokenPromptDismissed = false;
+        authFailureCount += 1;
+        if (authFailureCount === 1) {
+          console.warn("[IT-Deck] client token rejected; will ask again on reconnect");
+          tokenPromptDismissed = false;
+        } else {
+          // Second rejection in a row: the token isn't a fluke, it's wrong
+          // (typically a stale link, or config.env changed under a phone
+          // that still has the old value cached). Asking again would just
+          // reopen window.prompt() every backoff tick forever -- surface it
+          // once instead and require a fresh ?token=... link to retry.
+          console.warn("[IT-Deck] client token rejected repeatedly; giving up until a fresh link is opened");
+          tokenPromptDismissed = true;
+          for (const callback of authErrorCallbacks) {
+            callback();
+          }
+        }
       }
       // If clientToken was already "" the user dismissed the prompt, and
       // tokenPromptDismissed stays set -- otherwise every backoff tick would
@@ -341,4 +363,11 @@ export function onWorkspaceUpdate(callback) {
 // key later needs no change here.
 export function onSettingsUpdate(callback) {
   settingsUpdateCallbacks.push(callback);
+}
+
+// Fired once per stale/wrong token (see the close handler above) -- not on
+// every rejection, so a subscriber can show a single message instead of
+// spamming one per backoff tick.
+export function onAuthError(callback) {
+  authErrorCallbacks.push(callback);
 }
