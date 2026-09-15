@@ -95,7 +95,15 @@ These three are non-negotiable and get checked on every relevant change:
   seconds. A GUI window (`show_info_window()`, tkinter in a daemon thread —
   spiked frozen under `--onefile` before relying on it) shows the same
   Dashboard/Studio links, plus a copy button, so the console isn't the only
-  place to find them.
+  place to find them. Styled to match the Dashboard's own "Liquid Glass"
+  theme colors (`frontend/css/themes.css`'s dark palette — tkinter can't do
+  that theme's actual backdrop blur, so only the colors carry over), with a
+  best-effort native Windows 11 dark title bar + Mica backdrop via
+  `ctypes`/`dwmapi` (`_apply_windows11_chrome()` — silently no-ops on
+  Windows 10; must run *after* every widget is packed, not before, or Tk
+  locks in its premature un-sized geometry — confirmed the hard way). Text
+  is localized EN/RU via `_detect_ui_lang()` (Windows UI language, falling
+  back to Python's own locale).
 - **The printed "primary" LAN address comes from the UDP-connect-to-8.8.8.8
   trick, not from ranking candidates by local reachability.** A self-connect
   from this same machine succeeds against *any* of its own bound interfaces

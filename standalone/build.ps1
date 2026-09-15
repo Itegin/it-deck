@@ -59,9 +59,15 @@ $pyinstaller = Join-Path $venv "Scripts\pyinstaller.exe"
 & $python (Join-Path $repoRoot "agents\windows\tools\make_icon.py")
 
 $iconArg = @()
+$iconDataArg = @()
 $iconPath = Join-Path $repoRoot "agents\windows\icon.ico"
 if (Test-Path $iconPath) {
     $iconArg = @("--icon", $iconPath)
+    # Baking the icon into the exe (--icon above) only sets its file/taskbar
+    # icon -- it isn't a path the running program can open. Bundled again
+    # here as plain data so show_info_window() can load it for the popup's
+    # own title-bar icon at runtime.
+    $iconDataArg = @("--add-data", "${iconPath};.")
 }
 
 $frontendSrc = Join-Path $repoRoot "frontend"
@@ -79,6 +85,7 @@ $soundVolumeViewSrc = Join-Path $repoRoot "agents\windows\tools\SoundVolumeView.
     --workpath (Join-Path $root "build") `
     --specpath $root `
     @iconArg `
+    @iconDataArg `
     (Join-Path $root "launcher.py")
 
 Write-Host ""

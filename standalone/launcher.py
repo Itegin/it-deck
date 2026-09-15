@@ -272,7 +272,110 @@ def ensure_desktop_shortcut() -> None:
         pass  # convenience only -- never let this block IT-Deck from starting
 
 
-# --- info window -------------------------------------------------------
+# --- info window ---------------------------------------------------------
+
+# Same palette as the Dashboard's own "Liquid Glass" theme (see
+# frontend/css/themes.css's dark [data-theme="liquid-glass"] block) --
+# tkinter can't do that theme's actual backdrop-filter frost (no blur
+# compositing), so this borrows its *colors* (deep blue-black ground,
+# lifted surface, purple/teal accents) rather than trying to fake glass
+# with gradients tkinter can't draw either. The one piece of real
+# translucency available on this platform -- Windows 11's Mica material --
+# is applied separately, best-effort, in _apply_windows11_chrome() below.
+_GLASS = {
+    "bg": "#070a11",
+    "surface": "#151a23",
+    "border": "#2f3644",
+    "text": "#F1F5F9",
+    "text_muted": "#9aa3b2",
+    "accent": "#a78bfa",
+    "accent_active": "#8e5ff5",
+}
+
+_STRINGS = {
+    "en": {
+        "title": "IT-Deck",
+        "running": "IT-Deck is running",
+        "phone_hint": "Open this on your phone once (same Wi-Fi as this PC):",
+        "copy": "Copy link",
+        "copied": "Copied",
+        "studio_hint": "Studio (edit tiles, this PC only):",
+        "open_studio": "Open Studio",
+        "agent_token_hint": "If Studio asks for an agent token:",
+        "logs_hint": "Logs (for troubleshooting):",
+        "close": "Close",
+    },
+    "ru": {
+        "title": "IT-Deck",
+        "running": "IT-Deck запущен",
+        "phone_hint": "Открой на телефоне один раз (та же сеть Wi-Fi):",
+        "copy": "Скопировать",
+        "copied": "Скопировано",
+        "studio_hint": "Studio (редактирование плиток, только на этом ПК):",
+        "open_studio": "Открыть Studio",
+        "agent_token_hint": "Если Studio спросит токен агента:",
+        "logs_hint": "Логи (для отладки):",
+        "close": "Закрыть",
+    },
+}
+
+
+def _detect_ui_lang() -> str:
+    # Two independent signals, either sufficient: Windows' own UI language
+    # (most reliable when it's available) and Python's locale as a
+    # fallback for a dev run or an unusual Windows configuration. Anything
+    # that isn't Russian falls back to English rather than guessing.
+    try:
+        import ctypes
+
+        lang_id = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+        if (lang_id & 0xFF) == 0x19:  # LANG_RUSSIAN primary language ID
+            return "ru"
+    except Exception:
+        pass
+    try:
+        import locale
+
+        loc = locale.getdefaultlocale()[0] or ""
+        if loc.lower().startswith("ru"):
+            return "ru"
+    except Exception:
+        pass
+    return "en"
+
+
+def _apply_windows11_chrome(root) -> None:
+    # Best-effort only: a dark title bar and, on Windows 11, the same Mica
+    # material File Explorer uses -- real OS-composited translucency,
+    # rather than trying to fake glass with tkinter drawing primitives that
+    # can't do backdrop blur at all. Both calls are silently harmless on
+    # Windows 10 or anything older (DwmSetWindowAttribute just returns a
+    # failure HRESULT this code doesn't check) -- ctypes never raises on a
+    # merely-unsupported attribute, only on a genuinely broken call, which
+    # the try/except still catches.
+    try:
+        import ctypes
+
+        # The native HWND isn't guaranteed to exist yet purely from Tk()
+        # having been constructed -- forcing pending geometry/creation work
+        # through first is what made this reliably succeed in isolated
+        # testing; skipping it left DwmSetWindowAttribute silently
+        # targeting a not-yet-realized window.
+        root.update_idletasks()
+
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        dwm = ctypes.windll.dwmapi
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        DWMWA_SYSTEMBACKDROP_TYPE = 38
+        DWMSBT_MAINWINDOW = 2  # Mica
+        dwm.DwmSetWindowAttribute(
+            hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
+        )
+        dwm.DwmSetWindowAttribute(
+            hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(ctypes.c_int(DWMSBT_MAINWINDOW)), ctypes.sizeof(ctypes.c_int)
+        )
+    except Exception:
+        pass
 
 
 def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs_dir: Path) -> None:
@@ -289,64 +392,103 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
     # path either way -- it dies with the process, not before it.
     def worker() -> None:
         import tkinter as tk
+        from tkinter import ttk
+
+        s = _STRINGS[_detect_ui_lang()]
+        g = _GLASS
 
         root = tk.Tk()
-        root.title("IT-Deck")
+        root.title(s["title"])
+        root.configure(bg=g["bg"])
         root.attributes("-topmost", True)
         root.resizable(False, False)
+        try:
+            if is_frozen():
+                icon_path = Path(sys._MEIPASS) / "icon.ico"
+            else:
+                icon_path = REPO_ROOT / "agents" / "windows" / "icon.ico"
+            if icon_path.exists():
+                root.iconbitmap(str(icon_path))
+        except Exception:
+            pass
 
-        pad = {"padx": 16, "pady": 4}
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure("Glass.TEntry", fieldbackground=g["surface"], foreground=g["text"],
+                         insertcolor=g["text"], borderwidth=1, relief="flat")
+        style.configure(
+            "Glass.TButton",
+            background=g["surface"],
+            foreground=g["text"],
+            borderwidth=1,
+            relief="flat",
+            padding=(10, 6),
+        )
+        style.map("Glass.TButton", background=[("active", g["border"])])
+        style.configure(
+            "Accent.TButton",
+            background=g["accent_active"],
+            foreground=g["bg"],
+            borderwidth=0,
+            relief="flat",
+            padding=(10, 6),
+        )
+        style.map("Accent.TButton", background=[("active", g["accent"])])
 
-        tk.Label(
-            root, text="IT-Deck is running.", font=("Segoe UI", 11, "bold")
-        ).pack(anchor="w", **pad)
+        def label(text: str, muted: bool = False, bold: bool = False, size: int = 9) -> tk.Label:
+            return tk.Label(
+                root,
+                text=text,
+                font=("Segoe UI", size, "bold" if bold else "normal"),
+                bg=g["bg"],
+                fg=g["text_muted"] if muted else g["text"],
+                anchor="w",
+                justify="left",
+            )
 
-        tk.Label(
-            root,
-            text="Open this on your phone once (same Wi-Fi as this PC):",
-            font=("Segoe UI", 9),
-        ).pack(anchor="w", padx=16, pady=(8, 2))
+        def url_row(url: str) -> None:
+            entry = ttk.Entry(root, width=52, font=("Consolas", 10), style="Glass.TEntry")
+            entry.insert(0, url)
+            entry.configure(state="readonly")
+            entry.pack(padx=16, pady=(0, 8), fill="x")
 
-        dash_entry = tk.Entry(root, width=52, font=("Consolas", 10))
-        dash_entry.insert(0, dashboard_url)
-        dash_entry.configure(state="readonly")
-        dash_entry.pack(padx=16, pady=(0, 4), fill="x")
-
-        def copy_dashboard() -> None:
+        def copy_link(url: str, feedback: tk.Label) -> None:
             root.clipboard_clear()
-            root.clipboard_append(dashboard_url)
+            root.clipboard_append(url)
+            feedback.configure(text=s["copied"])
+            root.after(1500, lambda: feedback.configure(text=""))
 
-        tk.Button(root, text="Copy link", command=copy_dashboard).pack(anchor="w", padx=16, pady=(0, 10))
+        label(s["running"], bold=True, size=12).pack(anchor="w", padx=16, pady=(16, 10))
 
-        tk.Label(
-            root,
-            text="Studio (edit tiles, this PC only):",
-            font=("Segoe UI", 9),
-        ).pack(anchor="w", padx=16, pady=(0, 2))
+        label(s["phone_hint"]).pack(anchor="w", padx=16, pady=(0, 4))
+        url_row(dashboard_url)
+        dash_row = tk.Frame(root, bg=g["bg"])
+        dash_row.pack(anchor="w", padx=16, pady=(0, 14), fill="x")
+        dash_feedback = label("", muted=True)
+        ttk.Button(
+            dash_row, text=s["copy"], style="Accent.TButton", command=lambda: copy_link(dashboard_url, dash_feedback)
+        ).pack(side="left")
+        dash_feedback.pack(in_=dash_row, side="left", padx=(10, 0))
 
-        studio_entry = tk.Entry(root, width=52, font=("Consolas", 10))
-        studio_entry.insert(0, studio_url)
-        studio_entry.configure(state="readonly")
-        studio_entry.pack(padx=16, pady=(0, 4), fill="x")
-
-        tk.Button(root, text="Open Studio", command=lambda: webbrowser.open(studio_url)).pack(
-            anchor="w", padx=16, pady=(0, 10)
+        label(s["studio_hint"]).pack(anchor="w", padx=16, pady=(0, 4))
+        url_row(studio_url)
+        ttk.Button(root, text=s["open_studio"], style="Glass.TButton", command=lambda: webbrowser.open(studio_url)).pack(
+            anchor="w", padx=16, pady=(0, 14)
         )
 
-        tk.Label(
-            root,
-            text=f"If Studio asks for an agent token: {agent_token}",
-            font=("Segoe UI", 8),
-            fg="#555555",
-        ).pack(anchor="w", padx=16)
-        tk.Label(
-            root,
-            text=f"Logs (for troubleshooting): {logs_dir}",
-            font=("Segoe UI", 8),
-            fg="#555555",
-        ).pack(anchor="w", padx=16, pady=(0, 4))
+        label(f"{s['agent_token_hint']} {agent_token}", muted=True, size=8).pack(anchor="w", padx=16)
+        label(f"{s['logs_hint']} {logs_dir}", muted=True, size=8).pack(anchor="w", padx=16, pady=(0, 10))
 
-        tk.Button(root, text="Close", command=root.destroy).pack(padx=16, pady=(4, 14))
+        ttk.Button(root, text=s["close"], style="Glass.TButton", command=root.destroy).pack(padx=16, pady=(0, 16))
+
+        # After every widget is packed, not before: applying this earlier
+        # (when the window was still its default un-sized shape) meant
+        # resolving the real HWND -- which needs update_idletasks() to
+        # force it into existence -- also forced Tk to commit to that
+        # premature, too-small size instead of auto-sizing to the content
+        # added afterward. Confirmed the hard way: the window rendered
+        # correctly styled but cropped mid-text.
+        _apply_windows11_chrome(root)
 
         root.mainloop()
 
