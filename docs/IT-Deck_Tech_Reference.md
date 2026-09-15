@@ -1364,9 +1364,20 @@ would be wrong for every other user, while `CreateProcess` searches `PATH`,
 which already contains that directory (measured: launches in 0.06 s).
 `fallback_path` is an optional item param `handle_launch_app` tries only when
 the first target fails, covering a Windows 10 machine with no Windows Terminal
-installed. `fixup_legacy_seed` migrates existing installs from the old Notepad
-default, but its params UPDATE is **guarded on that old value**, so a tile
-someone repointed in Studio is left alone.
+installed.
+
+The tile also carries an explicit `process_name` of `WindowsTerminal.exe`.
+Without it, `handle_force_stop` derives the name from the path and gets
+`wt.exe` — and no running process is ever called that, because `wt.exe` is a
+launcher alias for a process named `WindowsTerminal.exe`. Long-press → Force
+Stop would match nothing and still report `ok`.
+
+`fixup_legacy_seed` migrates existing installs, and its params UPDATE is
+**guarded on the set of values this tile has actually shipped with**
+(`_DEFAULT_TERMINAL_PARAMS`), so a tile someone repointed in Studio is left
+alone. Append to that tuple rather than replacing it when the default changes,
+or the next change silently stops upgrading installs that took the previous
+one.
 
 ### 10.5 Console, info window, and the LAN address
 

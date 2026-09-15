@@ -7,6 +7,21 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.3.4 — 2026-09-15
+
+### Fixed
+
+- **Force Stop on the Terminal tile matched nothing.** It derives a process
+  name from the launch path, which gives `wt.exe` — but `wt.exe` is a launcher
+  alias and the process it starts is `WindowsTerminal.exe`, so a long-press →
+  Force Stop killed nothing and still reported "ok". The tile now carries an
+  explicit `process_name`. Introduced by v0.3.2's move to Windows Terminal.
+- The Terminal fixup now upgrades installs sitting on *any* previous default,
+  not just the original Notepad one, while still leaving a tile customised in
+  Studio alone.
+
+---
+
 ## v0.3.3 — 2026-09-15
 
 **The first release that actually carries a downloadable `ITDeck.exe`.**

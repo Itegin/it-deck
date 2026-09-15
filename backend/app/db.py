@@ -124,11 +124,26 @@ def seed_if_empty() -> None:
 #
 # fallback_path covers a machine with no Windows Terminal installed (plain
 # Windows 10); see handle_launch_app.
-TERMINAL_PARAMS = '{"path":"wt.exe","fallback_path":"powershell.exe"}'
+# process_name is spelled out rather than left for handle_force_stop to
+# derive: it falls back to os.path.basename(path), which would give "wt.exe",
+# and no running process is ever called that -- `wt.exe` is a launcher alias
+# and the process it starts is WindowsTerminal.exe. Long-press -> Force Stop
+# would have matched nothing and still reported "ok". (It names the wt.exe
+# case only; a machine falling back to powershell.exe gets a Force Stop that
+# matches nothing, which is the same as before and better than killing every
+# PowerShell on the box.)
+TERMINAL_PARAMS = (
+    '{"path":"wt.exe","fallback_path":"powershell.exe","process_name":"WindowsTerminal.exe"}'
+)
 
-# What that tile used to launch. Kept as a literal so the fixup below can tell
-# "still on the old default" from "the user chose this" -- see there.
-_LEGACY_TERMINAL_PARAMS = '{"path":"notepad.exe"}'
+# Every value this tile has shipped with, so the fixup below can tell "still
+# on a default nobody touched" from "the user chose this" -- see there. Add to
+# this list rather than replacing it whenever TERMINAL_PARAMS changes, or the
+# next change silently stops upgrading installs that took the previous one.
+_DEFAULT_TERMINAL_PARAMS = (
+    '{"path":"notepad.exe"}',
+    '{"path":"wt.exe","fallback_path":"powershell.exe"}',
+)
 
 
 def fixup_legacy_seed() -> None:
@@ -147,14 +162,16 @@ def fixup_legacy_seed() -> None:
     conn = get_connection()
     try:
         conn.execute("UPDATE item SET type = 'launch_app' WHERE label = 'Terminal'")
+        placeholders = ", ".join("?" for _ in _DEFAULT_TERMINAL_PARAMS)
         conn.execute(
-            """
+            f"""
             UPDATE item
             SET params = ?
             WHERE label = 'Terminal'
-              AND (params IS NULL OR params = '' OR params = '{}' OR params = ?)
+              AND (params IS NULL OR params = '' OR params = '{{}}'
+                   OR params IN ({placeholders}))
             """,
-            (TERMINAL_PARAMS, _LEGACY_TERMINAL_PARAMS),
+            (TERMINAL_PARAMS, *_DEFAULT_TERMINAL_PARAMS),
         )
         conn.commit()
     finally:

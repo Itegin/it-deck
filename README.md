@@ -237,4 +237,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.3 (tagged) — personal project, active development, API may change.
+v0.3.4 (tagged) — personal project, active development, API may change.
