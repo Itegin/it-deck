@@ -35,6 +35,11 @@ SERVER_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws/agent"
 MAX_BACKOFF = 30
 SINGLETON_MUTEX_NAME = "Global\\ITDeckAgentSingleton"
 
+# Exit code for "another agent already holds the singleton mutex". Mirrored
+# in standalone/launcher.py, which must not treat it as a crash to respawn --
+# see the comment at the sys.exit() call in main().
+EXIT_ALREADY_RUNNING = 3
+
 # Set in main(); see the comment there for why the handle must outlive the
 # call that created it.
 _singleton_handle = None
@@ -143,12 +148,23 @@ async def main() -> None:
     _singleton_handle = win32event.CreateMutex(None, False, SINGLETON_MUTEX_NAME)
     if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
         print("Another instance is already running -- exiting.")
-        # Exit 0, not 1: this is an orderly "someone else already has the
-        # job", and the launcher's supervisor reads a non-zero exit as a
-        # crash worth respawning. Exiting 1 here would turn a harmless
-        # double-launch into a restart storm between two processes that both
-        # correctly refuse to run.
-        sys.exit(0)
+        # A dedicated code, not 0 and not 1, because two callers read this
+        # exit and they want opposite things from it:
+        #
+        #   - standalone/launcher.py's supervisor respawns the agent on a
+        #     crash. It must NOT respawn this one -- a double-launch would
+        #     otherwise become a restart storm between two processes that
+        #     both correctly refuse to run -- so it treats this code as
+        #     "don't restart", same as a clean 0.
+        #   - agents/windows/start_agent.bat pauses on any non-zero exit, so
+        #     the legacy shortcut keeps its window open with the message
+        #     above still readable. Exiting 0 here would close that window
+        #     instantly and leave a double-launch looking like nothing
+        #     happened at all.
+        #
+        # Keep both in mind before changing it; EXIT_ALREADY_RUNNING is
+        # mirrored in launcher.py.
+        sys.exit(EXIT_ALREADY_RUNNING)
 
     backoff = 1
     while True:

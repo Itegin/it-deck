@@ -99,6 +99,16 @@ AGENT_RESTART_MAX_DELAY = 30.0
 # that is up and working.
 AGENT_HEALTHY_AFTER = 60.0
 
+# Exit codes that mean "the agent stopped on purpose" -- never respawned.
+# 0 is agent_shutdown's os._exit(0) (a tile the user pressed). 3 is
+# agent.py's EXIT_ALREADY_RUNNING: another agent holds the singleton mutex,
+# so respawning would just pit two processes that both refuse to run against
+# each other. It is deliberately not 0 there because
+# agents/windows/start_agent.bat pauses on a non-zero exit, which is how the
+# legacy shortcut keeps its "already running" message on screen -- keep the
+# two files in sync.
+AGENT_DELIBERATE_EXIT_CODES = (0, 3)
+
 
 def find_free_port(preferred: int, attempts: int = 20) -> int:
     port = preferred
@@ -694,10 +704,9 @@ def run_launcher() -> int:
     # in, so nobody sees it, and the deck simply goes half-dead with no
     # explanation. Respawning is what makes the two paths equally reliable.
     #
-    # Only a NON-ZERO exit is a crash worth restarting: exit 0 is either
-    # agent_shutdown's deliberate os._exit(0) (a tile the user pressed --
-    # relaunching it immediately would make that tile do nothing) or the
-    # singleton mutex's orderly "another instance already has the job".
+    # Only an unexpected exit is a crash worth restarting -- see
+    # AGENT_DELIBERATE_EXIT_CODES for the two that mean the agent stopped on
+    # purpose and must be left alone.
     agent_restart_delay = AGENT_RESTART_MIN_DELAY
     agent_restart_due: Optional[float] = None
     try:
@@ -708,8 +717,8 @@ def run_launcher() -> int:
 
             agent_status = agent_proc.poll()
             if agent_status is not None and agent_restart_due is None:
-                if agent_status == 0:
-                    print("Agent stopped on request -- not restarting it.")
+                if agent_status in AGENT_DELIBERATE_EXIT_CODES:
+                    print(f"Agent stopped on request (code {agent_status}) -- not restarting it.")
                     # Nothing schedules a restart, and poll() keeps returning
                     # 0, so this prints once and then stays quiet.
                     agent_restart_due = float("inf")
