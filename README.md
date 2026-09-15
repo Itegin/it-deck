@@ -8,6 +8,47 @@ for your PC.
 *(Screenshots to be added — capturing them requires a live device, out of
 scope for this edit.)*
 
+## Quick start (standalone, v0.3.0+)
+
+Runs entirely on the PC you want to control — no separate server, no
+Docker, no Ansible.
+
+```
+git clone https://github.com/Itegin/it-deck.git
+cd it-deck
+standalone\build.ps1
+```
+
+Needs **Python 3.7–3.12** on the machine that *builds* it (`comtypes`, used
+for audio control, doesn't support 3.13/3.14 — see `agents/windows/
+requirements.txt`). The resulting `standalone\dist\ITDeck.exe` (~23 MB) is
+fully standalone — the PC that *runs* it needs nothing installed, not even
+Python.
+
+Run `ITDeck.exe`. On first launch it:
+
+1. Generates its own `AGENT_TOKEN`/`CLIENT_TOKEN` and picks a free port
+   (kept across restarts in `%LOCALAPPDATA%\IT-Deck\config.env` — deleting
+   that file invalidates the URL your phone already has).
+2. Starts the backend and the Windows agent as two separate processes, so
+   closing/relaunching one doesn't take down the other.
+3. Prints a URL for every LAN address it finds, e.g.
+   `http://192.168.0.15:8000/?token=...`.
+
+Open one of those URLs on your phone's browser once (same Wi-Fi as the PC)
+— the token is stored and stripped from the URL after. Press Ctrl+C in the
+console window to stop everything.
+
+There's no prebuilt download yet — `standalone\build.ps1` is currently the
+only way to get `ITDeck.exe`, so it's a build step on every PC you want to
+control (see `standalone/launcher.py` for how config generation, LAN
+detection, and the two-process split work).
+
+**Requirements**: a Windows PC to control (the agent depends on
+`pycaw`/`comtypes` — Windows COM audio APIs — and `pywin32`, so it only runs
+on Windows, by design, in the interactive user session), and an iPhone or
+any modern phone with a browser on the same LAN.
+
 ## What it does
 
 The Dashboard (phone) shows a grid of tiles; tapping one sends a command over
@@ -37,43 +78,12 @@ a separate desktop-only admin page for editing it directly (add/edit/delete
 tiles, pick audio devices from the live agent, compact the layout). The phone
 Dashboard never mutates the catalog.
 
-## Standalone mode (recommended)
-
-As of v0.3.0, IT-Deck runs entirely on the PC you want to control — no
-separate server, no Docker, no Ansible. Download `ITDeck.exe`, run it, and
-it:
-
-1. Generates its own `AGENT_TOKEN`/`CLIENT_TOKEN` and picks a free port on
-   first run (kept across restarts in `%LOCALAPPDATA%\IT-Deck\config.env` —
-   deleting that file invalidates the URL your phone already has).
-2. Starts the backend and the Windows agent as two separate processes (so
-   closing/relaunching one doesn't take down the other).
-3. Prints a URL for every LAN address it finds, e.g.
-   `http://192.168.0.15:8000/?token=...` — open one on your phone once (the
-   token is stored in the browser and stripped from the URL after).
-
-Press Ctrl+C in the console window to stop everything. Building it yourself:
-
-```
-standalone\build.ps1
-```
-
-This produces `standalone\dist\ITDeck.exe`. It bundles the backend, the
-frontend, and the Windows agent (including `agents\windows\tools\
-SoundVolumeView.exe`) into one file — see `standalone/launcher.py` for how
-config generation, LAN detection, and the two-process split work.
-
-**Requirements**: a Windows PC to control (the agent depends on
-`pycaw`/`comtypes` — Windows COM audio APIs — and `pywin32`, so it only runs
-on Windows, by design, in the interactive user session), and an iPhone or any
-modern phone with a browser on the same LAN.
-
 ## Legacy: multi-device server deployment
 
 Before v0.3.0, IT-Deck's backend ran as a Docker container on a separate
 server, reached by a Windows agent and a phone over the LAN. This still
-works and is documented below, but standalone mode above is the recommended
-path for a single controlled PC.
+works and is documented below, but the standalone mode above is the
+recommended path for a single controlled PC.
 
 ### Requirements
 
@@ -102,14 +112,13 @@ path for a single controlled PC.
    `backend/Dockerfile`'s `uvicorn --port`. Change all three together.
    (`backend/app/config.py` reads `SERVER_PORT`, but nothing imports it.)
 
-2. Start the backend. The image is prebuilt and published to GHCR by CI on
-   version tags, so this pulls rather than builds:
+2. Start the backend, building the image locally:
    ```
-   docker compose pull
-   docker compose up -d
+   docker compose up -d --build
    ```
    `./deploy.sh` does the same thing plus a git pull, a health check, and a
-   check that the code inside the container matches the code on disk.
+   check that the code inside the container matches the code on disk — run
+   it instead once the server is already set up, for every later update.
 
 3. Copy (or clone) `agents/windows/` onto the Windows PC being controlled:
    ```
