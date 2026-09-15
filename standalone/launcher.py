@@ -13,8 +13,10 @@ reuses each side's own working reconnect/dispatch logic untouched and keeps
 the existing "close the console window, relaunch" recovery story intact.
 """
 import argparse
+import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -232,6 +234,65 @@ def detect_primary_and_other_ips() -> tuple[Optional[str], list[str]]:
     except Exception:
         pass
     return primary, sorted(others)
+
+
+def watched_process_name(data_dir: Path) -> Optional[str]:
+    """The process name the agent's poller should report as `vpn.running`.
+
+    Read straight out of the item table, because the agent cannot get it any
+    other way on a standalone install and the consequence of it being unknown
+    is genuinely destructive, not cosmetic:
+
+    `process_toggle` is a TOGGLE. The agent only learns the process name from
+    an item's params when a press arrives, so on a freshly started agent
+    `vpn.running` reports false while the VPN is actually up. The tile renders
+    "off", the user taps it expecting "on", and the handler -- seeing the
+    process genuinely running -- kills the VPN instead. Every agent start
+    re-armed that trap, which is why it looked like "the VPN closes when the
+    agent restarts". Seeding the name here means the very first poll tick
+    reports the truth and the tile is already lit before anyone touches it.
+
+    Done as an env var rather than a new WebSocket config frame: the agent's
+    configuration already travels this way (see agent_env in run_launcher),
+    the agent and its poller read VPN_PROCESS_NAME today with no changes at
+    all, and the legacy Docker path is untouched because it sets the variable
+    itself -- load_or_create_config()'s value always wins over this.
+
+    Returns None when there's nothing to seed (no such item, no process_name
+    in its params yet, unreadable DB). A None is the previous behaviour, not
+    a failure: the name still arrives on first press.
+    """
+    db_path = data_dir / "controlhub.db"
+    if not db_path.exists():
+        return None
+    try:
+        # Plain sqlite3 against a known path rather than importing
+        # backend.app.db: that module computes DB_PATH at import time from
+        # ITDECK_DATA_DIR, which the launcher role deliberately doesn't set
+        # on itself (only on the backend child). One read-only query is not
+        # worth coupling this to that import order.
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT params FROM item WHERE type = 'process_toggle' ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+    # First match wins, and one name is the right shape here rather than a
+    # list: these tiles all report through the single state key `vpn.running`
+    # (see the seeded item in backend/app/db.py), so the state model has only
+    # ever had room for one watched process anyway.
+    for (params,) in rows:
+        try:
+            name = json.loads(params).get("process_name")
+        except (TypeError, ValueError):
+            continue
+        if name:
+            return name
+    return None
 
 
 def wait_for_health(port: int, timeout: float = 20.0) -> bool:
@@ -659,9 +720,24 @@ def run_launcher() -> int:
         backend_proc.terminate()
         return 1
 
-    agent_proc = subprocess.Popen(
-        self_invocation("agent"), env=agent_env, stdout=agent_log, stderr=subprocess.STDOUT
-    )
+    # Read after wait_for_health(), never before: the item table doesn't
+    # exist until the backend's startup hook has run init_db()/seed_if_empty()
+    # and the fixups, and on a first-ever launch that is the same moment the
+    # VPN item comes into being.
+    def spawn_agent() -> subprocess.Popen:
+        # Re-read on every spawn, not once: a VPN process name changed in
+        # Studio then takes effect on the next agent restart rather than
+        # requiring a full IT-Deck restart. config.env still wins -- setdefault
+        # semantics, so a hand-set VPN_PROCESS_NAME is never overwritten.
+        name = watched_process_name(data_dir)
+        env = dict(agent_env)
+        if name and not env.get("VPN_PROCESS_NAME"):
+            env["VPN_PROCESS_NAME"] = name
+        return subprocess.Popen(
+            self_invocation("agent"), env=env, stdout=agent_log, stderr=subprocess.STDOUT
+        )
+
+    agent_proc = spawn_agent()
     agent_started_at = time.time()
 
     # Pick one link to lead with, not three -- a phone user has no way to
@@ -730,9 +806,7 @@ def run_launcher() -> int:
                     agent_restart_due = time.time() + agent_restart_delay
 
             if agent_restart_due is not None and time.time() >= agent_restart_due:
-                agent_proc = subprocess.Popen(
-                    self_invocation("agent"), env=agent_env, stdout=agent_log, stderr=subprocess.STDOUT
-                )
+                agent_proc = spawn_agent()
                 print("Agent restarted.")
                 agent_restart_due = None
                 # Backoff climbs across consecutive crashes so a genuinely

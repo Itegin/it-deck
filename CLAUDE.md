@@ -166,9 +166,22 @@ These three are non-negotiable and get checked on every relevant change:
   raised `KeyError` on every press. Configure it from Studio's params field;
   the env fallback keeps existing `.env` installs identical. `poll_loop`
   reads the same name via `get_watched_process_name()`, which the handler
-  updates at runtime — so on a params-configured tile, `vpn.running` is
-  unknown until its first press. Accepted, rather than adding an
-  agent-config channel over the WebSocket for one string.
+  also updates at runtime.
+- **The launcher seeds `VPN_PROCESS_NAME` into the agent's environment by
+  reading the item table** (`watched_process_name()`, called from
+  `spawn_agent()` after `wait_for_health()` and again on every respawn).
+  This is not a nicety — without it the tile is actively destructive.
+  `process_toggle` is a *toggle*, and the agent used to learn the process
+  name only when a press arrived, so a freshly started agent reported
+  `vpn.running = false` while the VPN was actually up. The tile rendered
+  "off", the user tapped expecting "on", and the handler — seeing the
+  process genuinely running — **killed the VPN**. Every agent start re-armed
+  that trap, which is exactly why it looked like "the VPN closes when the
+  agent restarts". Confirmed from a real `agent.log` timeline, not theory.
+  An env var rather than a new WebSocket config frame: the agent's config
+  already travels that way and neither the agent nor the backend needed a
+  single change. `config.env` still wins (setdefault semantics), and the
+  legacy Docker path is untouched because it sets the variable itself.
 - **The printed "primary" LAN address comes from the UDP-connect-to-8.8.8.8
   trick, not from ranking candidates by local reachability.** A self-connect
   from this same machine succeeds against *any* of its own bound interfaces
