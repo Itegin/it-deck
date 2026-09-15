@@ -22,7 +22,7 @@ documented under "Deploy" as the legacy path.
 > the code. Release-by-release history is in
 > [`CHANGELOG.md`](CHANGELOG.md).
 
-Current version: **v0.3.2** (`ITDECK_VERSION` in `standalone/launcher.py` --
+Current version: **v0.3.3** (`ITDECK_VERSION` in `standalone/launcher.py` --
 bump it in the same commit as the tag). The bullets below are the constraints that are
 easy to break; the reference doc explains the same mechanisms at length.
 
@@ -50,7 +50,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+, current as of v0.3.2)
+## Standalone mode (v0.3.0+, current as of v0.3.3)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`
@@ -107,7 +107,11 @@ These three are non-negotiable and get checked on every relevant change:
   `build.ps1`'s rather than a call to it — `build.ps1` exists to make a *developer
   machine* buildable (finding or winget-installing a Python, making a venv), all
   of which is wrong on a runner with a pinned interpreter. **Keep the two
-  invocations in step.**
+  invocations in step.** In particular **pass absolute paths to PyInstaller**:
+  it resolves a relative `--add-data` source against `--specpath`, not the
+  working directory, which is how this workflow failed on its very first
+  run (it looked for `standalone/frontend`). `build.ps1` was always immune
+  because it builds every path with `Join-Path $repoRoot`.
 - **Rebuilding `ITDeck.exe` after any `backend/`, `frontend/`, or
   `agents/windows/` change is required** — none of it is bind-mounted like
   the Docker path. Run `standalone\build.ps1`, which also auto-installs a

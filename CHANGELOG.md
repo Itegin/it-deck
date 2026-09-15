@@ -7,6 +7,24 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.3.3 — 2026-09-15
+
+**The first release that actually carries a downloadable `ITDeck.exe`.**
+v0.3.2 added the workflow meant to build it and the workflow failed, so that
+tag has no artifact. No application code changed between the two.
+
+### Fixed
+
+- **The release workflow now builds.** PyInstaller resolves a relative
+  `--add-data` *source* against `--specpath`, not against the working
+  directory — so with `--specpath standalone` it went looking for
+  `standalone/frontend` and died with "Unable to find ... frontend".
+  `build.ps1` never hit this because it has always passed absolute paths.
+  The workflow does now too. Reproduced locally in a clean venv with the
+  exact CI command, and confirmed fixed the same way before pushing.
+
+---
+
 ## v0.3.2 — 2026-09-15
 
 Second real-use pass. Also the first release with a **downloadable

@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.3.2"
+ITDECK_VERSION = "0.3.3"
 
 # Python fully-buffers stdout when it isn't a real console (piped, redirected,
 # or -- the case that bit this in testing -- launched under a process

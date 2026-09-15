@@ -52,24 +52,32 @@ jobs:
       - name: Generate the icon
         run: python agents/windows/tools/make_icon.py
 
+      # Absolute paths throughout, and that is not cosmetic: PyInstaller
+      # resolves a relative --add-data SOURCE against --specpath, not against
+      # the working directory. With --specpath standalone, relative sources
+      # sent it looking for standalone/frontend and the build died with
+      # "Unable to find ... frontend" -- which is exactly how the first run of
+      # this workflow failed. build.ps1 has always passed absolute paths
+      # (Join-Path $repoRoot ...), which is why it never hit this.
       - name: Build ITDeck.exe
         run: |
+          $ws = "${{ github.workspace }}"
           pyinstaller --onefile --name ITDeck --console `
-            --paths backend `
-            --paths agents/windows `
-            --add-data "frontend;frontend" `
-            --add-data "agents/windows/tools/SoundVolumeView.exe;tools" `
-            --add-data "agents/windows/icon.ico;." `
-            --icon agents/windows/icon.ico `
-            --distpath standalone/dist `
-            --workpath standalone/build `
-            --specpath standalone `
-            standalone/launcher.py
+            --paths "$ws\backend" `
+            --paths "$ws\agents\windows" `
+            --add-data "$ws\frontend;frontend" `
+            --add-data "$ws\agents\windows\tools\SoundVolumeView.exe;tools" `
+            --add-data "$ws\agents\windows\icon.ico;." `
+            --icon "$ws\agents\windows\icon.ico" `
+            --distpath "$ws\standalone\dist" `
+            --workpath "$ws\standalone\build" `
+            --specpath "$ws\standalone" `
+            "$ws\standalone\launcher.py"
 
       - name: Check the exe was produced
         shell: pwsh
         run: |
-          $exe = "standalone/dist/ITDeck.exe"
+          $exe = "${{ github.workspace }}/standalone/dist/ITDeck.exe"
           if (-not (Test-Path $exe)) { throw "ITDeck.exe was not built" }
           $size = (Get-Item $exe).Length
           Write-Host "Built ITDeck.exe ($([math]::Round($size / 1MB, 1)) MB)"
