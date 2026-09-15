@@ -133,13 +133,16 @@ These three are non-negotiable and get checked on every relevant change:
   it is the other suspect for that stray white rectangle, and the one whose
   timing matches the report ("appears when the terminal minimizes").
 - **The launcher supervises the agent and restarts it; it does not restart
-  the backend.** `run_launcher()`'s loop respawns the agent on a *non-zero*
-  exit with 2s→30s backoff, resetting once one survives 60s. Exit 0 is
-  deliberate and never restarted — it's either `agent_shutdown`'s
-  `os._exit(0)` (a tile the user pressed) or the singleton mutex's orderly
-  "another instance already has the job", which is why `agent.py` exits 0
-  rather than 1 in that case. A backend exit still stops everything, as
-  before. This exists because the legacy path's stability came from a human
+  the backend.** `run_launcher()`'s loop respawns the agent on an
+  *unexpected* exit with 2s→30s backoff, resetting once one survives 60s.
+  `AGENT_DELIBERATE_EXIT_CODES = (0, 3)` is never restarted: `0` is
+  `agent_shutdown`'s `os._exit(0)` (a tile the user pressed), `3` is
+  `agent.py`'s `EXIT_ALREADY_RUNNING` (the singleton mutex). **That one is
+  `3` rather than `0` because `agents/windows/start_agent.bat` pauses on any
+  non-zero exit** — that pause is how the legacy shortcut keeps its "already
+  running" message readable, and exiting `0` would close the window
+  instantly. Keep the constant in step across the two files. A backend exit
+  still stops everything, as before. This exists because the legacy path's stability came from a human
   seeing a console window stay open on a crash — standalone minimizes that
   console, so nobody sees it and the deck just goes half-dead.
 - **`agent.py`'s reconnect loop catches `Exception`, not
