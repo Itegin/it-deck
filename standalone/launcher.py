@@ -14,7 +14,6 @@ the existing "close the console window, relaunch" recovery story intact.
 """
 import argparse
 import os
-import secrets
 import socket
 import subprocess
 import sys
@@ -125,7 +124,14 @@ def load_or_create_config(data_dir: Path) -> dict:
     values = parse_config(config_path)
     changed = False
     if not values.get("AGENT_TOKEN"):
-        values["AGENT_TOKEN"] = secrets.token_hex(16)
+        # Same reasoning as CLIENT_TOKEN below: on a self-hosted single-PC
+        # LAN install, a random secret here buys little real security (it
+        # gates the write endpoints and /ws/agent, but the whole trust
+        # model is already "shared secret, no identity/expiry/rate-limit" --
+        # see CLAUDE.md) and is one more thing a person has to copy
+        # correctly, this time from Studio's own token prompt. Fixed and
+        # overridable in config.env, same as CLIENT_TOKEN.
+        values["AGENT_TOKEN"] = "admin"
         changed = True
     if not values.get("CLIENT_TOKEN"):
         # Not random on purpose: this is the one thing a person has to type
@@ -378,6 +384,29 @@ def _apply_windows11_chrome(root) -> None:
         pass
 
 
+def shrink_and_minimize_console() -> None:
+    # The info window now carries the same links/tokens the console prints,
+    # so once startup is done the console itself is only useful as a place
+    # to Ctrl+C or check for a crash -- not something that needs to sit
+    # open and full-sized on the desktop. Resized before minimizing so
+    # that if it's ever restored (from the taskbar, to actually Ctrl+C
+    # it), it isn't the terminal host's oversized default. Only meaningful
+    # for the built exe; a dev run's terminal is the user's own to manage.
+    if not is_frozen():
+        return
+    try:
+        import ctypes
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        ctypes.windll.user32.MoveWindow(hwnd, 100, 100, 640, 360, True)
+        SW_MINIMIZE = 6
+        ctypes.windll.user32.ShowWindow(hwnd, SW_MINIMIZE)
+    except Exception:
+        pass  # convenience only -- never let this block IT-Deck from running
+
+
 def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs_dir: Path) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -434,6 +463,16 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
             padding=(10, 6),
         )
         style.map("Accent.TButton", background=[("active", g["accent"])])
+        style.configure(
+            "Mini.TButton",
+            background=g["surface"],
+            foreground=g["text_muted"],
+            borderwidth=1,
+            relief="flat",
+            padding=(6, 1),
+            font=("Segoe UI", 7),
+        )
+        style.map("Mini.TButton", background=[("active", g["border"])])
 
         def label(text: str, muted: bool = False, bold: bool = False, size: int = 9) -> tk.Label:
             return tk.Label(
@@ -452,9 +491,9 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
             entry.configure(state="readonly")
             entry.pack(padx=16, pady=(0, 8), fill="x")
 
-        def copy_link(url: str, feedback: tk.Label) -> None:
+        def copy_text(text: str, feedback: tk.Label) -> None:
             root.clipboard_clear()
-            root.clipboard_append(url)
+            root.clipboard_append(text)
             feedback.configure(text=s["copied"])
             root.after(1500, lambda: feedback.configure(text=""))
 
@@ -466,7 +505,7 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
         dash_row.pack(anchor="w", padx=16, pady=(0, 14), fill="x")
         dash_feedback = label("", muted=True)
         ttk.Button(
-            dash_row, text=s["copy"], style="Accent.TButton", command=lambda: copy_link(dashboard_url, dash_feedback)
+            dash_row, text=s["copy"], style="Accent.TButton", command=lambda: copy_text(dashboard_url, dash_feedback)
         ).pack(side="left")
         dash_feedback.pack(in_=dash_row, side="left", padx=(10, 0))
 
@@ -476,8 +515,16 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
             anchor="w", padx=16, pady=(0, 14)
         )
 
-        label(f"{s['agent_token_hint']} {agent_token}", muted=True, size=8).pack(anchor="w", padx=16)
-        label(f"{s['logs_hint']} {logs_dir}", muted=True, size=8).pack(anchor="w", padx=16, pady=(0, 10))
+        token_row = tk.Frame(root, bg=g["bg"])
+        token_row.pack(anchor="w", padx=16, fill="x")
+        label(f"{s['agent_token_hint']} {agent_token}", muted=True, size=8).pack(in_=token_row, side="left")
+        token_feedback = label("", muted=True, size=8)
+        ttk.Button(
+            token_row, text=s["copy"], style="Mini.TButton", command=lambda: copy_text(agent_token, token_feedback)
+        ).pack(side="left", padx=(8, 0))
+        token_feedback.pack(in_=token_row, side="left", padx=(6, 0))
+
+        label(f"{s['logs_hint']} {logs_dir}", muted=True, size=8).pack(anchor="w", padx=16, pady=(4, 10))
 
         ttk.Button(root, text=s["close"], style="Glass.TButton", command=root.destroy).pack(padx=16, pady=(0, 16))
 
@@ -583,6 +630,8 @@ def run_launcher() -> int:
     print()
 
     show_info_window(dashboard_url, studio_url, agent_token, logs_dir)
+    time.sleep(1.5)  # let the console block above actually be visible for a moment first
+    shrink_and_minimize_console()
 
     agent_exit_reported = False
     try:

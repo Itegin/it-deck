@@ -55,13 +55,13 @@ These three are non-negotiable and get checked on every relevant change:
   then re-invokes itself via `sys.executable` with `--role backend` /
   `--role agent` to run both as separate OS processes from one exe (there's
   no bundled `python.exe` to spawn otherwise).
-- **`CLIENT_TOKEN` defaults to the literal `"admin"`, not a random value.**
-  Deliberate: it's the one thing a person types on their phone, and on a
-  self-hosted LAN a token buys little real security anyway (see the auth
-  tech-debt item in the reference doc). Only affects new config generation
-  — hand-edit `config.env` for a real secret. `AGENT_TOKEN` stays random;
-  it's never typed by a human, only passed between the launcher's own
-  subprocesses over `127.0.0.1`.
+- **Both `CLIENT_TOKEN` and `AGENT_TOKEN` default to the literal `"admin"`,
+  not a random value.** Deliberate: on a self-hosted LAN a token buys
+  little real security anyway (see the auth tech-debt item in the
+  reference doc), and both are things a person can end up typing —
+  `CLIENT_TOKEN` on a phone, `AGENT_TOKEN` into Studio's own token prompt.
+  Only affects new config generation — hand-edit `config.env` for a real
+  secret on either.
 - **The built exe gives itself a desktop shortcut** (`IT-Deck.lnk`) on
   first launch — `ensure_desktop_shortcut()` in `launcher.py`, same
   `WScript.Shell`/`CreateShortcut` technique and idempotency check
@@ -104,6 +104,12 @@ These three are non-negotiable and get checked on every relevant change:
   locks in its premature un-sized geometry — confirmed the hard way). Text
   is localized EN/RU via `_detect_ui_lang()` (Windows UI language, falling
   back to Python's own locale).
+- **The console window shrinks and minimizes itself a couple seconds after
+  startup** (`shrink_and_minimize_console()`, via `GetConsoleWindow()` +
+  `MoveWindow`/`ShowWindow`) — the info window duplicates everything it
+  prints, so there's no reason for a full-size terminal to sit on the
+  desktop. Only fires when frozen; restoring it from the taskbar still
+  works for a Ctrl+C or to check a crash.
 - **The printed "primary" LAN address comes from the UDP-connect-to-8.8.8.8
   trick, not from ranking candidates by local reachability.** A self-connect
   from this same machine succeeds against *any* of its own bound interfaces

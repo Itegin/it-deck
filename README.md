@@ -29,16 +29,18 @@ Run `ITDeck.exe` once. On first launch it:
 
 1. Adds an **IT-Deck** shortcut to your Desktop — every launch after this
    first one, use that instead of `standalone\dist\ITDeck.exe`.
-2. Generates `AGENT_TOKEN` (random) and `CLIENT_TOKEN` (defaults to
-   `admin` — a self-hosted LAN gets little real security from a token
-   anyway; hand-edit `%LOCALAPPDATA%\IT-Deck\config.env` if you want a real
-   one), and picks a free port. Kept across restarts — deleting
-   `config.env` invalidates the URL your phone already has.
+2. Generates `AGENT_TOKEN` and `CLIENT_TOKEN`, both defaulting to `admin`
+   — a self-hosted LAN gets little real security from a token anyway;
+   hand-edit `%LOCALAPPDATA%\IT-Deck\config.env` if you want real ones —
+   and picks a free port. Kept across restarts — deleting `config.env`
+   invalidates the URL your phone already has.
 3. Starts the backend and the Windows agent as two separate processes, so
    closing/relaunching one doesn't take down the other.
-4. Opens a small window with the Dashboard and Studio links (and a copy
-   button) — and prints the same links in the console, e.g.
-   `http://192.168.0.15:8000/?token=admin`. Backend/agent logs go to
+4. Opens a small window with the Dashboard and Studio links, a copy button
+   for each (plus the agent token, in case Studio asks for it) — and
+   prints the same links in the console before shrinking it out of the way
+   a couple seconds later, e.g. `http://192.168.0.15:8000/?token=admin`.
+   Backend/agent logs go to
    `%LOCALAPPDATA%\IT-Deck\logs\`, not the console, so that link doesn't
    scroll out of view.
 
