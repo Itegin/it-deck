@@ -55,6 +55,23 @@ These three are non-negotiable and get checked on every relevant change:
   then re-invokes itself via `sys.executable` with `--role backend` /
   `--role agent` to run both as separate OS processes from one exe (there's
   no bundled `python.exe` to spawn otherwise).
+- **`CLIENT_TOKEN` defaults to the literal `"admin"`, not a random value.**
+  Deliberate: it's the one thing a person types on their phone, and on a
+  self-hosted LAN a token buys little real security anyway (see the auth
+  tech-debt item in the reference doc). Only affects new config generation
+  — hand-edit `config.env` for a real secret. `AGENT_TOKEN` stays random;
+  it's never typed by a human, only passed between the launcher's own
+  subprocesses over `127.0.0.1`.
+- **The built exe gives itself a desktop shortcut** (`IT-Deck.lnk`) on
+  first launch — `ensure_desktop_shortcut()` in `launcher.py`, same
+  `WScript.Shell`/`CreateShortcut` technique and idempotency check
+  `agents/windows/start_agent.bat` already uses for its own shortcut, just
+  invoked from Python via `subprocess.run` instead of from a `.bat`. Only
+  fires when frozen (`is_frozen()`); a dev run has nothing sensible to
+  shortcut. `build.ps1` now also generates `agents/windows/icon.ico` before
+  building (it's gitignored, so a fresh clone has none yet) so both the
+  exe and this shortcut get IT-Deck's actual icon, not PyInstaller's
+  generic default.
 - **Backend and agent stay separate processes on purpose** — closing/
   restarting one doesn't take down the other, matching the existing
   "close the console window, relaunch" agent recovery story. The agent

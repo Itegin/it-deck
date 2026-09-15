@@ -17,9 +17,16 @@ if (-not (Test-Path $venv)) {
 }
 
 $pip = Join-Path $venv "Scripts\pip.exe"
+$python = Join-Path $venv "Scripts\python.exe"
 $pyinstaller = Join-Path $venv "Scripts\pyinstaller.exe"
 
 & $pip install --quiet -r (Join-Path $root "requirements.txt")
+
+# Generate icon.ico if it's missing (it's gitignored, so a fresh clone has
+# none yet) rather than silently shipping PyInstaller's generic default --
+# make_icon.py is idempotent and its only dependency, Pillow, is already
+# pulled in above via agents/windows/requirements.txt.
+& $python (Join-Path $repoRoot "agents\windows\tools\make_icon.py")
 
 $iconArg = @()
 $iconPath = Join-Path $repoRoot "agents\windows\icon.ico"

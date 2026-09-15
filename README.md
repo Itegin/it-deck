@@ -25,19 +25,23 @@ requirements.txt`). The resulting `standalone\dist\ITDeck.exe` (~23 MB) is
 fully standalone — the PC that *runs* it needs nothing installed, not even
 Python.
 
-Run `ITDeck.exe`. On first launch it:
+Run `ITDeck.exe` once. On first launch it:
 
-1. Generates its own `AGENT_TOKEN`/`CLIENT_TOKEN` and picks a free port
-   (kept across restarts in `%LOCALAPPDATA%\IT-Deck\config.env` — deleting
-   that file invalidates the URL your phone already has).
-2. Starts the backend and the Windows agent as two separate processes, so
+1. Adds an **IT-Deck** shortcut to your Desktop — every launch after this
+   first one, use that instead of `standalone\dist\ITDeck.exe`.
+2. Generates `AGENT_TOKEN` (random) and `CLIENT_TOKEN` (defaults to
+   `admin` — a self-hosted LAN gets little real security from a token
+   anyway; hand-edit `%LOCALAPPDATA%\IT-Deck\config.env` if you want a real
+   one), and picks a free port. Kept across restarts — deleting
+   `config.env` invalidates the URL your phone already has.
+3. Starts the backend and the Windows agent as two separate processes, so
    closing/relaunching one doesn't take down the other.
-3. Prints a URL for every LAN address it finds, e.g.
-   `http://192.168.0.15:8000/?token=...`.
+4. Prints a URL for every LAN address it finds, e.g.
+   `http://192.168.0.15:8000/?token=admin`.
 
 Open one of those URLs on your phone's browser once (same Wi-Fi as the PC)
-— the token is stored and stripped from the URL after. Press Ctrl+C in the
-console window to stop everything.
+— no typing needed, the token's in the link and gets stored and stripped
+from the URL after. Press Ctrl+C in the console window to stop everything.
 
 There's no prebuilt download yet — `standalone\build.ps1` is currently the
 only way to get `ITDeck.exe`, so it's a build step on every PC you want to

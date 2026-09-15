@@ -125,7 +125,13 @@ def load_or_create_config(data_dir: Path) -> dict:
         values["AGENT_TOKEN"] = secrets.token_hex(16)
         changed = True
     if not values.get("CLIENT_TOKEN"):
-        values["CLIENT_TOKEN"] = secrets.token_hex(16)
+        # Not random on purpose: this is the one thing a person has to type
+        # on their phone, and on a self-hosted LAN it buys little real
+        # security anyway (CLAUDE.md's own auth model is "shared secret,
+        # no identity/expiry/rate-limit"). A fixed, memorable default is
+        # what actually gets a new install used; anyone who wants a real
+        # secret can still set CLIENT_TOKEN by hand in config.env.
+        values["CLIENT_TOKEN"] = "admin"
         changed = True
     if not values.get("SERVER_PORT"):
         values["SERVER_PORT"] = str(find_free_port(8000))
@@ -217,10 +223,45 @@ def run_agent() -> int:
     return 0
 
 
+# --- desktop shortcut -------------------------------------------------
+
+
+def ensure_desktop_shortcut() -> None:
+    # Only meaningful for the built exe -- a dev `python launcher.py` run
+    # has no sensible target to shortcut. Mirrors the pattern
+    # agents/windows/start_agent.bat already uses for its own shortcut
+    # (same WScript.Shell technique, same idempotency check), so the
+    # running program gives itself a desktop icon exactly like the agent
+    # does -- works whether this exe was built locally or just downloaded,
+    # since it happens on first launch rather than at build time.
+    if not is_frozen():
+        return
+    try:
+        shortcut_path = Path(os.environ["USERPROFILE"]) / "Desktop" / "IT-Deck.lnk"
+        if shortcut_path.exists():
+            return
+        exe_path = sys.executable
+        ps_command = (
+            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}'); "
+            f"$s.TargetPath = '{exe_path}'; "
+            f"$s.WorkingDirectory = '{Path(exe_path).parent}'; "
+            f"$s.IconLocation = '{exe_path}'; "
+            f"$s.Save()"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_command],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        pass  # convenience only -- never let this block IT-Deck from starting
+
+
 # --- role: launcher (default) -----------------------------------------
 
 
 def run_launcher() -> int:
+    ensure_desktop_shortcut()
     data_dir = default_data_dir()
     config = load_or_create_config(data_dir)
     port = int(config["SERVER_PORT"])
