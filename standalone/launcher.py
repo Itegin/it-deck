@@ -28,6 +28,13 @@ from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# The one place the version number lives in code. Until v0.3.1 it lived only
+# in git tags and prose, which meant a running install had no way to say what
+# it was -- no version in the UI, nothing to compare against for an
+# update check, and nothing to put in a bug report. Bump it in the same commit
+# as the tag, and keep it equal to the tag minus the leading "v".
+ITDECK_VERSION = "0.3.2"
+
 # Python fully-buffers stdout when it isn't a real console (piped, redirected,
 # or -- the case that bit this in testing -- launched under a process
 # supervisor). Without this, the connection URL below can sit in a buffer
@@ -414,7 +421,9 @@ _STRINGS = {
         "open_studio": "Open Studio",
         "agent_token_hint": "If Studio asks for an agent token:",
         "logs_hint": "Logs (for troubleshooting):",
-        "close": "Close",
+        "close": "Hide this window",
+        "quit": "Quit IT-Deck",
+        "quit_confirm": "Stop IT-Deck? The deck on your phone will go offline.",
     },
     "ru": {
         "title": "IT-Deck",
@@ -426,7 +435,9 @@ _STRINGS = {
         "open_studio": "Открыть Studio",
         "agent_token_hint": "Если Studio спросит токен агента:",
         "logs_hint": "Логи (для отладки):",
-        "close": "Закрыть",
+        "close": "Скрыть окно",
+        "quit": "Выйти из IT-Deck",
+        "quit_confirm": "Остановить IT-Deck? Дека на телефоне отключится.",
     },
 }
 
@@ -499,24 +510,25 @@ def _apply_windows11_chrome(root) -> None:
         pass
 
 
-def shrink_and_minimize_console() -> None:
-    # The info window now carries the same links/tokens the console prints,
-    # so once startup is done the console itself is only useful as a place
-    # to Ctrl+C or check for a crash -- not something that needs to sit
-    # open and full-sized on the desktop. Minimized rather than hidden
-    # (SW_HIDE) on purpose: restoring it from the taskbar is the documented
-    # way to Ctrl+C IT-Deck or read a crash, and hiding it removes that.
-    #
-    # The MoveWindow() that used to run first -- resizing the console so a
-    # later restore wouldn't be the terminal host's oversized default -- is
-    # gone. It is the other suspect for the stray white rectangle on the
-    # desktop, and it is the one that matches the reported timing exactly
-    # ("appears when the terminal window minimizes"): MoveWindow with
-    # bRepaint=TRUE invalidates the console's whole client area and then the
-    # window is minimized microseconds later, so the repaint lands against a
-    # window that is on its way out -- classically leaving an unpainted white
-    # region behind on the desktop. A console that restores at its default
-    # size is a fine trade for not leaving debris on the user's desktop.
+def hide_console() -> None:
+    """Take the console off the desktop once startup is done.
+
+    SW_HIDE, not SW_MINIMIZE. The minimize left a small grey-white rectangle
+    sitting above the taskbar -- reported with a screenshot, and it is the
+    classic stub Windows draws for a minimized window that has no taskbar
+    button to shrink into. Nothing about it was fixable by tidying the repaint
+    (an earlier MoveWindow removal, already gone, did not help): a minimized
+    window has to go *somewhere*, and for this one that somewhere is the
+    desktop.
+
+    Hiding it removes Ctrl+C as the way to stop IT-Deck, so the info window
+    grew a Quit button in the same change -- see show_info_window(). That is
+    the better affordance anyway: a console the user was told to restore from
+    the taskbar in order to press Ctrl+C was never a real stop button.
+
+    Only when frozen; a dev run's terminal is the user's own to manage, and
+    hiding it there would hide the output they are reading.
+    """
     if not is_frozen():
         return
     try:
@@ -525,13 +537,15 @@ def shrink_and_minimize_console() -> None:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if not hwnd:
             return
-        SW_MINIMIZE = 6
-        ctypes.windll.user32.ShowWindow(hwnd, SW_MINIMIZE)
+        SW_HIDE = 0
+        ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
     except Exception:
         pass  # convenience only -- never let this block IT-Deck from running
 
 
-def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs_dir: Path) -> None:
+def show_info_window(
+    dashboard_url: str, studio_url: str, agent_token: str, logs_dir: Path, on_quit
+) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
     # log files below), and a URL a person has to scroll to find is a URL
@@ -621,7 +635,9 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
             feedback.configure(text=s["copied"])
             root.after(1500, lambda: feedback.configure(text=""))
 
-        label(s["running"], bold=True, size=12).pack(anchor="w", padx=16, pady=(16, 10))
+        label(f'{s["running"]}  v{ITDECK_VERSION}', bold=True, size=12).pack(
+            anchor="w", padx=16, pady=(16, 10)
+        )
 
         label(s["phone_hint"]).pack(anchor="w", padx=16, pady=(0, 4))
         url_row(dashboard_url)
@@ -650,7 +666,29 @@ def show_info_window(dashboard_url: str, studio_url: str, agent_token: str, logs
 
         label(f"{s['logs_hint']} {logs_dir}", muted=True, size=8).pack(anchor="w", padx=16, pady=(4, 10))
 
-        ttk.Button(root, text=s["close"], style="Glass.TButton", command=root.destroy).pack(padx=16, pady=(0, 16))
+        # Two buttons, and the distinction is load-bearing now that the
+        # console is hidden rather than minimized: "Hide this window" closes
+        # only the window (IT-Deck keeps running, the phone stays connected),
+        # while "Quit" is the actual stop button. Before this, the only way
+        # to stop IT-Deck was Ctrl+C in a console the user first had to
+        # restore from the taskbar -- and with SW_HIDE there is no taskbar
+        # button left to restore, so this is the only stop affordance.
+        buttons = tk.Frame(root, bg=g["bg"])
+        buttons.pack(padx=16, pady=(0, 16), fill="x")
+
+        def quit_itdeck() -> None:
+            from tkinter import messagebox
+
+            if not messagebox.askokcancel(s["title"], s["quit_confirm"], parent=root):
+                return
+            # Only signals; the supervisor loop in run_launcher() owns the
+            # actual teardown of the backend and agent processes. Doing it
+            # from this thread would race that loop and leave orphans.
+            on_quit()
+            root.destroy()
+
+        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.destroy).pack(side="left")
+        ttk.Button(buttons, text=s["quit"], style="Glass.TButton", command=quit_itdeck).pack(side="right")
 
         # After every widget is packed, not before: applying this earlier
         # (when the window was still its default un-sized shape) meant
@@ -709,7 +747,7 @@ def run_launcher() -> int:
     backend_log = open(logs_dir / "backend.log", "a", encoding="utf-8")
     agent_log = open(logs_dir / "agent.log", "a", encoding="utf-8")
 
-    print("IT-Deck starting...")
+    print(f"IT-Deck v{ITDECK_VERSION} starting...")
     print(f"Data/config: {data_dir}")
     backend_proc = subprocess.Popen(
         self_invocation("backend"), env=backend_env, stdout=backend_log, stderr=subprocess.STDOUT
@@ -766,17 +804,21 @@ def run_launcher() -> int:
         print(f"  If that doesn't work, this PC also has: {', '.join(other_ips)}")
     print("=" * 64)
     print("A window with these links (and a copy button) should also have opened.")
-    print("Press Ctrl+C to stop IT-Deck.")
+    print("Use its Quit button to stop IT-Deck (this console is about to hide).")
     print()
 
-    show_info_window(dashboard_url, studio_url, agent_token, logs_dir)
+    # Set by the info window's Quit button, which runs on the tkinter thread
+    # and must not tear down processes itself -- the supervisor loop below
+    # owns that, and doing it from two threads would leave orphans.
+    quit_requested = threading.Event()
+    show_info_window(dashboard_url, studio_url, agent_token, logs_dir, quit_requested.set)
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
-    shrink_and_minimize_console()
+    hide_console()
 
     # Supervise the agent rather than only reporting its death. The legacy
     # Docker path gets its stability from a human watching a console window
     # that stays open on a crash ("a window that stays open means the agent
-    # crashed" -- CLAUDE.md); standalone minimizes that console two seconds
+    # crashed" -- CLAUDE.md); standalone hides that console a couple of seconds
     # in, so nobody sees it, and the deck simply goes half-dead with no
     # explanation. Respawning is what makes the two paths equally reliable.
     #
@@ -787,6 +829,9 @@ def run_launcher() -> int:
     agent_restart_due: Optional[float] = None
     try:
         while True:
+            if quit_requested.is_set():
+                print("Quit requested from the IT-Deck window -- stopping.")
+                break
             if backend_proc.poll() is not None:
                 print("Backend process exited -- stopping.")
                 break

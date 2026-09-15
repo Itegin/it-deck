@@ -13,6 +13,13 @@ scope for this edit.)*
 Runs entirely on the PC you want to control — no separate server, no
 Docker, no Ansible.
 
+**Download `ITDeck.exe`** from the
+[latest release](https://github.com/Itegin/it-deck/releases/latest) and run
+it. The PC that runs it needs nothing installed, not even Python.
+
+<details>
+<summary>Or build it yourself</summary>
+
 ```
 git clone https://github.com/Itegin/it-deck.git
 cd it-deck
@@ -20,10 +27,11 @@ standalone\build.ps1
 ```
 
 Needs **Python 3.7–3.12** on the machine that *builds* it (`comtypes`, used
-for audio control, doesn't support 3.13/3.14 — see `agents/windows/
-requirements.txt`). The resulting `standalone\dist\ITDeck.exe` (~23 MB) is
-fully standalone — the PC that *runs* it needs nothing installed, not even
-Python.
+for audio control, doesn't support 3.13/3.14 — see
+`agents/windows/requirements.txt`). The result is
+`standalone\dist\ITDeck.exe` (~26 MB).
+
+</details>
 
 Run `ITDeck.exe` once. On first launch it:
 
@@ -42,21 +50,19 @@ Run `ITDeck.exe` once. On first launch it:
 3. Starts the backend and the Windows agent as two separate processes, so
    closing/relaunching one doesn't take down the other.
 4. Opens a small window with the Dashboard and Studio links, a copy button
-   for each (plus the agent token, in case Studio asks for it) — and
-   prints the same links in the console before shrinking it out of the way
-   a couple seconds later, e.g. `http://192.168.0.15:49732/?token=admin`.
-   Backend/agent logs go to
-   `%LOCALAPPDATA%\IT-Deck\logs\`, not the console, so that link doesn't
-   scroll out of view.
+   for each (plus the agent token, in case Studio asks for it), e.g.
+   `http://192.168.0.15:49732/?token=admin`. The console hides itself a
+   couple of seconds in, and backend/agent logs go to
+   `%LOCALAPPDATA%\IT-Deck\logs\` rather than to it.
 
 Open the Dashboard link on your phone's browser once (same Wi-Fi as the PC)
 — no typing needed, the token's in the link and gets stored and stripped
-from the URL after. Press Ctrl+C in the console window to stop everything.
+from the URL after.
 
-There's no prebuilt download yet — `standalone\build.ps1` is currently the
-only way to get `ITDeck.exe`, so it's a build step on every PC you want to
-control (see `standalone/launcher.py` for how config generation, LAN
-detection, and the two-process split work).
+To stop IT-Deck, press **Quit** in that window. "Hide this window" only
+closes the window — IT-Deck keeps running and your phone stays connected.
+Anything IT-Deck launched for you, your VPN client included, keeps running
+after it quits.
 
 **Requirements**: a Windows PC to control (the agent depends on
 `pycaw`/`comtypes` — Windows COM audio APIs — and `pywin32`, so it only runs
@@ -73,7 +79,7 @@ for killing a stuck process.
 
 A fresh install seeds 7 tiles, all wired to a real command:
 
-- **Terminal** — launch an app (`launch_app`; the seeded config opens Notepad)
+- **Terminal** — launch an app (`launch_app`; opens Windows Terminal by default)
 - **Mic** — mute/unmute the microphone; turns red while muted
 - **Volume** — drag to set system output volume
 - **Headphones** — mute/unmute speaker output
@@ -231,4 +237,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.1 (tagged) — personal project, active development, API may change.
+v0.3.2 (tagged) — personal project, active development, API may change.

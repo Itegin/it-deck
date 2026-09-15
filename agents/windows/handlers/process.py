@@ -1,4 +1,6 @@
 import os
+import subprocess
+import threading
 from pathlib import Path
 
 import psutil
@@ -63,8 +65,85 @@ def is_process_running(name: str) -> bool:
     return False
 
 
+# How long a launch may block the caller before it is left to finish on its
+# own. The budget it protects is CLAUDE.md's non-negotiable one: every execute
+# command must resolve within 5s. Confirmed broken before this -- a VPN tile
+# press came back `{"status": "error", "message": "timeout"}` while the app
+# itself started a few seconds later, because the launch runs synchronously
+# inside the agent's single receive loop.
+_LAUNCH_BUDGET_SECONDS = 2.0
+
+
+def _spawn_detached(path: str) -> None:
+    """CreateProcess the target with no console and its own process group.
+
+    The isolation this buys is a hard requirement, not an optimisation:
+    **closing IT-Deck must never take down anything it launched**, the VPN
+    client above all. DETACHED_PROCESS means the child never inherits the
+    agent's console, so a console close event cannot reach it;
+    CREATE_NEW_PROCESS_GROUP keeps it out of the group Ctrl+C/Ctrl+Break are
+    delivered to; CREATE_BREAKAWAY_FROM_JOB keeps it out of any job object
+    the launcher or a terminal host might be holding, so a job-wide kill
+    can't sweep it up either.
+
+    To be clear about what this is and isn't: no measurement in this project
+    has ever *reproduced* IT-Deck killing a launched process. This is the
+    guarantee written into the code so the question stops being empirical.
+    (The flags themselves are not new -- commit 341426b added them for this
+    exact reason and 0176612 dropped them again without comment.)
+
+    CREATE_BREAKAWAY_FROM_JOB is attempted separately because CreateProcess
+    rejects it outright when the current job forbids breakaway, and losing
+    the whole detached launch over an optional flag would be the wrong trade.
+    """
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    try:
+        subprocess.Popen([path], creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
+    except OSError:
+        subprocess.Popen([path], creationflags=flags, close_fds=True)
+
+
 def start_process(path: str) -> None:
-    os.startfile(path)
+    """Launch `path`, detached, without blowing the command's time budget.
+
+    Two failure modes this shape exists for, both observed:
+
+    1. `os.startfile()` (ShellExecute) can take many seconds to return -- it
+       hands off through the shell -- and it ran inline in the receive loop.
+       So the launch happens on a worker thread and the caller waits only
+       `_LAUNCH_BUDGET_SECONDS` for it.
+    2. CreateProcess alone can't launch everything: a `.lnk`, a document, a
+       URL, or an exe whose manifest demands elevation all need ShellExecute.
+       So `os.startfile()` stays as the fallback, and only as the fallback.
+
+    A launch that finishes inside the budget reports its real error, which is
+    the common case (a bad path, a missing exe). One that doesn't returns as
+    a success and keeps going in the background -- so **"ok" here means "the
+    launch was started", not "the app is on screen"**. That is the honest
+    trade for never breaching the 5s rule; the alternative was a tile that
+    reported `timeout` while the app opened anyway.
+
+    Note the fallback is the *less* isolated path: a ShellExecute'd process
+    is created by the shell rather than with our flags. Everything that can
+    go through CreateProcess does, which is every ordinary .exe.
+    """
+    failure: list[BaseException] = []
+
+    def launch() -> None:
+        try:
+            _spawn_detached(path)
+        except Exception:
+            try:
+                os.startfile(path)
+            except Exception as exc:
+                failure.append(exc)
+
+    # Daemon so a wedged ShellExecute can never hold up agent shutdown.
+    worker = threading.Thread(target=launch, daemon=True)
+    worker.start()
+    worker.join(timeout=_LAUNCH_BUDGET_SECONDS)
+    if failure:
+        raise failure[0]
 
 
 def kill_process(name: str) -> None:
@@ -79,12 +158,24 @@ def kill_process(name: str) -> None:
 
 def handle_launch_app(params: dict) -> dict:
     try:
-        # ShellExecute, not CreateProcess: Popen() cannot raise a UAC prompt,
-        # so an exe whose manifest requires admin (v2rayTun) failed silently --
-        # command received, no crash, app never opened. os.startfile() is the
-        # same call Explorer's double-click uses, so Windows shows its own
-        # elevation prompt; a normal exe launches exactly as before.
-        os.startfile(params["path"])
+        # Through start_process(), not os.startfile() directly, so a tile
+        # launch gets the same two guarantees the VPN toggle needs: the
+        # launched app is detached from IT-Deck (closing the deck must not
+        # close it) and a slow launch cannot blow the 5s command budget.
+        # ShellExecute is still reached via start_process()'s fallback, so
+        # UAC-elevated exes, .lnk shortcuts and documents launch as before.
+        try:
+            start_process(params["path"])
+        except Exception:
+            # fallback_path exists for one real case: the seeded Terminal tile
+            # launches `wt.exe`, and Windows Terminal is not present on every
+            # Windows 10 machine. Rather than leave those installs with a
+            # broken tile, the item can name a second target to try. Optional
+            # everywhere -- an item without it behaves exactly as before.
+            fallback = params.get("fallback_path")
+            if not fallback:
+                raise
+            start_process(fallback)
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

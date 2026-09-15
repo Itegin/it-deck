@@ -22,7 +22,8 @@ documented under "Deploy" as the legacy path.
 > the code. Release-by-release history is in
 > [`CHANGELOG.md`](CHANGELOG.md).
 
-Current version: **v0.3.1**. The bullets below are the constraints that are
+Current version: **v0.3.2** (`ITDECK_VERSION` in `standalone/launcher.py` --
+bump it in the same commit as the tag). The bullets below are the constraints that are
 easy to break; the reference doc explains the same mechanisms at length.
 
 ## Naming
@@ -49,7 +50,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+, current as of v0.3.1)
+## Standalone mode (v0.3.0+, current as of v0.3.2)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`
@@ -98,6 +99,15 @@ These three are non-negotiable and get checked on every relevant change:
   cwd-relative `"frontend"`) when unset, so the legacy Docker/Ansible path
   is unaffected — only the standalone launcher sets them, to real absolute
   paths, since a desktop shortcut/frozen exe has no fixed cwd.
+- **Releases attach `ITDeck.exe` via CI** (`.github/workflows/release.yml`,
+  `windows-latest`, on `v*.*.*` tags). Before v0.3.2 no tag carried an exe at
+  all, so installing meant cloning and building on every PC. The workflow is
+  also `workflow_dispatch`-able with a tag name, to give an already-pushed tag
+  an exe without re-tagging. Its PyInstaller invocation is a deliberate copy of
+  `build.ps1`'s rather than a call to it — `build.ps1` exists to make a *developer
+  machine* buildable (finding or winget-installing a Python, making a venv), all
+  of which is wrong on a runner with a pinned interpreter. **Keep the two
+  invocations in step.**
 - **Rebuilding `ITDeck.exe` after any `backend/`, `frontend/`, or
   `agents/windows/` change is required** — none of it is bind-mounted like
   the Docker path. Run `standalone\build.ps1`, which also auto-installs a
@@ -127,16 +137,55 @@ These three are non-negotiable and get checked on every relevant change:
   `DwmExtendFrameIntoClientArea` plus a transparent client brush — a real
   project, not a two-line `ctypes` call — and tkinter can't do the theme's
   actual blur regardless, which is why only its colors were ever borrowed.
-- **The console window minimizes itself a couple seconds after startup**
+- **Everything the agent launches must survive IT-Deck being closed.** This
+  is a hard product requirement, stated by the user in exactly those terms
+  about the VPN client. `_spawn_detached()` in
+  `agents/windows/handlers/process.py` is the guarantee: `CreateProcess` with
+  `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`
+  (no inherited console, own process group, outside any job object).
+  `os.startfile()` survives only as the fallback for what `CreateProcess`
+  cannot launch — `.lnk`, documents, URLs, elevation — and that path is the
+  *less* isolated one. Verified by launching an app from a tile, then
+  hard-killing all four IT-Deck processes: the app and the VPN both lived.
+  **Note this is a guarantee, not a diagnosis** — no measurement here ever
+  reproduced IT-Deck killing a launched process. The flags are also not new:
+  commit `341426b` added them for this reason and `0176612` silently dropped
+  them.
+- **Launches run off the receive loop** (`start_process()`, worker thread,
+  `_LAUNCH_BUDGET_SECONDS = 2.0`). `handle_process_toggle` runs synchronously
+  inside the agent's single `_receive_loop`, so a slow `os.startfile()` broke
+  the core 5s rule — confirmed: a VPN press returned
+  `{"status": "error", "message": "timeout"}` while the app appeared seconds
+  later. A launch that finishes inside the budget still reports its real
+  error; one that doesn't returns "ok", which therefore means **"the launch
+  was started", not "the app is on screen"**.
+- **The Terminal tile launches `wt.exe`, not Notepad** (`TERMINAL_PARAMS` in
+  `backend/app/db.py`, applied by `fixup_legacy_seed`). Bare name, not an
+  absolute path: Windows Terminal lives behind a per-user Store execution
+  alias under `%LOCALAPPDATA%\Microsoft\WindowsApps`, so baking one user's
+  path into a seeded row breaks for everyone else; `CreateProcess` searches
+  `PATH`, which already contains that directory. `fallback_path`
+  (`powershell.exe`) covers a machine with no Windows Terminal — it is an
+  optional param `handle_launch_app` tries only if the first target fails.
+  **That fixup's params UPDATE is now guarded on the old Notepad value**, so
+  it upgrades untouched installs without reverting a tile someone repointed
+  in Studio (the always-on-reapply bug `fixup_volume_item` already had).
+- **The console is hidden (`SW_HIDE`), not minimized** (`hide_console()`).
+  A minimized console left a grey-white stub rectangle above the taskbar —
+  reported with a screenshot; that is what Windows draws for a minimized
+  window with no taskbar button, and no amount of repaint tidying fixes it.
+  Hiding removes Ctrl+C as the stop path, so **the info window now owns
+  stopping IT-Deck**: a "Quit" button next to "Hide this window". Quit only
+  sets a `threading.Event`; `run_launcher()`'s supervisor loop still owns the
+  actual teardown, because tearing down from the tkinter thread would race it
+  and leave orphans. Don't reintroduce `SW_MINIMIZE`.
+- **The console window used to minimize itself a couple seconds after startup**
   (`shrink_and_minimize_console()`, via `GetConsoleWindow()` +
   `ShowWindow`) — the info window duplicates everything it prints, so
   there's no reason for a full-size terminal to sit on the desktop. Only
-  fires when frozen; minimized rather than `SW_HIDE`n so restoring it from
-  the taskbar still works for a Ctrl+C or to check a crash. The
-  `MoveWindow(..., bRepaint=TRUE)` that used to shrink it first is gone —
-  invalidating a window's whole client area microseconds before minimizing
-  it is the other suspect for that stray white rectangle, and the one whose
-  timing matches the report ("appears when the terminal minimizes").
+  fires when frozen. Kept here only as history: the `MoveWindow(...,
+  bRepaint=TRUE)` that used to shrink it, and then the minimize itself, were
+  both removed while chasing the stray rectangle. The minimize was the cause.
 - **The launcher supervises the agent and restarts it; it does not restart
   the backend.** `run_launcher()`'s loop respawns the agent on an
   *unexpected* exit with 2s→30s backoff, resetting once one survives 60s.

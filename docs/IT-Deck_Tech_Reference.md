@@ -1,7 +1,7 @@
 # IT-Deck — Technical Reference
 
 Full technical reference for IT-Deck, written by reading the code. Current as
-of **v0.3.1**.
+of **v0.3.2**.
 
 - **What the project is and how to install it** → [`README.md`](../README.md)
 - **What changed in each release** → [`CHANGELOG.md`](../CHANGELOG.md)
@@ -1317,6 +1317,57 @@ wins — setdefault semantics — and the legacy path is untouched because it se
 > The toggle is still destructive on a genuine mis-tap, and there is no
 > confirmation step. Correct state removes the trap, not the sharp edge.
 
+### 10.4a Launch isolation and the command budget
+
+Two guarantees every launch has to satisfy, both learned from real use.
+
+**Nothing IT-Deck starts may die when IT-Deck does.** This is a stated product
+requirement — the VPN client above all. `_spawn_detached()` in
+`agents/windows/handlers/process.py` uses `CreateProcess` with
+`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`: no
+inherited console, so no console-close event can reach it; its own process
+group, so Ctrl+C/Ctrl+Break don't; outside any job object, so a job-wide kill
+doesn't either. `CREATE_BREAKAWAY_FROM_JOB` is attempted separately, because
+CreateProcess rejects it outright when the current job forbids breakaway and
+losing the whole detached launch over an optional flag would be the wrong
+trade.
+
+Verified by launching an app from a tile and then hard-killing all four
+IT-Deck processes: the app and the VPN both survived. Be precise about what
+that is, though — **no measurement in this project has ever reproduced
+IT-Deck killing a launched process.** These flags are a guarantee written into
+the code so the question stops being empirical, not the result of a diagnosis.
+They are not new either: commit `341426b` added them for this exact reason and
+`0176612` dropped them again without comment.
+
+**A launch must not blow the 5 s command budget** (a core rule — see the top
+of this document). `handle_process_toggle` and `handle_launch_app` run
+synchronously inside the agent's single `_receive_loop`, and `os.startfile()`
+— ShellExecute — can take many seconds to return. Confirmed: a VPN press
+returned `{"status": "error", "message": "timeout"}` while the app appeared a
+few seconds later. `start_process()` therefore runs the launch on a worker
+thread and waits only `_LAUNCH_BUDGET_SECONDS` (2.0) for it. A launch that
+finishes inside the budget still reports its real error, which is the common
+case (bad path, missing exe); one that doesn't returns success, so **"ok" here
+means "the launch was started", not "the app is on screen"**.
+
+`os.startfile()` remains as the fallback, and only as the fallback — it is the
+one path that can open a `.lnk`, a document, a URL, or an exe whose manifest
+demands elevation. It is also the *less* isolated path, since the shell
+creates the process rather than our flags.
+
+The seeded **Terminal** tile launches `wt.exe`, with `fallback_path` set to
+`powershell.exe` (`TERMINAL_PARAMS` in `backend/app/db.py`). A bare name, not
+an absolute path: Windows Terminal lives behind a per-user Store execution
+alias under `%LOCALAPPDATA%\Microsoft\WindowsApps`, so a seeded absolute path
+would be wrong for every other user, while `CreateProcess` searches `PATH`,
+which already contains that directory (measured: launches in 0.06 s).
+`fallback_path` is an optional item param `handle_launch_app` tries only when
+the first target fails, covering a Windows 10 machine with no Windows Terminal
+installed. `fixup_legacy_seed` migrates existing installs from the old Notepad
+default, but its params UPDATE is **guarded on that old value**, so a tile
+someone repointed in Studio is left alone.
+
 ### 10.5 Console, info window, and the LAN address
 
 Backend and agent stdout go to log files, never the console: uvicorn logs every
@@ -1343,12 +1394,20 @@ Two rules learned the hard way, both about drawing:
   needs `DwmExtendFrameIntoClientArea` plus a transparent client brush. Only
   the dark title bar (`DWMWA_USE_IMMERSIVE_DARK_MODE`) remains.
 
-`shrink_and_minimize_console()` minimizes the console a couple of seconds in —
-`ShowWindow(SW_MINIMIZE)` only, **not** `SW_HIDE`, because restoring it from
-the taskbar is how you Ctrl+C IT-Deck or read a crash. The `MoveWindow(...,
-bRepaint=TRUE)` that used to resize it first is gone: invalidating a window's
-whole client area microseconds before minimizing it is a plausible source of an
-unpainted artifact on the desktop.
+`hide_console()` hides the console outright (`SW_HIDE`) a couple of seconds in.
+It used to minimize it instead, which left a grey-white stub rectangle above
+the taskbar — reported with a screenshot, and exactly what Windows draws for a
+minimized window with no taskbar button to shrink into. No amount of repaint
+tidying fixes that; a minimized window has to go somewhere. (An earlier
+`MoveWindow(..., bRepaint=TRUE)` was removed while chasing the same artifact,
+and was not the cause.)
+
+Hiding removes Ctrl+C as the stop path, so **the info window owns stopping
+IT-Deck**: "Quit IT-Deck" beside "Hide this window", which closes only the
+window and leaves IT-Deck running. Quit sets a `threading.Event` and nothing
+more — `run_launcher()`'s supervisor loop still owns tearing the processes
+down, because doing it from the tkinter thread would race that loop and leave
+orphans.
 
 **The printed "primary" LAN address is a guess, and a known-imperfect one.**
 `detect_primary_and_other_ips()` uses the UDP-connect-to-8.8.8.8 trick, which

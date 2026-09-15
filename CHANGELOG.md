@@ -7,6 +7,60 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.3.2 — 2026-09-15
+
+Second real-use pass. Also the first release with a **downloadable
+`ITDeck.exe`** — until now every install meant cloning the repo and building
+it, because nothing ever attached the exe to a tag.
+
+### Fixed
+
+- **Launched apps are now fully detached from IT-Deck.** Closing or killing
+  IT-Deck must never take down anything it started — the VPN client above
+  all. Every launch goes through `CreateProcess` with `DETACHED_PROCESS |
+  CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`: no inherited console,
+  its own process group, outside any job object. Verified by launching an app
+  from a tile and then hard-killing all four IT-Deck processes — the app and
+  the VPN both survived.
+- **The VPN tile no longer reports `timeout` while the app starts anyway.**
+  `os.startfile()` can take many seconds to return and it ran inline in the
+  agent's receive loop, breaching the 5 s command budget. Launches now run on
+  a worker thread with a 2 s budget; a fast failure still reports its real
+  error, and a slow launch returns "ok" meaning *the launch was started*.
+- **The stray rectangle on the desktop is gone.** It was the stub Windows
+  draws for a minimized window with no taskbar button. The console is now
+  hidden outright (`SW_HIDE`) rather than minimized.
+
+### Changed
+
+- **The Terminal tile opens Windows Terminal, not Notepad.** A tile named
+  Terminal that opened a text editor was not useful. Existing installs are
+  migrated — but only if the tile was still on the old Notepad default, so a
+  tile repointed in Studio is left alone. `wt.exe` with `powershell.exe` as a
+  fallback for machines without Windows Terminal.
+- **The info window has a Quit button.** With the console hidden there is no
+  taskbar button to restore and no way to press Ctrl+C, so the window is now
+  the stop control. "Hide this window" and "Quit IT-Deck" are separate.
+- **The version is shown in the info window and the console banner**, and now
+  exists as a constant in code (`ITDECK_VERSION`) rather than only in git tags.
+
+### Added
+
+- **`.github/workflows/release.yml`** — builds `ITDeck.exe` on a `windows-latest`
+  runner for every `v*.*.*` tag and attaches it to the GitHub release.
+  Hand-runnable for tags that were already pushed without one.
+
+### Known open
+
+- One `access violation` from `comtypes` was seen in `agent.log`, on the last
+  line, during process exit only. Noted, not investigated.
+- The VPN "closes when IT-Deck closes" report was never reproduced. The
+  isolation above is implemented because it is required, not because a
+  mechanism was found — the one VPN death actually captured in a log was a
+  toggle press doing what a toggle does.
+
+---
+
 ## v0.3.1 — 2026-09-15
 
 First real-use pass over standalone mode. Everything here came out of running

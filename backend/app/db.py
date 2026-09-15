@@ -113,20 +113,48 @@ def seed_if_empty() -> None:
         conn.close()
 
 
+# What the 'Terminal' tile launches. Windows Terminal, not Notepad: the tile
+# is called Terminal, and a tile named Terminal that opens a text editor is
+# not a feature anyone wants twice. `wt.exe` bare rather than an absolute
+# path, because Windows Terminal lives behind a per-user Store execution alias
+# in %LOCALAPPDATA%\Microsoft\WindowsApps -- baking one user's path into a
+# seeded row would break for every other user. CreateProcess searches PATH,
+# which is where that alias directory already is (verified: launches via the
+# agent's detached path in 0.06s).
+#
+# fallback_path covers a machine with no Windows Terminal installed (plain
+# Windows 10); see handle_launch_app.
+TERMINAL_PARAMS = '{"path":"wt.exe","fallback_path":"powershell.exe"}'
+
+# What that tile used to launch. Kept as a literal so the fixup below can tell
+# "still on the old default" from "the user chose this" -- see there.
+_LEGACY_TERMINAL_PARAMS = '{"path":"notepad.exe"}'
+
+
 def fixup_legacy_seed() -> None:
     # Not a one-time migration: seed_if_empty only fires once per fresh db, so
     # early installs may already have a 'Terminal' row stuck with the old
-    # placeholder type/params. Re-running this UPDATE on every startup is the
-    # simplest way to backfill those installs; it's a no-op once the row
-    # already matches, so it's safe to keep calling forever.
+    # placeholder type/params. Re-running this on every startup is the simplest
+    # way to backfill those installs; it's a no-op once the row already
+    # matches, so it's safe to keep calling forever.
+    #
+    # The params UPDATE is now guarded on the old value instead of firing
+    # unconditionally. That matters twice over: it stops this from reverting a
+    # Terminal tile someone repointed in Studio (the always-on-reapply bug
+    # fixup_volume_item already had to be fixed out of), and it means moving
+    # the default from Notepad to Windows Terminal upgrades the installs that
+    # never touched it without overwriting the ones that did.
     conn = get_connection()
     try:
+        conn.execute("UPDATE item SET type = 'launch_app' WHERE label = 'Terminal'")
         conn.execute(
             """
             UPDATE item
-            SET type = 'launch_app', params = '{"path":"notepad.exe"}'
+            SET params = ?
             WHERE label = 'Terminal'
-            """
+              AND (params IS NULL OR params = '' OR params = '{}' OR params = ?)
+            """,
+            (TERMINAL_PARAMS, _LEGACY_TERMINAL_PARAMS),
         )
         conn.commit()
     finally:
