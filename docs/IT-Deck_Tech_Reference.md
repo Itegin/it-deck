@@ -1,13 +1,17 @@
 # IT-Deck — Technical Reference
 
-Full technical reference for IT-Deck, written by reading the code in the
-working tree at commit `eac5a69` plus the uncommitted changes on top of it.
+Full technical reference for IT-Deck, written by reading the code. Current as
+of **v0.3.1**.
 
 - **What the project is and how to install it** → [`README.md`](../README.md)
+- **What changed in each release** → [`CHANGELOG.md`](../CHANGELOG.md)
 - **What Claude Code needs every session** (core rules, deploy patterns,
   naming) → [`CLAUDE.md`](../CLAUDE.md)
 - **This file** — schema, API surface, tile/theme internals, agent internals,
-  deploy pipeline, tech debt.
+  **standalone mode (§10)**, deploy pipeline, tech debt.
+
+Start at §10 if you are running the standalone `ITDeck.exe`, which is the
+primary path since v0.3.0; §9 covers the legacy Docker-on-a-server layout.
 
 Anything I could not confirm from the code is marked **unverified** rather
 than guessed.
@@ -80,7 +84,7 @@ state snapshot every second.
 | File | Responsibility |
 | --- | --- |
 | `main.py` | Logging setup (`force=True`, or uvicorn's own dictConfig silences app loggers), `load_dotenv()`, the startup migration sequence, `/health`, `GET /api/workspaces`, both WebSocket routes, router registration, and the catch-all `StaticFiles` mount **last**. |
-| `config.py` | `SERVER_PORT` read from the environment. **Imported by nothing** — see §11. |
+| `config.py` | `SERVER_PORT` read from the environment. **Imported by nothing** — see §12. |
 | `db.py` | `DB_PATH = /app/data/controlhub.db`, connection factory (`PRAGMA foreign_keys = ON` per connection), schema for `workspace` / `item` / `setting`, `seed_if_empty()`, and **seven** idempotent `fixup_*` migrations. |
 | `models.py` | `Item` / `Workspace` pydantic models and the query helpers `get_workspaces_with_items()`, `get_item()`, `bump_press_count()`. |
 | `state.py` | In-memory current-state snapshot plus diffing. `update_state()` returns only keys whose values actually changed; `get_state()` returns a copy. Not persisted — rebuilt from the agent's next poll tick. |
@@ -91,7 +95,7 @@ state snapshot every second.
 | `ws/client.py` | `/ws/client` — initial full-state push, then `execute` / `set_value` dispatch, each with a 5-second timeout started only after the command actually reached an agent. |
 | `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`_validate_params_json`) **and** validates grid placement (`_validate_placement`). Every mutation broadcasts `workspace_update`. |
 | `api/workspaces.py` | Token-gated `POST /api/workspaces` and `POST /api/workspaces/{id}/compact`. `_pack_items()` is a pure placement pass, kept DB-free so it can be exercised directly. |
-| `api/screenshot.py` | Token-gated `POST /api/screenshot` — PNG ≤ 10 MB written beside the DB under `data/screenshots/`, named from the server clock. **Retained but called by nothing** (see §11). |
+| `api/screenshot.py` | Token-gated `POST /api/screenshot` — PNG ≤ 10 MB written beside the DB under `data/screenshots/`, named from the server clock. **Retained but called by nothing** (see §12). |
 | `api/agents.py` | Token-gated `POST /api/agents/{agent_name}/list_devices` — request/response proxy that makes a connected agent enumerate audio devices and returns its reply verbatim, 5-second budget. **There is no agent-status endpoint** (agent status travels over the WebSocket only). |
 | `api/settings.py` | `GET /api/settings`, `PUT /api/settings/theme`. Holds the canonical `THEMES` allowlist. The one write endpoint with no token. |
 
@@ -640,7 +644,7 @@ regardless of specificity. The consequence:
 used to assign the two literals unconditionally at render time, which made
 `var(--active-color, var(--color-active))` unable to reach its fallback on any
 tile. That was fixed at the render layer; Studio reintroduces it at the data
-layer, one item at a time, whenever someone presses Save. See §11.
+layer, one item at a time, whenever someone presses Save. See §12.
 
 `false_color` is written the same way, but its pre-fill is `item.color`, so
 saving an untouched item writes back the colour that was already rendering and
@@ -1141,7 +1145,7 @@ Three separate statements, all true:
 > the two `feat(ci)` commits (`9aa3f79`, `d2a7567` — GHCR build, then switching
 > `deploy.sh` to pull) sit between Stage 10 and Stage 12, so they are the
 > **likely** Stage 11 — an inference from commit order, not something the repo
-> states. See §12 for the resulting gap in `CLAUDE.md`'s status table.
+> states. See §13 for the resulting gap in `CLAUDE.md`'s status table.
 
 ### Ansible provisioning (`ansible/site.yml`)
 
@@ -1166,7 +1170,232 @@ reproduces). Don't assume a path on one from the other.
 
 ---
 
-## 10. Platform constraints
+## 10. Standalone mode
+
+The primary way to run IT-Deck since v0.3.0: one `ITDeck.exe` on the PC being
+controlled, no Docker, no second machine. §9 covers the legacy path, which
+still works and is still how Athlon runs.
+
+### 10.1 Process model
+
+`standalone/launcher.py` is the single entry point for both a dev run
+(`python standalone/launcher.py`) and the frozen exe. PyInstaller
+(`--onefile`) bundles that one script, so there is no `python.exe` to spawn
+children with — instead the launcher **re-invokes itself** via
+`sys.executable` with a `--role` flag.
+
+```
+ITDeck.exe                       (role: launcher — supervises, prints links)
+├── ITDeck.exe --role backend    (uvicorn + FastAPI + SQLite, 0.0.0.0:<port>)
+└── ITDeck.exe --role agent      (agents/windows/agent.py, unmodified)
+                                  connects to ws://127.0.0.1:<port>/ws/agent
+```
+
+Backend and agent stay **separate OS processes on purpose**. Each side keeps
+its own reconnect/dispatch logic untouched, and restarting one does not take
+down the other — the same recovery story the legacy path has.
+
+`self_invocation()` is what papers over the dev/frozen difference: frozen,
+`sys.executable` *is* the script, so no path argument; in dev it is
+`python.exe`, so the script path has to be passed explicitly.
+
+### 10.2 Configuration
+
+Everything lives in `%LOCALAPPDATA%\IT-Deck\`:
+
+| Path | Holds |
+| --- | --- |
+| `config.env` | `AGENT_TOKEN`, `CLIENT_TOKEN`, `SERVER_PORT`, plus optional hand-edited agent keys |
+| `controlhub.db` | The SQLite database (same schema as §3) |
+| `logs\backend.log` | uvicorn's stdout/stderr |
+| `logs\agent.log` | The agent's stdout/stderr |
+
+`load_or_create_config()` is **load-if-exists, generate-if-missing, never
+regenerate**. That is load-bearing, not incidental: the phone stores its token
+in `localStorage` keyed to the origin, so regenerating on restart would log
+the phone out on every launch.
+
+| Key | Default on a fresh install | Notes |
+| --- | --- | --- |
+| `SERVER_PORT` | `49732` (`DEFAULT_PORT`) | IANA dynamic range (49152–65535), no registered service. `find_free_port()` walks upward if taken. Hand-editable — this is the "let the user choose a port" answer; there is no picker UI |
+| `CLIENT_TOKEN` | `admin` | Deliberately not random: it is the one thing a person may have to type on a phone, and on a self-hosted LAN a random secret buys little (see the auth item in §12) |
+| `AGENT_TOKEN` | `admin` | Same reasoning; this one gets typed into Studio's own token prompt |
+| `OUTPUT_DEVICE_PRIMARY`/`SECONDARY`, `VPN_PROCESS_NAME`, `VPN_PATH` | *(absent)* | Never auto-generated — no safe default exists. Preserved verbatim across restarts if you add them |
+
+**`8000` was the old default and existing installs keep it.** A port change
+moves the origin, which orphans the phone's `localStorage`, so the phone
+re-prompts for its token exactly once afterwards. That is expected. To move an
+existing install onto the new default, delete `config.env` and relaunch —
+which also resets both tokens to `admin`.
+
+`ITDECK_DATA_DIR` and `ITDECK_FRONTEND_DIR` are **additive** env vars.
+`backend/app/db.py`'s `DB_PATH` and `backend/app/main.py`'s `StaticFiles`
+directory both keep their original Docker-only defaults (`/app/data`,
+cwd-relative `"frontend"`) when unset, so the legacy path is untouched — only
+the launcher sets them, to absolute paths, because a desktop shortcut and a
+frozen exe have no fixed cwd.
+
+### 10.3 Agent supervision
+
+The legacy path gets its stability from a human: the agent runs in a console
+window, and "a window that stays open means the agent crashed" (§9). Standalone
+minimizes that console two seconds after startup, so nobody sees it — the deck
+just goes half-dead. The launcher therefore supervises the agent itself.
+
+- Respawns on an **unexpected** exit, backoff `AGENT_RESTART_MIN_DELAY` (2 s)
+  doubling to `AGENT_RESTART_MAX_DELAY` (30 s), reset once an agent survives
+  `AGENT_HEALTHY_AFTER` (60 s).
+- `AGENT_DELIBERATE_EXIT_CODES = (0, 3)` is never respawned.
+- Every restart is printed to the launcher console, so a crash loop is visible
+  rather than silent.
+- The **backend** is not respawned: if it exits, everything stops, as before.
+
+| Agent exit code | Means | Supervisor | `start_agent.bat` (legacy) |
+| --- | --- | --- | --- |
+| `0` | `agent_shutdown` tile pressed (`os._exit(0)`) | leave it stopped | closes the window |
+| `3` | `EXIT_ALREADY_RUNNING` — another agent holds the singleton mutex | leave it stopped | **pauses**, keeping the message readable |
+| anything else | crash | respawn with backoff | pauses |
+
+Code `3` exists precisely because those two readers want opposite things from
+it. `0` would make the legacy shortcut close its window instantly on a
+double-launch; `1` would make the supervisor fight a process that is correctly
+refusing to run. Keep `EXIT_ALREADY_RUNNING` in `agents/windows/agent.py` and
+`AGENT_DELIBERATE_EXIT_CODES` in `standalone/launcher.py` in step.
+
+Two agent-side fixes belong to the same story:
+
+- **`main()` catches `Exception`, not `(ConnectionClosed, OSError)`.**
+  websockets' `InvalidHandshake` family (`InvalidStatus`, `InvalidMessage`)
+  derives from `WebSocketException`, **not** `OSError` — verified against the
+  pinned `websockets==13.1`. Before this, any moment the backend answered an
+  upgrade with something that wasn't a WebSocket (a backend restart, or the
+  window before uvicorn mounts its routes — which standalone hits on *every*
+  launch) killed the agent process outright instead of reconnecting. `main()`
+  *is* the recovery path; nothing above it can recover. Don't narrow it back.
+- **The singleton mutex handle is held in a module global.** A `PyHANDLE`
+  nobody holds is garbage-collected, and closing the last handle destroys the
+  mutex — so the guard was only ever as durable as refcounting made it.
+
+### 10.4 The VPN tile, and why its state matters
+
+`process_toggle` is a **toggle**, and that makes a wrong state reading
+destructive rather than cosmetic.
+
+The handler resolves its target through `resolve_toggle_target()` in
+`agents/windows/handlers/process.py`: **item params first**
+(`process_name`, `path`), environment second (`VPN_PROCESS_NAME`, `VPN_PATH`).
+Params-first is what makes the tile configurable on a standalone install at
+all — those env vars only ever existed in the agent's `.env`, which the
+launcher does not generate, so the seeded tile used to raise `KeyError` on
+every press. `handle_force_stop`'s `process_toggle` branch goes through the
+same helper; it had the identical bug.
+
+Configure it from Studio's params field — note that JSON requires doubled
+backslashes in a Windows path:
+
+```json
+{"active_style": "normal",
+ "process_name": "v2RayTun.exe",
+ "path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}
+```
+
+`poll_loop` reports `vpn.running` from `get_watched_process_name()`. If that
+name is unknown, the poller reports `is_process_running("")` → `false` **while
+the VPN is actually up** — and then a tile that renders "off" kills the VPN on
+the next tap, because the handler correctly sees the process running. Every
+agent start re-armed that trap, which is why it presented as "the VPN closes
+when the agent restarts".
+
+So `watched_process_name()` in the launcher reads the process name straight
+out of the `item` table and passes it in the agent's environment, on first
+spawn and on every respawn (a name changed in Studio takes effect on the next
+agent restart). Read **after** `wait_for_health()`, because the `item` table
+does not exist until the backend's startup hook has run. `config.env` still
+wins — setdefault semantics — and the legacy path is untouched because it sets
+`VPN_PROCESS_NAME` itself.
+
+> The toggle is still destructive on a genuine mis-tap, and there is no
+> confirmation step. Correct state removes the trap, not the sharp edge.
+
+### 10.5 Console, info window, and the LAN address
+
+Backend and agent stdout go to log files, never the console: uvicorn logs every
+request and the agent logs roughly one line a second, which scrolled the
+connection URL off screen within seconds on a real install. **The launcher's
+console only ever prints what `run_launcher()` itself writes.**
+
+`show_info_window()` puts the same links in a real GUI window (tkinter on a
+daemon thread — the main thread's poll loop is what keeps the process alive and
+answers Ctrl+C), with a copy button and the agent token. Styled with the
+Dashboard's Liquid Glass *colors* (`frontend/css/themes.css`); tkinter cannot
+do that theme's backdrop blur. `_detect_ui_lang()` localizes EN/RU from the
+Windows UI language.
+
+Two rules learned the hard way, both about drawing:
+
+- **`_apply_windows11_chrome()` must run after every widget is packed.**
+  Resolving the real HWND needs `update_idletasks()`, which also forces Tk to
+  commit to whatever size the window has at that moment — call it early and the
+  window renders correctly styled but cropped mid-text.
+- **Do not re-add the Mica backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`).** It was
+  there and was removed. Mica composites a material *behind* the client area;
+  Tk paints that area opaque and knows nothing about it. Doing it properly
+  needs `DwmExtendFrameIntoClientArea` plus a transparent client brush. Only
+  the dark title bar (`DWMWA_USE_IMMERSIVE_DARK_MODE`) remains.
+
+`shrink_and_minimize_console()` minimizes the console a couple of seconds in —
+`ShowWindow(SW_MINIMIZE)` only, **not** `SW_HIDE`, because restoring it from
+the taskbar is how you Ctrl+C IT-Deck or read a crash. The `MoveWindow(...,
+bRepaint=TRUE)` that used to resize it first is gone: invalidating a window's
+whole client area microseconds before minimizing it is a plausible source of an
+unpainted artifact on the desktop.
+
+**The printed "primary" LAN address is a guess, and a known-imperfect one.**
+`detect_primary_and_other_ips()` uses the UDP-connect-to-8.8.8.8 trick, which
+asks the OS which source interface it would route through. That is the best
+available proxy for "the adapter a phone can reach", and it is *not* something
+a same-machine reachability check can replace: a socket bound to `0.0.0.0`
+accepts a local connect to **any** of its own interfaces, virtual ones
+included. But it still picks wrong when a VPN or Hyper-V adapter holds the
+default route — observed live, printing a `172.16.x.x` Hyper-V address while
+the real LAN was `192.168.x.x`. The real address is then in the secondary
+"this PC also has" line. `check_reachable()` is only a soft firewall hint and
+does not select the address. **Open.**
+
+### 10.6 Building
+
+```powershell
+standalone\build.ps1
+```
+
+Auto-installs a compatible Python (3.12 via winget) if nothing suitable is on
+PATH, generates `agents/windows/icon.ico` (gitignored, so a fresh clone has
+none), then runs PyInstaller `--onefile`.
+
+**Rebuilding after any `backend/`, `frontend/` or `agents/windows/` change is
+required** — none of it is bind-mounted the way the Docker path's frontend is.
+Close a running `ITDeck.exe` first, or the build cannot overwrite it.
+
+The built exe gives itself a desktop shortcut (`IT-Deck.lnk`) on first launch —
+`ensure_desktop_shortcut()`, the same `WScript.Shell`/`CreateShortcut`
+technique and idempotency check `start_agent.bat` uses, only fired from Python
+and only when frozen.
+
+### 10.7 Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Phone can't reach the printed URL | The "primary" address is a virtual adapter (§10.5) | Use an address from the "this PC also has" line |
+| Phone can't reach any address | Windows Firewall — a cancelled prompt leaves **Block** rules for `itdeck.exe` on the Public profile | Delete those inbound rules, or make the network Private |
+| Phone asks for a token it shouldn't | `config.env` was regenerated, or the port changed (new origin, empty `localStorage`) | Open the freshly printed `?token=` link once |
+| Token rejected with close code `4001` | Stale token on the phone vs. the one in `config.env` | The token in `config.env` is authoritative; re-open the printed link |
+| VPN tile errors "not configured yet" | No `process_name`/`path` in its params and no env fallback | Set them in Studio (§10.4) |
+| Tiles that need the PC stop responding | Agent died | The launcher respawns it; check the console for restart lines and `logs\agent.log` for why |
+| Backend didn't come up in time | Port conflict, or a startup exception | `logs\backend.log` |
+
+---
+
+## 11. Platform constraints
 
 These are properties of the environment, not choices that can be revisited by
 editing code.
@@ -1201,7 +1430,7 @@ editing code.
 
 ---
 
-## 11. Known tech debt and open issues
+## 12. Known tech debt and open issues
 
 Ordered roughly by how likely each is to bite.
 
@@ -1309,7 +1538,7 @@ Ordered roughly by how likely each is to bite.
     sits awkwardly against `CLAUDE.md`'s standing rule "SERVER_PORT must be
     read from .env, never hardcoded" — the rule is honoured on the agent side
     and not on the backend side. Changing the port means editing the three
-    files listed in §10 (`.env`, `docker-compose.yml`, `Dockerfile`);
+    files listed in §11 (`.env`, `docker-compose.yml`, `Dockerfile`);
     `config.py` is a fourth place the value is *read*, but since nothing
     imports it, editing it alone changes nothing.
 15. **`item.color` and `item.params` shapes are unvalidated.** `color` is a
@@ -1333,14 +1562,32 @@ Ordered roughly by how likely each is to bite.
 19. **Single-user, single-process by design.** `ConnectionHub` and `state.py`
     are module-level singletons in one process; a second backend replica would
     split the agent registry and the state snapshot in half.
+20. **The printed "primary" LAN address can be a virtual adapter.** Observed
+    live in v0.3.1 testing: the UDP-connect trick returned a `172.16.x.x`
+    Hyper-V address while the phone-reachable LAN was `192.168.x.x`. The real
+    address is still listed on the secondary line, so nothing is unreachable —
+    it is the *leading* one that can be wrong, and a person following the
+    first URL they see gets a dead link. A same-machine reachability check
+    cannot fix this (§10.5); ranking by default-route metric or filtering
+    known-virtual adapter descriptions would be a real change, not a tweak.
+21. **`process_toggle` has no confirmation.** Correct state (§10.4) removes the
+    trap where the tile misreported "off" and a tap killed a running VPN, but a
+    genuine mis-tap still kills it. There is no undo and no confirm step.
+22. **A stray white rectangle was reported on the desktop during real use.**
+    Two plausible causes were removed in v0.3.1 without either being
+    reproduced under observation: the Mica backdrop on the tkinter info window,
+    and `MoveWindow(..., bRepaint=TRUE)` immediately before the console is
+    minimized (§10.5). If it recurs, both hypotheses are wrong and the
+    diagnosis starts over.
 
 ---
 
-## 12. Documentation map, and one gap
+## 13. Documentation map, and one gap
 
 | File | Holds |
 | --- | --- |
 | `README.md` | What the project is, requirements, setup, Ansible, status |
+| `CHANGELOG.md` | What changed in each tagged release, newest first |
 | `CLAUDE.md` | Only what Claude Code needs loaded every session: core rules, deploy patterns, naming, Stage terminology, stage status |
 | **this file** | Everything detailed: schema, API, tile/theme internals, agent internals, deploy pipeline, tech debt |
 | `DOCUMENTATION.md` | Superseded by this file; reduced to a pointer |

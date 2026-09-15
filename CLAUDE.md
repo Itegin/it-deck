@@ -17,8 +17,13 @@ documented under "Deploy" as the legacy path.
 > [`docs/IT-Deck_Tech_Reference.md`](docs/IT-Deck_Tech_Reference.md)** —
 > DB schema, the full API surface, message shapes, the tile state /
 > `--tile-state-color` / `--tile-ink` mechanism, theme internals, Windows
-> agent internals, the deploy pipeline, and current tech debt. Read it before
-> changing any of those; don't re-derive them from the code.
+> agent internals, **standalone mode (§10)**, the deploy pipeline, and current
+> tech debt. Read it before changing any of those; don't re-derive them from
+> the code. Release-by-release history is in
+> [`CHANGELOG.md`](CHANGELOG.md).
+
+Current version: **v0.3.1**. The bullets below are the constraints that are
+easy to break; the reference doc explains the same mechanisms at length.
 
 ## Naming
 
@@ -44,7 +49,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+)
+## Standalone mode (v0.3.0+, current as of v0.3.1)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`

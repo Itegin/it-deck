@@ -8,7 +8,7 @@ for your PC.
 *(Screenshots to be added — capturing them requires a live device, out of
 scope for this edit.)*
 
-## Quick start (standalone, v0.3.0+)
+## Quick start (standalone)
 
 Runs entirely on the PC you want to control — no separate server, no
 Docker, no Ansible.
@@ -80,7 +80,7 @@ A fresh install seeds 7 tiles, all wired to a real command:
 - **Audio Switch** — swap between two configured output devices, showing the
   current one under the label
 - **Screenshot** — capture the PC's primary monitor to the **PC's clipboard**
-- **VPN** — start/stop a configured VPN client process
+- **VPN** — start/stop a VPN client process (**needs configuring — see below**)
 
 (Three earlier placeholder tiles — Lights, Spotify, Sleep PC — had no
 handler behind them and just returned `unknown command`; they're gone from
@@ -90,6 +90,25 @@ That catalog is only the starting point — **Studio Mode** (`/studio.html`) is
 a separate desktop-only admin page for editing it directly (add/edit/delete
 tiles, pick audio devices from the live agent, compact the layout). The phone
 Dashboard never mutates the catalog.
+
+### Configuring the VPN tile
+
+It's the one seeded tile that can't work out of the box — it has to be told
+which process to toggle. In Studio Mode, edit the VPN item's `params`. It's
+JSON, so Windows paths need doubled backslashes:
+
+```json
+{"active_style": "normal",
+ "process_name": "v2RayTun.exe",
+ "path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}
+```
+
+The tile then lights up whenever that process is running — including before
+you ever press it. Until it's configured, pressing it returns a "not
+configured yet" error rather than doing anything.
+
+> It's a **toggle** with no confirmation step: pressing it while the VPN is
+> running stops the VPN. That's the intent, but there's no undo.
 
 ## Legacy: multi-device server deployment
 
@@ -191,10 +210,25 @@ Note that after this playbook runs, the deck is reachable two ways —
 HTTP one: the Dashboard opens its WebSocket as `ws://`, which a browser blocks
 as mixed content on an HTTPS page.
 
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| The printed link doesn't open on the phone | The "primary" address can be a virtual adapter (Hyper-V, a VPN). Try the addresses on the "this PC also has" line |
+| No address works | Windows Firewall — a cancelled prompt leaves **Block** rules for `itdeck.exe`. Delete them in the firewall's inbound rules, or make the network Private |
+| The phone asks for a token | Its stored token no longer matches. Open the freshly printed `?token=…` link once |
+| A tile that needs the PC does nothing | The agent is down. The launcher restarts it automatically — check its console for restart lines and `%LOCALAPPDATA%\IT-Deck\logs\agent.log` for why |
+| Nothing starts at all | `%LOCALAPPDATA%\IT-Deck\logs\backend.log` |
+
+## Documentation
+
+| Where | What |
+| --- | --- |
+| this file | What IT-Deck is, how to install and run it |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
+| [`docs/IT-Deck_Tech_Reference.md`](docs/IT-Deck_Tech_Reference.md) | The full reference — architecture, DB schema, API surface, protocol, tile and theme internals, the Windows agent, **standalone mode (§10)**, the legacy deploy pipeline, and known tech debt |
+| [`CLAUDE.md`](CLAUDE.md) | Working notes for Claude Code sessions: core rules and the constraints that are easy to break |
+
 ## Status
 
-v0.3.0 (tagged) — personal project, active development, API may change.
-
-See [docs/IT-Deck_Tech_Reference.md](docs/IT-Deck_Tech_Reference.md) for the
-full architecture reference — message shapes, file-by-file map, database
-schema, tile and theme internals, platform constraints, and known limitations.
+v0.3.1 (tagged) — personal project, active development, API may change.
