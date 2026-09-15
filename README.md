@@ -171,8 +171,7 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.2.1 (tagged; `main` is one commit ahead) — personal project, active
-development, API may change.
+v0.3.0 (tagged) — personal project, active development, API may change.
 
 See [docs/IT-Deck_Tech_Reference.md](docs/IT-Deck_Tech_Reference.md) for the
 full architecture reference — message shapes, file-by-file map, database
