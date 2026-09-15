@@ -27,9 +27,9 @@ tag has no artifact. No application code changed between the two.
 
 ## v0.3.2 — 2026-09-15
 
-Second real-use pass. Also the first release with a **downloadable
-`ITDeck.exe`** — until now every install meant cloning the repo and building
-it, because nothing ever attached the exe to a tag.
+Second real-use pass. Also the release that added CI for a downloadable
+`ITDeck.exe` — though that workflow failed on its first run, so this tag has
+no artifact; see v0.3.3.
 
 ### Fixed
 
