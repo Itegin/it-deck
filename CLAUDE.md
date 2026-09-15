@@ -22,7 +22,7 @@ documented under "Deploy" as the legacy path.
 > the code. Release-by-release history is in
 > [`CHANGELOG.md`](CHANGELOG.md).
 
-Current version: **v0.3.5** (`ITDECK_VERSION` in `standalone/launcher.py` --
+Current version: **v0.3.6** (`ITDECK_VERSION` in `standalone/launcher.py` --
 bump it in the same commit as the tag). The bullets below are the constraints that are
 easy to break; the reference doc explains the same mechanisms at length.
 
@@ -50,7 +50,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+, current as of v0.3.5)
+## Standalone mode (v0.3.0+, current as of v0.3.6)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`
@@ -177,7 +177,26 @@ These three are non-negotiable and get checked on every relevant change:
   **That fixup's params UPDATE is now guarded on the old Notepad value**, so
   it upgrades untouched installs without reverting a tile someone repointed
   in Studio (the always-on-reapply bug `fixup_volume_item` already had).
-- **The console is hidden (`SW_HIDE`), not minimized** (`hide_console()`).
+- **The frozen exe has NO console — built `--windowed`, and it must stay that
+  way.** This is the fix for Force Stop repeatedly killing IT-Deck along with
+  its target. A console gives IT-Deck a *host process* (`conhost.exe`, or
+  `WindowsTerminal.exe` when that is the system default), and that host is a
+  process the deck itself can be asked to kill. Guarding it did not work:
+  `protected_pids()` walks the host's ancestors, but `OpenConsole.exe`'s
+  parent is `svchost.exe`, not the Windows Terminal it belongs to, so the link
+  isn't there to walk. No console means no host and no coupling. Verified end
+  to end: launch a terminal from the tile, Force Stop it, IT-Deck and the VPN
+  both survive.
+  - Consequences to keep in step: `sys.stdout`/`sys.stderr` are `None` under
+    `--windowed`, so `_redirect_output_to_log()` points them at
+    `logs\launcher.log` — **for the launcher role only**, since wiring it at
+    module level funnelled every uvicorn line into `launcher.log` instead of
+    `backend.log`. Child processes and the shortcut helper are spawned with
+    `CREATE_NO_WINDOW`, or they allocate consoles the parent no longer has to
+    inherit. `build.ps1` and `release.yml` both pass `--windowed`.
+  - `protected_pids()` is kept anyway: it still shields a dev run, and costs
+    nothing. It is a backstop, not the fix.
+- **`hide_console()` is now vestigial** (it was: `SW_HIDE`, not minimized).
   A minimized console left a grey-white stub rectangle above the taskbar —
   reported with a screenshot; that is what Windows draws for a minimized
   window with no taskbar button, and no amount of repaint tidying fixes it.

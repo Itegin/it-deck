@@ -76,7 +76,7 @@ $soundVolumeViewSrc = Join-Path $repoRoot "agents\windows\tools\SoundVolumeView.
 & $pyinstaller `
     --onefile `
     --name ITDeck `
-    --console `
+    --windowed `
     --paths (Join-Path $repoRoot "backend") `
     --paths (Join-Path $repoRoot "agents\windows") `
     --add-data "${frontendSrc};frontend" `

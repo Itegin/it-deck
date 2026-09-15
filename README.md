@@ -51,9 +51,8 @@ Run `ITDeck.exe` once. On first launch it:
    closing/relaunching one doesn't take down the other.
 4. Opens a small window with the Dashboard and Studio links, a copy button
    for each (plus the agent token, in case Studio asks for it), e.g.
-   `http://192.168.0.15:49732/?token=admin`. The console hides itself a
-   couple of seconds in, and backend/agent logs go to
-   `%LOCALAPPDATA%\IT-Deck\logs\` rather than to it.
+   `http://192.168.0.15:49732/?token=admin`. There's no console window —
+   everything IT-Deck logs goes to `%LOCALAPPDATA%\IT-Deck\logs\`.
 
 Open the Dashboard link on your phone's browser once (same Wi-Fi as the PC)
 — no typing needed, the token's in the link and gets stored and stripped
@@ -256,4 +255,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.5 (tagged) — personal project, active development, API may change.
+v0.3.6 (tagged) — personal project, active development, API may change.

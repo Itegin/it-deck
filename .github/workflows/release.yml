@@ -62,7 +62,7 @@ jobs:
       - name: Build ITDeck.exe
         run: |
           $ws = "${{ github.workspace }}"
-          pyinstaller --onefile --name ITDeck --console `
+          pyinstaller --onefile --name ITDeck --windowed `
             --paths "$ws\backend" `
             --paths "$ws\agents\windows" `
             --add-data "$ws\frontend;frontend" `

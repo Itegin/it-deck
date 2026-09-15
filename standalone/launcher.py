@@ -33,16 +33,44 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.3.5"
+ITDECK_VERSION = "0.3.6"
 
-# Python fully-buffers stdout when it isn't a real console (piped, redirected,
-# or -- the case that bit this in testing -- launched under a process
-# supervisor). Without this, the connection URL below can sit in a buffer
-# and never reach the user at all.
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except Exception:
-    pass
+# The frozen exe is built --windowed, so it has NO console: sys.stdout and
+# sys.stderr are None and a bare print() would raise AttributeError. They are
+# pointed at a log file here instead, before anything prints.
+#
+# No console is a deliberate architectural choice, not a cosmetic one. A
+# console gave IT-Deck a *host process* -- conhost.exe, or WindowsTerminal.exe
+# when that is the system default -- and that host is a process the deck can
+# be asked to kill: Force Stop on the Terminal tile took the whole of IT-Deck
+# down with its target, twice, and an attempt to protect the host by walking
+# its ancestors did not fix it (OpenConsole.exe's parent is svchost, not the
+# Windows Terminal it belongs to, so the link isn't there to walk). Removing
+# the console removes the coupling entirely rather than guarding it. It also
+# removes the minimized-console stub that showed up as a stray rectangle on
+# the desktop, and the "restore it from the taskbar to press Ctrl+C" story
+# that the Quit button had already replaced.
+def _redirect_output_to_log() -> None:
+    if not is_frozen():
+        # A dev run has a real terminal and its output is the point.
+        try:
+            sys.stdout.reconfigure(line_buffering=True)
+        except Exception:
+            pass
+        return
+    try:
+        logs = default_data_dir() / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        stream = open(logs / "launcher.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = stream
+        sys.stderr = stream
+    except Exception:
+        # Last resort: swallow writes rather than let a logging failure stop
+        # IT-Deck from starting. os.devnull always opens.
+        try:
+            sys.stdout = sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass
 
 
 def is_frozen() -> bool:
@@ -430,6 +458,10 @@ def ensure_desktop_shortcut() -> None:
             ["powershell", "-NoProfile", "-Command", ps_command],
             capture_output=True,
             timeout=10,
+            # The exe is built --windowed, so this child would otherwise
+            # allocate and flash its own console window on the desktop during
+            # first launch.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception:
         pass  # convenience only -- never let this block IT-Deck from starting
@@ -571,8 +603,10 @@ def hide_console() -> None:
     the better affordance anyway: a console the user was told to restore from
     the taskbar in order to press Ctrl+C was never a real stop button.
 
-    Only when frozen; a dev run's terminal is the user's own to manage, and
-    hiding it there would hide the output they are reading.
+    Kept, but it no longer fires on the frozen build: that is now compiled
+    --windowed, so there is no console and GetConsoleWindow() returns 0. It
+    stays because it costs nothing and would matter again if the build ever
+    went back to --console. A dev run's terminal is the user's own to manage.
     """
     if not is_frozen():
         return
@@ -794,8 +828,14 @@ def run_launcher() -> int:
 
     print(f"IT-Deck v{ITDECK_VERSION} starting...")
     print(f"Data/config: {data_dir}")
+    # CREATE_NO_WINDOW: without it each child would allocate its own console
+    # window, since the parent (built --windowed) has none to inherit -- two
+    # terminal windows flashing onto the desktop at every launch. Their output
+    # already goes to the log files opened above.
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     backend_proc = subprocess.Popen(
-        self_invocation("backend"), env=backend_env, stdout=backend_log, stderr=subprocess.STDOUT
+        self_invocation("backend"), env=backend_env, stdout=backend_log,
+        stderr=subprocess.STDOUT, creationflags=no_window,
     )
 
     if not wait_for_health(port):
@@ -817,7 +857,8 @@ def run_launcher() -> int:
         if name and not env.get("VPN_PROCESS_NAME"):
             env["VPN_PROCESS_NAME"] = name
         return subprocess.Popen(
-            self_invocation("agent"), env=env, stdout=agent_log, stderr=subprocess.STDOUT
+            self_invocation("agent"), env=env, stdout=agent_log,
+            stderr=subprocess.STDOUT, creationflags=no_window,
         )
 
     agent_proc = spawn_agent()
@@ -848,8 +889,8 @@ def run_launcher() -> int:
     if other_ips:
         print(f"  If that doesn't work, this PC also has: {', '.join(other_ips)}")
     print("=" * 64)
-    print("A window with these links (and a copy button) should also have opened.")
-    print("Use its Quit button to stop IT-Deck (this console is about to hide).")
+    print("A window with these links (and a copy button) should have opened.")
+    print("Stop IT-Deck with the Quit button in that window.")
     print()
 
     # Set by the info window's Quit button, which runs on the tkinter thread
@@ -936,6 +977,13 @@ def main() -> int:
         return run_backend()
     if args.role == "agent":
         return run_agent()
+
+    # Only the launcher role redirects. The children already had their stdout
+    # and stderr pointed at backend.log / agent.log by the parent's Popen, and
+    # redirecting again here would reassign sys.stdout inside them and funnel
+    # every uvicorn request line into launcher.log instead -- which is exactly
+    # what happened the first time this was wired up at module level.
+    _redirect_output_to_log()
     return run_launcher()
 
 

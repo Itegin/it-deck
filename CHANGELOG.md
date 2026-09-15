@@ -7,6 +7,32 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.3.6 — 2026-09-15
+
+### Fixed
+
+- **IT-Deck no longer has a console at all, and Force Stop can no longer take
+  it down.** Force Stop on the Terminal tile kept killing the launcher, the
+  backend and the agent along with its target. A first attempt guarded the
+  console host by walking its ancestors; it did not work, because
+  `OpenConsole.exe`'s parent is `svchost.exe`, not the Windows Terminal it
+  belongs to — there is no ancestry link to walk. So the coupling is removed
+  instead of guarded: the exe is built `--windowed`, giving it no console and
+  therefore no host process that anything can be asked to kill. Verified end
+  to end — launch a terminal from the tile, Force Stop it, and IT-Deck and the
+  VPN both keep running.
+- Launcher output goes to `logs\launcher.log`, since a windowed build has no
+  stdout. Only the launcher redirects — wiring it at module level first sent
+  every uvicorn request line into `launcher.log` instead of `backend.log`.
+- Child processes and the first-launch shortcut helper are spawned with
+  `CREATE_NO_WINDOW`, so nothing flashes a console onto the desktop now that
+  the parent has none to inherit.
+
+This also retires the console-hiding workaround and the stray rectangle it
+caused: there is nothing left to hide.
+
+---
+
 ## v0.3.5 — 2026-09-15
 
 Reported from a second machine, plus parity with the author's own deck.
