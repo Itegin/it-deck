@@ -55,6 +55,16 @@ These three are non-negotiable and get checked on every relevant change:
   then re-invokes itself via `sys.executable` with `--role backend` /
   `--role agent` to run both as separate OS processes from one exe (there's
   no bundled `python.exe` to spawn otherwise).
+- **`SERVER_PORT` defaults to `49732` on a fresh install, not `8000`**
+  (`DEFAULT_PORT` in `launcher.py`; `find_free_port()` still walks upward if
+  taken). `8000` is heavily contested on a developer machine and losing that
+  race is a baffling failure for a desktop app. Existing installs keep the
+  port already in their `config.env` — `load_or_create_config()` is
+  load-if-exists by design — so a test machine won't move until that file is
+  deleted. **A port change changes the origin, which orphans the phone's
+  `localStorage`: the phone re-prompts for its client token exactly once
+  after the change. That is expected, not a regression.** Users who want a
+  specific port edit `SERVER_PORT` in `config.env`; no separate picker UI.
 - **Both `CLIENT_TOKEN` and `AGENT_TOKEN` default to the literal `"admin"`,
   not a random value.** Deliberate: on a self-hosted LAN a token buys
   little real security anyway (see the auth tech-debt item in the
@@ -98,18 +108,64 @@ These three are non-negotiable and get checked on every relevant change:
   place to find them. Styled to match the Dashboard's own "Liquid Glass"
   theme colors (`frontend/css/themes.css`'s dark palette — tkinter can't do
   that theme's actual backdrop blur, so only the colors carry over), with a
-  best-effort native Windows 11 dark title bar + Mica backdrop via
-  `ctypes`/`dwmapi` (`_apply_windows11_chrome()` — silently no-ops on
-  Windows 10; must run *after* every widget is packed, not before, or Tk
-  locks in its premature un-sized geometry — confirmed the hard way). Text
-  is localized EN/RU via `_detect_ui_lang()` (Windows UI language, falling
-  back to Python's own locale).
-- **The console window shrinks and minimizes itself a couple seconds after
-  startup** (`shrink_and_minimize_console()`, via `GetConsoleWindow()` +
-  `MoveWindow`/`ShowWindow`) — the info window duplicates everything it
-  prints, so there's no reason for a full-size terminal to sit on the
-  desktop. Only fires when frozen; restoring it from the taskbar still
-  works for a Ctrl+C or to check a crash.
+  best-effort native Windows 11 dark title bar via `ctypes`/`dwmapi`
+  (`_apply_windows11_chrome()` — silently no-ops on Windows 10; must run
+  *after* every widget is packed, not before, or Tk locks in its premature
+  un-sized geometry — confirmed the hard way). Text is localized EN/RU via
+  `_detect_ui_lang()` (Windows UI language, falling back to Python's own
+  locale).
+- **Don't re-add the Mica backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`) to that
+  window.** It was there and was removed: Mica composites a material
+  *behind* the client area, Tk paints that area opaque and knows nothing
+  about it, and the disagreement is the leading suspect for a stray white
+  rectangle reported on the desktop during real use. Doing it properly needs
+  `DwmExtendFrameIntoClientArea` plus a transparent client brush — a real
+  project, not a two-line `ctypes` call — and tkinter can't do the theme's
+  actual blur regardless, which is why only its colors were ever borrowed.
+- **The console window minimizes itself a couple seconds after startup**
+  (`shrink_and_minimize_console()`, via `GetConsoleWindow()` +
+  `ShowWindow`) — the info window duplicates everything it prints, so
+  there's no reason for a full-size terminal to sit on the desktop. Only
+  fires when frozen; minimized rather than `SW_HIDE`n so restoring it from
+  the taskbar still works for a Ctrl+C or to check a crash. The
+  `MoveWindow(..., bRepaint=TRUE)` that used to shrink it first is gone —
+  invalidating a window's whole client area microseconds before minimizing
+  it is the other suspect for that stray white rectangle, and the one whose
+  timing matches the report ("appears when the terminal minimizes").
+- **The launcher supervises the agent and restarts it; it does not restart
+  the backend.** `run_launcher()`'s loop respawns the agent on a *non-zero*
+  exit with 2s→30s backoff, resetting once one survives 60s. Exit 0 is
+  deliberate and never restarted — it's either `agent_shutdown`'s
+  `os._exit(0)` (a tile the user pressed) or the singleton mutex's orderly
+  "another instance already has the job", which is why `agent.py` exits 0
+  rather than 1 in that case. A backend exit still stops everything, as
+  before. This exists because the legacy path's stability came from a human
+  seeing a console window stay open on a crash — standalone minimizes that
+  console, so nobody sees it and the deck just goes half-dead.
+- **`agent.py`'s reconnect loop catches `Exception`, not
+  `(ConnectionClosed, OSError)` — don't narrow it back.** websockets'
+  `InvalidHandshake` family (`InvalidStatus`, `InvalidMessage`) derives from
+  `WebSocketException`, **not** `OSError` (verified against the pinned
+  `websockets==13.1`), so before this the agent process died outright any
+  time the backend answered an upgrade with something that wasn't a
+  WebSocket — a backend restart, or the window before uvicorn mounts its
+  routes, which standalone hits on every launch. `main()` *is* the recovery
+  path; nothing above it can recover. Its singleton mutex handle is also
+  held in a module global now — a discarded `PyHANDLE` is GC'd, which
+  destroys the mutex and made the guard only as durable as refcounting.
+- **The VPN tile reads `process_name`/`path` from the item's own params
+  first, env (`VPN_PROCESS_NAME`/`VPN_PATH`) second** —
+  `resolve_toggle_target()` in `agents/windows/handlers/process.py`, used by
+  both `handle_process_toggle` and `handle_force_stop`'s `process_toggle`
+  branch, which had the identical bare `os.environ[...]` lookup. Those env
+  vars only ever existed in the agent's `.env`, which standalone never
+  generates, so the seeded VPN tile (`params` = `{"active_style":"normal"}`)
+  raised `KeyError` on every press. Configure it from Studio's params field;
+  the env fallback keeps existing `.env` installs identical. `poll_loop`
+  reads the same name via `get_watched_process_name()`, which the handler
+  updates at runtime — so on a params-configured tile, `vpn.running` is
+  unknown until its first press. Accepted, rather than adding an
+  agent-config channel over the WebSocket for one string.
 - **The printed "primary" LAN address comes from the UDP-connect-to-8.8.8.8
   trick, not from ranking candidates by local reachability.** A self-connect
   from this same machine succeeds against *any* of its own bound interfaces
@@ -126,6 +182,16 @@ These three are non-negotiable and get checked on every relevant change:
   one file and relaunch, not a code change; `frontend/js/ws.js` also no
   longer loops `window.prompt()` forever on repeated rejection of the same
   wrong token (see below), but the clean fix is still the right token.
+- **Studio's agent token is persisted in `localStorage`
+  (`itdeck.agent_token`), not held in memory for one page load.** Entered
+  once, then forgotten about — which is the actual requirement; a prompt on
+  every reload is one people stop reading and start dismissing. Dropped
+  automatically on a `401` from any token-bearing call, mirroring what
+  `ws.js` does with `4001` on the Dashboard side, so a wrong value saved
+  once isn't re-sent forever. The old comment claiming a project convention
+  against browser storage was already contradicted by `ws.js`'s own
+  `TOKEN_STORAGE_KEY`; the two keys stay separate because they are two
+  different secrets and Studio is desktop-only.
 
 ## Deploy (legacy: Docker on a separate server)
 

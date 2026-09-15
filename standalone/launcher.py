@@ -70,6 +70,36 @@ def default_data_dir() -> Path:
     return Path(os.environ["LOCALAPPDATA"]) / "IT-Deck"
 
 
+# The port a fresh install picks. Deliberately not 8000: that is one of the
+# most contested ports on a developer machine (every other dev server, Docker
+# Desktop, Portainer, Jenkins, a dozen Python tutorials), and IT-Deck losing a
+# coin-flip against one of them is a confusing failure for a desktop app
+# nobody expects to be a web server. 49732 sits inside IANA's dynamic/private
+# range (49152-65535), which is reserved for exactly this and contains no
+# registered services at all -- so no lookup table to keep in sync.
+#
+# find_free_port() below still walks upward if even this is taken, and
+# SERVER_PORT in config.env is hand-editable, so a user who wants a specific
+# port has one line to change. Existing installs keep whatever port their
+# config.env already holds -- load_or_create_config() is load-if-exists by
+# design (CLAUDE.md: never regenerate, or the phone's stored URL breaks), so
+# this only affects first runs.
+DEFAULT_PORT = 49732
+
+# Agent supervision (see the loop at the end of run_launcher()). The floor is
+# a couple of seconds rather than instant so a crash-on-startup can't become a
+# busy loop, and so a respawn never races the dying predecessor's singleton
+# mutex; the ceiling keeps a machine that recovers later (a USB audio device
+# plugged back in) from waiting minutes to notice.
+AGENT_RESTART_MIN_DELAY = 2.0
+AGENT_RESTART_MAX_DELAY = 30.0
+# How long a fresh agent has to stay up before its predecessor's crash stops
+# counting against it -- longer than the agent's own reconnect ladder, so an
+# agent that is merely failing to reach the backend isn't mistaken for one
+# that is up and working.
+AGENT_HEALTHY_AFTER = 60.0
+
+
 def find_free_port(preferred: int, attempts: int = 20) -> int:
     port = preferred
     for _ in range(attempts):
@@ -103,6 +133,10 @@ def write_config(path: Path, values: dict) -> None:
         "# AGENT_TOKEN / CLIENT_TOKEN / SERVER_PORT are generated once and kept",
         "# across restarts. Deleting this file invalidates the URL your phone",
         "# already has stored -- you'd need to open the new printed URL again.",
+        "#",
+        "# SERVER_PORT is safe to change to any free port you prefer; IT-Deck",
+        "# uses whatever is here. Changing it changes the address your phone",
+        "# uses, so open the newly printed link on the phone once afterwards.",
         "#",
         "# The keys below are optional and safe to hand-edit for your own",
         "# hardware -- see agents/windows/.env.example in the source repo.",
@@ -143,7 +177,7 @@ def load_or_create_config(data_dir: Path) -> dict:
         values["CLIENT_TOKEN"] = "admin"
         changed = True
     if not values.get("SERVER_PORT"):
-        values["SERVER_PORT"] = str(find_free_port(8000))
+        values["SERVER_PORT"] = str(find_free_port(DEFAULT_PORT))
         changed = True
     if changed:
         write_config(config_path, values)
@@ -351,13 +385,28 @@ def _detect_ui_lang() -> str:
 
 
 def _apply_windows11_chrome(root) -> None:
-    # Best-effort only: a dark title bar and, on Windows 11, the same Mica
-    # material File Explorer uses -- real OS-composited translucency,
-    # rather than trying to fake glass with tkinter drawing primitives that
-    # can't do backdrop blur at all. Both calls are silently harmless on
-    # Windows 10 or anything older (DwmSetWindowAttribute just returns a
-    # failure HRESULT this code doesn't check) -- ctypes never raises on a
-    # merely-unsupported attribute, only on a genuinely broken call, which
+    # Best-effort only: a dark title bar. The Mica backdrop
+    # (DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_MAINWINDOW) that used to be applied
+    # here as well is gone -- it is the prime suspect for the stray white
+    # rectangle reported on the desktop during real use. Mica asks DWM to
+    # composite a translucent material *behind* the window's client area,
+    # which assumes the window itself leaves something for it to show
+    # through; Tk paints an ordinary opaque client area and has no idea the
+    # backdrop exists, so the two disagree about who owns those pixels and
+    # DWM can be left holding an uncomposited region -- which is what a bare
+    # white rectangle with no visible contents actually is.
+    #
+    # Nothing is lost that a user can see: tkinter can't do the Liquid Glass
+    # theme's real backdrop blur anyway (that's why _GLASS above borrows only
+    # the theme's colors), so the window still looks the same minus an effect
+    # that was subtle when it worked and a desktop artifact when it didn't.
+    # A correct Mica implementation needs DwmExtendFrameIntoClientArea plus a
+    # transparent client brush -- a real project, not a two-line ctypes call.
+    #
+    # The remaining call is silently harmless on Windows 10 or anything older
+    # (DwmSetWindowAttribute just returns a failure HRESULT this code doesn't
+    # check) -- ctypes never raises on a merely-unsupported attribute, only on
+    # a genuinely broken call, which
     # the try/except still catches.
     try:
         import ctypes
@@ -372,13 +421,8 @@ def _apply_windows11_chrome(root) -> None:
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
         dwm = ctypes.windll.dwmapi
         DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        DWMWA_SYSTEMBACKDROP_TYPE = 38
-        DWMSBT_MAINWINDOW = 2  # Mica
         dwm.DwmSetWindowAttribute(
             hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
-        )
-        dwm.DwmSetWindowAttribute(
-            hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(ctypes.c_int(DWMSBT_MAINWINDOW)), ctypes.sizeof(ctypes.c_int)
         )
     except Exception:
         pass
@@ -388,10 +432,20 @@ def shrink_and_minimize_console() -> None:
     # The info window now carries the same links/tokens the console prints,
     # so once startup is done the console itself is only useful as a place
     # to Ctrl+C or check for a crash -- not something that needs to sit
-    # open and full-sized on the desktop. Resized before minimizing so
-    # that if it's ever restored (from the taskbar, to actually Ctrl+C
-    # it), it isn't the terminal host's oversized default. Only meaningful
-    # for the built exe; a dev run's terminal is the user's own to manage.
+    # open and full-sized on the desktop. Minimized rather than hidden
+    # (SW_HIDE) on purpose: restoring it from the taskbar is the documented
+    # way to Ctrl+C IT-Deck or read a crash, and hiding it removes that.
+    #
+    # The MoveWindow() that used to run first -- resizing the console so a
+    # later restore wouldn't be the terminal host's oversized default -- is
+    # gone. It is the other suspect for the stray white rectangle on the
+    # desktop, and it is the one that matches the reported timing exactly
+    # ("appears when the terminal window minimizes"): MoveWindow with
+    # bRepaint=TRUE invalidates the console's whole client area and then the
+    # window is minimized microseconds later, so the repaint lands against a
+    # window that is on its way out -- classically leaving an unpainted white
+    # region behind on the desktop. A console that restores at its default
+    # size is a fine trade for not leaving debris on the user's desktop.
     if not is_frozen():
         return
     try:
@@ -400,7 +454,6 @@ def shrink_and_minimize_console() -> None:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if not hwnd:
             return
-        ctypes.windll.user32.MoveWindow(hwnd, 100, 100, 640, 360, True)
         SW_MINIMIZE = 6
         ctypes.windll.user32.ShowWindow(hwnd, SW_MINIMIZE)
     except Exception:
@@ -599,6 +652,7 @@ def run_launcher() -> int:
     agent_proc = subprocess.Popen(
         self_invocation("agent"), env=agent_env, stdout=agent_log, stderr=subprocess.STDOUT
     )
+    agent_started_at = time.time()
 
     # Pick one link to lead with, not three -- a phone user has no way to
     # tell which of several printed addresses is the right one.
@@ -633,18 +687,56 @@ def run_launcher() -> int:
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     shrink_and_minimize_console()
 
-    agent_exit_reported = False
+    # Supervise the agent rather than only reporting its death. The legacy
+    # Docker path gets its stability from a human watching a console window
+    # that stays open on a crash ("a window that stays open means the agent
+    # crashed" -- CLAUDE.md); standalone minimizes that console two seconds
+    # in, so nobody sees it, and the deck simply goes half-dead with no
+    # explanation. Respawning is what makes the two paths equally reliable.
+    #
+    # Only a NON-ZERO exit is a crash worth restarting: exit 0 is either
+    # agent_shutdown's deliberate os._exit(0) (a tile the user pressed --
+    # relaunching it immediately would make that tile do nothing) or the
+    # singleton mutex's orderly "another instance already has the job".
+    agent_restart_delay = AGENT_RESTART_MIN_DELAY
+    agent_restart_due: Optional[float] = None
     try:
         while True:
             if backend_proc.poll() is not None:
                 print("Backend process exited -- stopping.")
                 break
-            if agent_proc.poll() is not None and not agent_exit_reported:
-                print(
-                    "Agent process exited -- tiles that need the PC (audio, apps, "
-                    "VPN) won't respond until it's restarted. Backend keeps running."
+
+            agent_status = agent_proc.poll()
+            if agent_status is not None and agent_restart_due is None:
+                if agent_status == 0:
+                    print("Agent stopped on request -- not restarting it.")
+                    # Nothing schedules a restart, and poll() keeps returning
+                    # 0, so this prints once and then stays quiet.
+                    agent_restart_due = float("inf")
+                else:
+                    print(
+                        f"Agent exited unexpectedly (code {agent_status}) -- restarting in "
+                        f"{agent_restart_delay:.0f}s. See {logs_dir / 'agent.log'}."
+                    )
+                    agent_restart_due = time.time() + agent_restart_delay
+
+            if agent_restart_due is not None and time.time() >= agent_restart_due:
+                agent_proc = subprocess.Popen(
+                    self_invocation("agent"), env=agent_env, stdout=agent_log, stderr=subprocess.STDOUT
                 )
-                agent_exit_reported = True
+                print("Agent restarted.")
+                agent_restart_due = None
+                # Backoff climbs across consecutive crashes so a genuinely
+                # broken agent (a missing audio device, a bad config) doesn't
+                # spin the CPU respawning itself several times a second, and
+                # resets below once one has survived long enough to count as
+                # working rather than crash-looping.
+                agent_restart_delay = min(agent_restart_delay * 2, AGENT_RESTART_MAX_DELAY)
+                agent_started_at = time.time()
+            elif agent_restart_due is None and agent_proc.poll() is None:
+                if time.time() - agent_started_at > AGENT_HEALTHY_AFTER:
+                    agent_restart_delay = AGENT_RESTART_MIN_DELAY
+
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopping...")

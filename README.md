@@ -32,14 +32,19 @@ Run `ITDeck.exe` once. On first launch it:
 2. Generates `AGENT_TOKEN` and `CLIENT_TOKEN`, both defaulting to `admin`
    — a self-hosted LAN gets little real security from a token anyway;
    hand-edit `%LOCALAPPDATA%\IT-Deck\config.env` if you want real ones —
-   and picks a free port. Kept across restarts — deleting `config.env`
-   invalidates the URL your phone already has.
+   and picks a port: `49732` by default (IANA's dynamic range, so it won't
+   fight the dev servers, Docker Desktop and friends that all want `8000`),
+   walking upward if that one is taken. Want a specific port? Change
+   `SERVER_PORT` in `config.env` and relaunch. All three are kept across
+   restarts — deleting `config.env` invalidates the URL your phone already
+   has, and changing the port changes that URL too, so open the newly
+   printed link on the phone once afterwards.
 3. Starts the backend and the Windows agent as two separate processes, so
    closing/relaunching one doesn't take down the other.
 4. Opens a small window with the Dashboard and Studio links, a copy button
    for each (plus the agent token, in case Studio asks for it) — and
    prints the same links in the console before shrinking it out of the way
-   a couple seconds later, e.g. `http://192.168.0.15:8000/?token=admin`.
+   a couple seconds later, e.g. `http://192.168.0.15:49732/?token=admin`.
    Backend/agent logs go to
    `%LOCALAPPDATA%\IT-Deck\logs\`, not the console, so that link doesn't
    scroll out of view.

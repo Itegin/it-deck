@@ -7,7 +7,6 @@ import win32api
 import win32event
 import winerror
 from dotenv import load_dotenv
-from websockets import ConnectionClosed
 from websockets.asyncio.client import connect
 
 from handlers.audio import (
@@ -35,6 +34,10 @@ SERVER_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws/agent"
 
 MAX_BACKOFF = 30
 SINGLETON_MUTEX_NAME = "Global\\ITDeckAgentSingleton"
+
+# Set in main(); see the comment there for why the handle must outlive the
+# call that created it.
+_singleton_handle = None
 
 
 def handle_agent_shutdown(params: dict) -> dict:
@@ -127,10 +130,25 @@ async def main() -> None:
     # running at once -- two agents silently overwriting each other's
     # WebSocket registration on the backend caused a day of contradictory
     # VPN-state bugs.
-    win32event.CreateMutex(None, False, SINGLETON_MUTEX_NAME)
+    #
+    # The handle is parked in a module global rather than discarded: a
+    # PyHANDLE nobody holds is garbage-collected, and closing the last handle
+    # destroys the mutex -- so this guard was only ever as durable as
+    # CPython's refcounting happened to make it. That matters more now that
+    # standalone/launcher.py respawns a dead agent: a fresh agent racing its
+    # own dying predecessor must see a mutex that is either still genuinely
+    # held or genuinely gone, never one that vanished early because a local
+    # variable went out of scope.
+    global _singleton_handle
+    _singleton_handle = win32event.CreateMutex(None, False, SINGLETON_MUTEX_NAME)
     if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
         print("Another instance is already running -- exiting.")
-        sys.exit(1)
+        # Exit 0, not 1: this is an orderly "someone else already has the
+        # job", and the launcher's supervisor reads a non-zero exit as a
+        # crash worth respawning. Exiting 1 here would turn a harmless
+        # double-launch into a restart storm between two processes that both
+        # correctly refuse to run.
+        sys.exit(0)
 
     backoff = 1
     while True:
@@ -139,8 +157,26 @@ async def main() -> None:
             # A clean return still means the connection ended (server closed
             # it normally); reset backoff since the connection had succeeded.
             backoff = 1
-        except (ConnectionClosed, OSError) as exc:
-            print(f"Disconnected ({exc})")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Deliberately broad, and a fix rather than sloppiness. This was
+            # `except (ConnectionClosed, OSError)`, which misses the single
+            # most likely failure on a machine where backend and agent start
+            # together: websockets raises InvalidHandshake (InvalidStatus,
+            # InvalidMessage, ...) when the server answers the upgrade with
+            # something that isn't a WebSocket, and InvalidHandshake derives
+            # from WebSocketException/Exception, NOT from OSError -- verified
+            # against the pinned websockets==13.1. So a backend restart, or
+            # the window before uvicorn has its routes mounted, killed the
+            # agent process outright instead of reconnecting. Same for a
+            # KeyError escaping the receive loop, or anything the audio stack
+            # throws up through poll_loop.
+            #
+            # Nothing above this frame can recover -- main() IS the recovery
+            # path -- and a reconnect that fails again simply backs off
+            # further, which is the right response to every one of these.
+            print(f"Disconnected ({type(exc).__name__}: {exc})")
 
         print(f"Reconnecting in {backoff}s")
         await asyncio.sleep(backoff)

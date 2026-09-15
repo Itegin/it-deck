@@ -1,8 +1,7 @@
 import asyncio
-import os
 
 from handlers.audio import get_default_output_name, get_muted, get_volume
-from handlers.process import is_process_running
+from handlers.process import get_watched_process_name, is_process_running
 
 POLL_INTERVAL_SECONDS = 1
 
@@ -15,7 +14,12 @@ async def poll_loop(send_state_callback) -> None:
                 "speaker.volume": get_volume("speaker"),
                 "speaker.muted": get_muted("speaker"),
                 "speaker.device_name": get_default_output_name(),
-                "vpn.running": is_process_running(os.environ.get("VPN_PROCESS_NAME", "")),
+                # Not os.environ directly: standalone mode never generates
+                # VPN_PROCESS_NAME, so the name can also arrive from the VPN
+                # item's own params on the first press. get_watched_process_name()
+                # is the single place that knows which of the two applies --
+                # see handlers/process.py's resolve_toggle_target().
+                "vpn.running": is_process_running(get_watched_process_name()),
             }
         except Exception as exc:
             # Transient audio-stack errors (device swap mid-read, etc.)

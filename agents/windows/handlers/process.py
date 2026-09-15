@@ -4,6 +4,51 @@ from pathlib import Path
 import psutil
 
 
+# --- VPN / process-toggle configuration -----------------------------------
+
+# The process name poll_loop reports as "vpn.running". Seeded from the
+# environment (the legacy Docker/.env path, which is the only way this was
+# ever configurable) and updated whenever a process_toggle command arrives
+# carrying its own process_name -- see resolve_toggle_target().
+#
+# The runtime update exists because the two sides learn this name from
+# different places: the handler gets it from the item's params, which is
+# where standalone mode can actually put it (Studio writes params; nothing
+# in standalone writes agent env vars), while poll_loop has no access to
+# items at all. Without it, a params-configured VPN tile would toggle
+# correctly but never light up. The cost is that state is unknown until the
+# first press of that tile -- accepted rather than building an
+# agent-config channel over the WebSocket for one string.
+_active_process_name = os.environ.get("VPN_PROCESS_NAME", "")
+
+
+def get_watched_process_name() -> str:
+    return _active_process_name
+
+
+def resolve_toggle_target(params: dict) -> tuple[str, str]:
+    """Return (process_name, path) for a process_toggle-style item.
+
+    Params win over the environment. That ordering is the fix for standalone
+    mode: VPN_PROCESS_NAME/VPN_PATH only ever existed in the agent's .env,
+    which the Docker path has and standalone/launcher.py does not generate --
+    so `os.environ["VPN_PROCESS_NAME"]` raised KeyError and the VPN tile
+    returned an error on every press. Reading the item's own params first
+    means the tile is configurable from Studio, on the machine it controls,
+    with no file editing; the env fallback keeps every existing .env install
+    working exactly as before.
+
+    Raises KeyError-free: a missing value comes back as "" and the caller
+    turns it into a message a person can act on.
+    """
+    global _active_process_name
+    process_name = params.get("process_name") or os.environ.get("VPN_PROCESS_NAME", "")
+    path = params.get("path") or os.environ.get("VPN_PATH", "")
+    if process_name:
+        _active_process_name = process_name
+    return process_name, path
+
+
 def is_process_running(name: str) -> bool:
     target = name.lower()
     for proc in psutil.process_iter():
@@ -57,10 +102,16 @@ def handle_force_stop(params: dict, item_type: str | None = None) -> dict:
             if item_type == "launch_app" and params.get("path"):
                 process_name = os.path.basename(params["path"])
             elif item_type == "process_toggle":
-                # Same env lookup handle_process_toggle uses -- read here,
-                # not at module level, for the same load_dotenv() ordering
-                # reason as handle_process_toggle below.
-                process_name = os.environ["VPN_PROCESS_NAME"]
+                # Same resolution handle_process_toggle uses, via the same
+                # helper -- this call site had the identical bare
+                # os.environ[...] lookup and so the identical KeyError on a
+                # standalone install.
+                process_name, _ = resolve_toggle_target(params)
+                if not process_name:
+                    return {
+                        "status": "error",
+                        "message": "VPN tile is not configured yet -- set process_name in this item's params (Studio)",
+                    }
             else:
                 return {
                     "status": "error",
@@ -78,12 +129,19 @@ def handle_force_stop(params: dict, item_type: str | None = None) -> dict:
 
 def handle_process_toggle(params: dict) -> dict:
     try:
-        # Read here, not at module level: agent.py imports handlers before
-        # calling load_dotenv(), so these wouldn't be populated yet if read
-        # at import time in this file (same reasoning as SERVER_IP/PORT and
-        # OUTPUT_DEVICE_PRIMARY/SECONDARY in the other handlers).
-        vpn_process_name = os.environ["VPN_PROCESS_NAME"]
-        vpn_path = os.environ["VPN_PATH"]
+        vpn_process_name, vpn_path = resolve_toggle_target(params)
+        if not vpn_process_name or not vpn_path:
+            # A named, actionable message rather than a raw KeyError string:
+            # this is the state a fresh standalone install starts in, so it
+            # is the first thing a new user sees from this tile.
+            return {
+                "status": "error",
+                "message": (
+                    "VPN tile is not configured yet -- set process_name and path "
+                    "in this item's params (Studio), e.g. "
+                    r'{"process_name": "openvpn-gui.exe", "path": "C:\\Program Files\\OpenVPN\\bin\\openvpn-gui.exe"}'
+                ),
+            }
 
         if is_process_running(vpn_process_name):
             kill_process(vpn_process_name)

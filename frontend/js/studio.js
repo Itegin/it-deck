@@ -69,18 +69,55 @@ let defaultWorkspaceId = null;
 // re-render the table from memory instead of refetching.
 let allWorkspaces = [];
 
-// Studio Mode has no login UI, so the agent token is collected once via a
-// plain prompt() and kept in memory only for the rest of this page load --
-// never localStorage/sessionStorage, per this project's convention of
-// avoiding browser storage APIs. Resetting on reload is an accepted
-// tradeoff for a desktop-only admin page, not an oversight.
+// Studio Mode has no login UI, so the agent token is collected via a plain
+// prompt() -- but it is now persisted to localStorage rather than held in
+// memory for one page load. Memory-only meant every reload, and every
+// navigation back from the Dashboard, reopened the dialog; "enter it once
+// and forget it" is the actual requirement for a single-user deck, and a
+// token re-asked on every visit is one people stop reading and start
+// dismissing. The same storage the Dashboard's own client token already
+// uses (ws.js's TOKEN_STORAGE_KEY), so this is the established pattern here,
+// not a new one -- the older comment claiming a project-wide convention
+// against browser storage was already contradicted by that file.
+//
+// Deliberately a *different* key from the Dashboard's: these are two
+// different secrets (see ws.js), and Studio is desktop-only, so this value
+// never reaches the phone.
+const AGENT_TOKEN_STORAGE_KEY = "itdeck.agent_token";
+
 let agentToken = null;
 
 function getAgentToken() {
   if (agentToken === null) {
+    try {
+      agentToken = localStorage.getItem(AGENT_TOKEN_STORAGE_KEY);
+    } catch (e) {
+      // Private mode / blocked site data. The prompt below still works for
+      // this page load; it just can't be remembered.
+    }
+  }
+  if (agentToken === null) {
     agentToken = prompt("Agent token (X-Agent-Token) for Studio Mode:") || "";
+    try {
+      localStorage.setItem(AGENT_TOKEN_STORAGE_KEY, agentToken);
+    } catch (e) {
+      // As above -- not fatal, the in-memory value still serves this load.
+    }
   }
   return agentToken;
+}
+
+// Called when the API rejects the stored token (401). Without this, a wrong
+// value saved once would be re-sent forever with no way to correct it short
+// of clearing site data -- the exact trap ws.js's own 4001 handling exists
+// to avoid on the Dashboard side.
+function forgetAgentToken() {
+  agentToken = null;
+  try {
+    localStorage.removeItem(AGENT_TOKEN_STORAGE_KEY);
+  } catch (e) {
+    // Nothing to do; the in-memory reset above is already enough to re-prompt.
+  }
 }
 
 async function loadItems() {
@@ -291,6 +328,9 @@ async function loadDevices(target, selected) {
     // 404 = agent offline, 504 = agent didn't answer inside the backend's 5s
     // budget, 401 = missing/wrong token. The endpoint's `detail` already
     // phrases each of these for a human ("agent offline").
+    if (response.status === 401) {
+      forgetAgentToken();
+    }
     const error = await response.json().catch(() => ({}));
     setDevicesMessage(
       `Could not load devices: ${error.detail || `HTTP ${response.status}`}`,
@@ -511,6 +551,9 @@ async function deleteItem(item) {
     // Adding auth here means delete can now fail (e.g. wrong/empty token,
     // 401) in a way it never could before -- silently reloading the table
     // as if it worked would hide that from the user.
+    if (response.status === 401) {
+      forgetAgentToken();
+    }
     const error = await response.json().catch(() => ({}));
     alert(`Delete failed (${response.status}): ${error.detail || "unknown error"}`);
     return;
@@ -541,6 +584,9 @@ async function compactLayout() {
   if (!response.ok) {
     // Same handling as deleteItem(): a bad token (401) or missing
     // workspace (404) must surface, not silently reload as if it worked.
+    if (response.status === 401) {
+      forgetAgentToken();
+    }
     const error = await response.json().catch(() => ({}));
     alert(`Compact failed (${response.status}): ${error.detail || "unknown error"}`);
     return;
@@ -693,6 +739,11 @@ form.addEventListener("submit", async (event) => {
   });
 
   if (!response.ok) {
+    // Same as the other token-bearing calls: a stored token the server
+    // rejects has to be dropped, or every later save re-sends it silently.
+    if (response.status === 401) {
+      forgetAgentToken();
+    }
     const error = await response.json().catch(() => ({}));
     paramsError.textContent = `Save failed (${response.status}): ${error.detail || "unknown error"}`;
     paramsError.hidden = false;
