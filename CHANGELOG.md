@@ -7,7 +7,7 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
-## Unreleased
+## v0.4.1 — 2026-09-16
 
 ### Added
 
