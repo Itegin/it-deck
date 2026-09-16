@@ -138,9 +138,11 @@ state snapshot every second.
 ### Repo root
 
 `deploy.sh`, `check.sh`, `backup.sh`, `docker-compose.yml`, `ansible/`,
-`.github/workflows/build.yml`, `gen_icon.py`,
-`scripts/token_fingerprint.py`, plus the docs (`README.md`, `CLAUDE.md`,
-`DOCUMENTATION.md`, `AUDIT_REPORT.md`).
+`.github/workflows/build.yml`, `scripts/token_fingerprint.py`, plus the docs
+(`README.md`, `CLAUDE.md`, `CHANGELOG.md`, `DOCUMENTATION.md`,
+`AUDIT_REPORT.md`) and `docs/screenshots/` (the images the README embeds).
+(`gen_icon.py` used to sit here too; it wrote an icon nothing referenced and
+still said "CH" from the ControlHub days, and was deleted.)
 
 ---
 
@@ -1386,51 +1388,113 @@ request and the agent logs roughly one line a second, which scrolled the
 connection URL off screen within seconds on a real install. **The launcher's
 console only ever prints what `run_launcher()` itself writes.**
 
-`show_info_window()` puts the same links in a real GUI window (tkinter on a
-daemon thread — the main thread's poll loop is what keeps the process alive and
-answers Ctrl+C), with a copy button and the agent token. Styled with the
-Dashboard's Liquid Glass *colors* (`frontend/css/themes.css`); tkinter cannot
-do that theme's backdrop blur. `_detect_ui_lang()` localizes EN/RU from the
-Windows UI language.
+`show_info_window()` is the whole desktop-side UI of a `--windowed` build.
+It runs tkinter on a daemon thread (the main thread's poll loop is what keeps
+the process alive and answers Ctrl+C) and is laid out as **three numbered
+steps**, not a list of facts:
 
-Two rules learned the hard way, both about drawing:
+1. **Open the deck on your phone** -- a QR code of the dashboard URL, the URL
+   itself in a read-only field, a copy button, and the runner-up addresses.
+2. **Set up your tiles (optional)** -- names the VPN tile as the one thing
+   that needs configuring, opens Studio, and keeps the agent token behind a
+   reveal button with a sentence saying what it is for.
+3. **When you're done here** -- what Minimize and Quit actually do, and where
+   the logs are.
+
+The shape is the fix for a real report: two bare URLs, a 32-character token
+and a path told a new user on a second PC nothing, least of all that the VPN
+tile does nothing until it has a path.
+
+Styled with the Dashboard's Liquid Glass *colors* (`frontend/css/themes.css`);
+tkinter cannot do that theme's backdrop blur, and it has no rounded corners,
+shadows or gradients either -- the hierarchy is a lighter card fill, the
+numbered accent badge, one `PAD` constant and font sizes. `_detect_ui_lang()`
+localizes EN/RU from the Windows UI language, and `_STRINGS` must stay
+symmetric across both.
+
+Four rules learned the hard way, all about drawing:
 
 - **`_apply_windows11_chrome()` must run after every widget is packed.**
   Resolving the real HWND needs `update_idletasks()`, which also forces Tk to
-  commit to whatever size the window has at that moment — call it early and the
+  commit to whatever size the window has at that moment -- call it early and the
   window renders correctly styled but cropped mid-text.
+- **Call `fit_window()` after adding anything post-build.** Tk auto-sizes only
+  until it is given an explicit geometry; afterwards new content is clipped.
+  Both the update notice and the revealed token pushed the Quit button off the
+  bottom edge before this existed -- found by screenshot, not by reasoning.
 - **Do not re-add the Mica backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`).** It was
   there and was removed. Mica composites a material *behind* the client area;
   Tk paints that area opaque and knows nothing about it. Doing it properly
   needs `DwmExtendFrameIntoClientArea` plus a transparent client brush. Only
   the dark title bar (`DWMWA_USE_IMMERSIVE_DARK_MODE`) remains.
+- **The QR code is black on white on purpose.** It is decoded by a camera, and
+  scanners want the contrast and the quiet zone they were designed for.
+  `qrcode` is pure Python here -- `QRCode.get_matrix()` straight onto a
+  `tk.Canvas`, no image backend -- and is imported behind a `try/except` so a
+  checkout without it shows the link and no code rather than no window.
 
-`hide_console()` hides the console outright (`SW_HIDE`) a couple of seconds in.
-It used to minimize it instead, which left a grey-white stub rectangle above
-the taskbar — reported with a screenshot, and exactly what Windows draws for a
-minimized window with no taskbar button to shrink into. No amount of repaint
-tidying fixes that; a minimized window has to go somewhere. (An earlier
-`MoveWindow(..., bRepaint=TRUE)` was removed while chasing the same artifact,
-and was not the cause.)
+**The window is topmost for `TOPMOST_RELEASE_MS` and then stops.** It raises
+itself once so it is not born behind whatever launched it; it used to set the
+flag and never clear it, floating above full-screen browsers and games.
 
-Hiding removes Ctrl+C as the stop path, so **the info window owns stopping
-IT-Deck**: "Quit IT-Deck" beside "Hide this window", which closes only the
-window and leaves IT-Deck running. Quit sets a `threading.Event` and nothing
-more — `run_launcher()`'s supervisor loop still owns tearing the processes
-down, because doing it from the tkinter thread would race that loop and leave
-orphans.
+`hide_console()` hides the console outright (`SW_HIDE`) and is vestigial on a
+`--windowed` build. It used to minimize instead, which left a grey-white stub
+rectangle above the taskbar -- reported with a screenshot, and exactly what
+Windows draws for a minimized window with no taskbar button to shrink into.
 
-**The printed "primary" LAN address is a guess, and a known-imperfect one.**
-`detect_primary_and_other_ips()` uses the UDP-connect-to-8.8.8.8 trick, which
-asks the OS which source interface it would route through. That is the best
-available proxy for "the adapter a phone can reach", and it is *not* something
-a same-machine reachability check can replace: a socket bound to `0.0.0.0`
-accepts a local connect to **any** of its own interfaces, virtual ones
-included. But it still picks wrong when a VPN or Hyper-V adapter holds the
-default route — observed live, printing a `172.16.x.x` Hyper-V address while
-the real LAN was `192.168.x.x`. The real address is then in the secondary
-"this PC also has" line. `check_reachable()` is only a soft firewall hint and
-does not select the address. **Open.**
+**The info window owns stopping IT-Deck**: "Quit IT-Deck" beside "Minimize",
+which iconifies. Quit sets a `threading.Event` and nothing more --
+`run_launcher()`'s supervisor loop still owns tearing the processes down,
+because doing it from the tkinter thread would race that loop and leave
+orphans. The title bar's X is bound to the same confirmed Quit.
+
+#### The update check
+
+A daemon thread calls `newer_version_available()` once at startup: one request
+to the GitHub releases API, 10s timeout, and **every** failure returns `None`
+silently -- offline, DNS, the unauthenticated rate limit, a JSON schema
+change. The answer travels back through a `queue.Queue` that the Tk thread
+polls with `root.after`, because tkinter may only be touched from the thread
+running its mainloop; `_update_check_worker` always queues exactly one item so
+the poll terminates. `UPDATE_CHECK=0` in `config.env` opts out, and a
+`config.env` written before the key existed reads as enabled.
+
+The 10s timeout is measured: on the maintainer's machine the TLS handshake to
+`api.github.com` intermittently exceeds 5s with a VPN up, while a successful
+request completes in ~0.7s. A short timeout here does not fail loudly, it
+silently disables the feature on exactly the networks it exists for.
+
+**Only the exe can be out of date.** The phone is not an installed client --
+it loads the frontend from the running build -- so there is no stale client on
+that side and a dashboard banner would duplicate this one.
+
+#### Picking the LAN address
+
+`detect_primary_and_other_ips()` **ranks** this PC's addresses; it does not
+ask the routing table. It used to: the UDP-connect-to-8.8.8.8 trick returns
+the source address of the default route -- and **a running VPN owns the
+default route**, which for an app shipping a VPN tile is aimed squarely at its
+own users. Measured with v2RayTun up, it offered the tunnel's `172.16.0.1/30`
+while the phone could only reach `192.168.0.15`. That was survivable as a line
+of text with alternatives printed beneath it; it is not survivable as the
+address baked into a QR code.
+
+`_rank_address()` sorts on address facts first and names last, because a name
+blocklist can never be complete and the user's own VPN client is not on it:
+
+| Signal | Why |
+| --- | --- |
+| RFC1918 or not | A home LAN is private. Rejects Radmin VPN's `26.x.x.x` -- public IANA space borrowed by a virtual-LAN product |
+| Subnet width | A LAN is /24 or wider; a point-to-point tunnel is a /30 or /32 |
+| Which private range | `192.168/16` is what consumer routers hand out, then `10/8`, then `172.16/12` -- the range Hyper-V and tunnels squat in |
+| Adapter name hint | Last, and only as a tie-break |
+
+The routed address is kept as a tie-break between two equally plausible LAN
+adapters (a laptop on Wi-Fi and Ethernet at once). Verified against six
+setups, including Hyper-V, WSL, WireGuard and this machine's real one. The
+window lists the runner-ups under the link, which only the console used to
+print. `check_reachable()` remains a soft firewall hint and does not select
+the address.
 
 ### 10.6 Building
 
@@ -1621,10 +1685,12 @@ Ordered roughly by how likely each is to bite.
     `fixup_day4_items`'s dynamic lookup. Safe today (there has only ever been
     one seeded workspace, and it gets id 1) but it would silently insert
     against the wrong workspace if that ever changed.
-17. **`fixup_mic_item`'s second UPDATE is unguarded** and re-applies
-    `params`/`icon` on every startup for any row labelled `Mic` — the same
-    always-on-reapply pattern that `fixup_volume_item` had to be fixed out of
-    because it reverted Studio edits.
+17. ~~**`fixup_mic_item`'s second UPDATE is unguarded**~~ — **fixed.** It
+    re-applied `params`/`icon` on every startup for any row labelled `Mic`,
+    the same always-on-reapply pattern `fixup_volume_item` had to be fixed out
+    of, and it silently reverted Studio edits to that tile. Both statements are
+    now guarded on the values they upgrade from, and the three cases (fresh,
+    legacy, user-edited) are covered by a test run.
 18. **`POST /api/screenshot` is retained but unused.** The screenshot handler
     copies to the PC's clipboard now; the endpoint is kept for a possible
     future remote-viewable-screenshot feature. It still accepts uploads from
@@ -1632,18 +1698,23 @@ Ordered roughly by how likely each is to bite.
 19. **Single-user, single-process by design.** `ConnectionHub` and `state.py`
     are module-level singletons in one process; a second backend replica would
     split the agent registry and the state snapshot in half.
-20. **The printed "primary" LAN address can be a virtual adapter.** Observed
-    live in v0.3.1 testing: the UDP-connect trick returned a `172.16.x.x`
-    Hyper-V address while the phone-reachable LAN was `192.168.x.x`. The real
-    address is still listed on the secondary line, so nothing is unreachable —
-    it is the *leading* one that can be wrong, and a person following the
-    first URL they see gets a dead link. A same-machine reachability check
-    cannot fix this (§10.5); ranking by default-route metric or filtering
-    known-virtual adapter descriptions would be a real change, not a tweak.
+20. ~~**The printed "primary" LAN address can be a virtual adapter.**~~ —
+    **fixed**, and it had to be: the address now goes into a QR code, where a
+    wrong guess is not a dead link on a line of text but a code that simply
+    does not work. Addresses are ranked rather than taken from the default
+    route (§10.5, `_rank_address`). Root cause, confirmed live, was not
+    Hyper-V but *this app's own VPN tile*: a running VPN owns the default
+    route, so the UDP trick returned the tunnel's `172.16.0.1/30`.
 21. **`process_toggle` has no confirmation.** Correct state (§10.4) removes the
     trap where the tile misreported "off" and a tap killed a running VPN, but a
     genuine mis-tap still kills it. There is no undo and no confirm step.
-22. **A stray white rectangle was reported on the desktop during real use.**
+22. **Unknown `cmd` values on `/ws/client` are silently dropped.** The
+    handler matches `execute` and `set_value` and ignores anything else, so a
+    client that sends a typo (or the wrong shape for Force Stop, which is
+    `execute` plus `override_type`) waits for a result that will never come.
+    The shipped frontend never does this, so it costs users nothing — it cost
+    an hour of debugging exactly once, writing a test client by hand.
+23. **A stray white rectangle was reported on the desktop during real use.**
     Two plausible causes were removed in v0.3.1 without either being
     reproduced under observation: the Mica backdrop on the tkinter info window,
     and `MoveWindow(..., bRepaint=TRUE)` immediately before the console is

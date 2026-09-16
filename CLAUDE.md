@@ -221,6 +221,62 @@ These three are non-negotiable and get checked on every relevant change:
   supervisor loop still owns the actual teardown, because tearing down from
   the tkinter thread would race it and leave orphans. Don't reintroduce
   `SW_MINIMIZE`.
+- **The info window is a three-step setup guide, and the steps are the
+  point.** It is the only desktop UI a `--windowed` build has, and before this
+  it showed two bare URLs, a raw token and a log path — which a real new user
+  on a second PC could not act on. Step 1 (open the deck on the phone) is the
+  only required one and carries the QR code; step 2 names the VPN tile as the
+  one thing needing setup and keeps the agent token behind a reveal button;
+  step 3 says what Minimize and Quit do. Keep that shape: anything added here
+  belongs inside a step, not loose at the bottom.
+  - **`_STRINGS` must stay symmetric EN/RU** — every new key needs both, and
+    the Russian is written as Russian, not translated word for word.
+  - **tkinter has no rounded corners, no shadow, no blur and no gradient.**
+    The hierarchy is carried by a lighter card fill (`surface`), the numbered
+    accent badge, one `PAD` constant and the font sizes. Don't plan a design
+    that needs anything else — and don't re-add Mica to get it (see below).
+  - **Call `fit_window()` after adding any widget post-build.** Tk auto-sizes
+    a window only until it is given an explicit geometry; after that, new
+    content is clipped, not accommodated. Both the update notice and the
+    revealed token pushed the Quit button off the bottom edge before this
+    existed — caught by screenshot, not by reasoning.
+  - **The QR is black on white deliberately.** It is read by a camera, and
+    scanners want the contrast and the quiet zone (`QR_QUIET_MODULES`) they
+    were designed for; theming it would look tidier and scan worse. `qrcode`
+    is imported behind a `try/except` so a checkout without it shows the link
+    and no code rather than no window.
+- **The window releases `-topmost` after `TOPMOST_RELEASE_MS`.** It raises
+  itself once so it isn't born behind the browser it was launched from, then
+  stops floating. It used to set the flag and never clear it, which put it
+  above full-screen browsers and games for its entire life.
+- **The update check runs on a thread and answers through a `queue.Queue`
+  the Tk thread polls with `root.after`.** tkinter may only be touched from
+  the thread running its mainloop, so the worker must not call `root.after`
+  itself. Every failure returns `None` silently (offline, DNS, GitHub's
+  unauthenticated rate limit, a schema change) and `_update_check_worker`
+  always queues exactly one item so the poll terminates. The 10s timeout is
+  measured, not guessed: on the maintainer's machine the TLS handshake to
+  `api.github.com` intermittently needs more than 5s with a VPN up, and a
+  short timeout doesn't fail loudly — it silently disables the feature on
+  exactly the networks it exists for. **Only the exe can be out of date**; the
+  phone loads the frontend from the running build, so there is no "old client"
+  on that side and a dashboard banner would be a duplicate.
+- **`detect_primary_and_other_ips()` ranks addresses; it does not ask the
+  routing table.** The UDP-connect-to-8.8.8.8 trick returns the default
+  route's source address — and **a running VPN owns the default route**, which
+  for an app that ships a VPN tile is aimed at its own users. Measured with
+  v2RayTun up: it returned the tunnel's `172.16.0.1/30` while the phone could
+  only reach `192.168.0.15`. `_rank_address()` sorts by RFC1918-or-not (this
+  is what rejects Radmin VPN's `26.x.x.x`, public space borrowed by a
+  virtual-LAN product), then subnet width (a LAN is /24 or wider, a tunnel is
+  a /30), then which private range, and only then an adapter-name hint —
+  address facts first, names last, because a name list can never be complete
+  and the user's own VPN client is not on it. The routed address is kept only
+  as a tie-break between two equally plausible LAN adapters.
+- **Both child roles line-buffer stdout (`_line_buffer_stdio()`).** They write
+  to files and Python block-buffers a non-tty stream, so `agent.log`'s tail
+  ran minutes behind reality — useless for the one job that file has, and the
+  window now points users at it by name.
 - **Nothing may destroy the info window -- it is the only interface IT-Deck
   has.** With `--windowed` there is no console to fall back to, no Ctrl+C and
   nothing to restore from the taskbar. The left button therefore calls
@@ -328,6 +384,25 @@ These three are non-negotiable and get checked on every relevant change:
   when an earlier version of this logic promoted a `172.16.x.x` Hyper-V
   address over the real one. `check_reachable()` is now only a soft
   "check the firewall" hint, not what selects the address.
+- **Every startup fixup in `db.py` must be guarded on the value it upgrades
+  *from*.** This has now bitten three separate rows — `fixup_volume_item`,
+  `fixup_legacy_seed`'s Terminal params, and most recently `fixup_mic_item`,
+  which reapplied `params` and `icon` on every single launch and so silently
+  reverted any Studio edit to the Mic tile. A bare `WHERE label = '...'`
+  matches forever, and these functions run on every backend start, so
+  "idempotent" is not the same as "harmless": the row is a user-editable
+  record, and rewriting it is data loss. Guard on the old value (or on
+  `IS NULL`), the way each of the three now does.
+- **The tile icon set (`ICONS` in `frontend/js/render.js`) and what `db.py`
+  seeds must stay in step.** A seeded `icon` with no matching key renders a
+  label-only tile next to eight tiles that all carry a glyph — it has happened
+  twice, `shield` for VPN and `power` for Close Agent. Adding a tile to a
+  fixup means checking its icon exists here.
+- **The dashboard auto-selects a lone workspace** (`init()` in
+  `frontend/js/app.js`) rather than showing a picker with one entry. That
+  screen is what a new user lands on straight after scanning the QR code.
+  The selector is still reachable via "Switch deck", and the moment a second
+  deck exists the behaviour is exactly as before.
 - **Random tokens from a pre-v0.3.0 `config.env` ARE migrated to `admin`**
   (`_looks_auto_generated()` + the loop at the top of
   `load_or_create_config()`). This reverses the earlier "deliberately not

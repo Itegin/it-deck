@@ -5,8 +5,14 @@
 Self-hosted universal control surface that turns an old iPhone into a deck
 for your PC.
 
-*(Screenshots to be added — capturing them requires a live device, out of
-scope for this edit.)*
+| The deck, on your phone | Studio, on the PC |
+| --- | --- |
+| ![The IT-Deck dashboard on a phone](docs/screenshots/dashboard.png) | ![Studio Mode](docs/screenshots/studio.png) |
+
+And the window `ITDeck.exe` opens on the PC it controls — the whole setup, in
+three steps, with a QR code so the phone needs no typing:
+
+![The IT-Deck window](docs/screenshots/window.png)
 
 ## Quick start (standalone)
 
@@ -49,19 +55,37 @@ Run `ITDeck.exe` once. On first launch it:
    printed link on the phone once afterwards.
 3. Starts the backend and the Windows agent as two separate processes, so
    closing/relaunching one doesn't take down the other.
-4. Opens a small window with the Dashboard and Studio links, a copy button
-   for each (plus the agent token, in case Studio asks for it), e.g.
-   `http://192.168.0.15:49732/?token=admin`. There's no console window —
-   everything IT-Deck logs goes to `%LOCALAPPDATA%\IT-Deck\logs\`.
+4. Opens the window in the screenshot above. There is no console — everything
+   IT-Deck logs goes to `%LOCALAPPDATA%\IT-Deck\logs\`.
 
-Open the Dashboard link on your phone's browser once (same Wi-Fi as the PC)
-— no typing needed, the token's in the link and gets stored and stripped
-from the URL after.
+**Step 1 is the only step you have to do: point your phone's camera at the QR
+code**, on the same Wi-Fi as the PC. The token is in the link; the phone
+stores it and strips it from the URL. (The link and a copy button are right
+there too, if you'd rather send it to yourself.)
 
-To stop IT-Deck, press **Quit** in that window. "Hide this window" only
-closes the window — IT-Deck keeps running and your phone stays connected.
-Anything IT-Deck launched for you, your VPN client included, keeps running
-after it quits.
+If the address doesn't open, the window lists this PC's other addresses under
+the link — a PC with a VPN, Hyper-V or WSL has several, and IT-Deck picks the
+one that looks most like a real LAN rather than whichever one Windows happens
+to route through.
+
+**Step 2 is optional** and the window says so: every tile works out of the box
+except VPN, which has to be told what to launch (see below).
+
+To stop IT-Deck, press **Quit** in that window. **Minimize** leaves it running
+with your phone still connected. Anything IT-Deck launched for you, your VPN
+client included, keeps running after it quits.
+
+### Updates
+
+The window checks the [releases page](https://github.com/Itegin/it-deck/releases/latest)
+once at startup and shows a **Download** button if a newer version exists.
+It is one request, it never sends anything about you, and any failure —
+offline, blocked, rate-limited — is ignored silently. Turn it off with
+`UPDATE_CHECK=0` in `config.env`.
+
+Only `ITDeck.exe` can be out of date. The phone isn't an installed app: it
+loads the deck from whatever version of the exe is running, so it can never
+lag behind on its own.
 
 **Requirements**: a Windows PC to control (the agent depends on
 `pycaw`/`comtypes` — Windows COM audio APIs — and `pywin32`, so it only runs
@@ -247,11 +271,11 @@ as mixed content on an HTTPS page.
 
 | Symptom | Fix |
 | --- | --- |
-| The printed link doesn't open on the phone | The "primary" address can be a virtual adapter (Hyper-V, a VPN). Try the addresses on the "this PC also has" line |
+| The QR code / link doesn't open on the phone | Try the other addresses the window lists under the link. IT-Deck ranks this PC's addresses and shows the most LAN-like one first, but a machine with several adapters can still surprise it |
 | No address works | Windows Firewall — a cancelled prompt leaves **Block** rules for `itdeck.exe`. Delete them in the firewall's inbound rules, or make the network Private |
 | The phone asks for a token | Its stored token no longer matches. Open the freshly printed `?token=…` link once |
 | The VPN tile does nothing | Most likely it has no `path` yet — a fresh install seeds it unconfigured (see "Configuring the VPN tile"). If it's configured, check whether that program runs as administrator |
-| A tile that needs the PC does nothing | The agent is down. The launcher restarts it automatically — check its console for restart lines and `%LOCALAPPDATA%\IT-Deck\logs\agent.log` for why |
+| A tile that needs the PC does nothing | The agent is down. The launcher restarts it automatically — `%LOCALAPPDATA%\IT-Deck\logs\agent.log` says why, and `launcher.log` beside it records the restarts |
 | Nothing starts at all | `%LOCALAPPDATA%\IT-Deck\logs\backend.log` |
 
 ## Documentation
@@ -265,4 +289,6 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.7 (tagged) — personal project, active development, API may change.
+v0.3.7 is the latest tag. `main` is ahead of it with the changes listed under
+**Unreleased** in [`CHANGELOG.md`](CHANGELOG.md) — personal project, active
+development, API may change.

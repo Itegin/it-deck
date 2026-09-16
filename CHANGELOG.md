@@ -7,6 +7,73 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## Unreleased
+
+Batched on purpose: these land on `main` without a tag, and go out together in
+the next release.
+
+### Added
+
+- **The info window is a three-step setup guide, with a QR code.** It used to
+  show two bare URLs, a raw 32-character token and a log path, which told a
+  brand-new user nothing — including the thing this project gets asked about
+  most, that the VPN tile does nothing until it is given a path in Studio.
+  Step one now carries a QR code of the dashboard URL, so the phone needs no
+  typing at all; step two names the VPN tile explicitly and hides the agent
+  token behind a button that says what it is for; step three explains what
+  Minimize and Quit actually do. Verified by reading the rendered pixels back:
+  the code is module-for-module identical to the matrix for the URL.
+- **An update notice.** One request to the GitHub releases page at startup, on
+  a background thread; if a newer version exists the window shows it with a
+  Download button. Silent on every failure, and `UPDATE_CHECK=0` in
+  `config.env` turns it off. Only the exe can be stale — the phone loads the
+  deck from whatever build is running.
+- The window lists this PC's other addresses under the link, which only the
+  console used to print.
+
+### Fixed
+
+- **The address in the link (now the QR code) could be one no phone can
+  reach.** It came from "which address would the OS route an external packet
+  from" — that is the default route, and a running VPN owns the default route.
+  IT-Deck ships a VPN tile, so this was aimed squarely at its own users:
+  measured here, it offered the tunnel's 172.16.0.1/30 while the phone needed
+  192.168.0.15. Addresses are now ranked (private range, subnet width, then a
+  name hint) with the routed answer kept only as a tie-break.
+- **The window no longer sits on top of everything.** It set `-topmost` at
+  startup and never cleared it, so it floated above browsers and full-screen
+  games for its whole life. It now releases the flag after four seconds.
+- **"Hide this window" destroyed the only interface IT-Deck has** — see
+  v0.3.7; the button now minimizes, and both the update notice and the
+  revealed token re-fit the window instead of pushing the Quit button off the
+  bottom edge.
+- **Logs were minutes stale.** Both child processes write to a file, and
+  Python block-buffers a non-tty stdout. They line-buffer now, which matters
+  more than usual since the window points users at those files by name.
+- **The Mic tile's params and icon were reapplied on every startup**, silently
+  reverting anything set on that tile in Studio. Same always-on-reapply bug
+  already fixed for the Volume and Terminal tiles; the Mic row was missed.
+- The Close Agent tile rendered without an icon — it is seeded as `power` and
+  the icon set had no such key, exactly the omission `shield` had.
+- The dashboard auto-selects the only deck instead of asking you to pick one
+  of one, which is the first screen after scanning the QR on a fresh install.
+
+### Performance
+
+- The agent stopped doing ~100 COM calls a second to read one string: the
+  default output device's name is cached against the endpoint id, so an
+  unchanged device costs one cheap call. Verified identical output against the
+  old implementation on real hardware — 23.8ms → 1.2ms per poll.
+- `is_process_running("")` returns immediately instead of walking every
+  process on the machine once a second, which is what a standalone install did
+  until the VPN tile was configured.
+- Smaller, all behaviour-identical: tile ink no longer re-parses two constant
+  colours per tile per render, the deck appends every tile before reading any
+  computed style, and the unused `onResult` fan-out, the unused pydantic
+  models, `gen_icon.py` and an unreferenced `logo.svg` are gone.
+
+---
+
 ## v0.3.7 — 2026-09-15
 
 ### Fixed
