@@ -292,41 +292,130 @@ def load_or_create_config(data_dir: Path) -> dict:
 # --- LAN discovery / reachability ------------------------------------------
 
 
+# Adapter names that are virtual by construction. Only ever used to break a
+# tie -- the address itself decides first (see _rank_address), because a name
+# list can never be complete and the user's own VPN client is not on it.
+_VIRTUAL_ADAPTER_HINTS = (
+    "veth",
+    "virtual",
+    "vmware",
+    "virtualbox",
+    "hyper-v",
+    "loopback",
+    "tap-",
+    "tun",
+    "wireguard",
+    "tailscale",
+    "radmin",
+    "hamachi",
+    "zerotier",
+    "vpn",
+)
+
+
+def _rank_address(name: str, address: str, netmask: Optional[str]) -> tuple:
+    """Sort key for "which of this PC's addresses can a phone actually reach".
+
+    Lower sorts better. The signals, in the order they matter:
+
+    1. **Is it a private LAN address at all.** A home network is RFC1918.
+       This is what rejects Radmin VPN's 26.x.x.x, which is public IANA space
+       borrowed by a virtual-LAN product.
+    2. **How big is the subnet.** A real LAN is a /24 or wider; a point-to-
+       point tunnel is a /30 or /32. Measured on the maintainer's machine, the
+       v2RayTun adapter is 172.16.0.1/30 -- one bit of information that
+       separates it from any LAN, with no name matching involved.
+    3. **Which private range.** 192.168/16 is what essentially every consumer
+       router hands out, 10/8 next, 172.16/12 last -- the one Hyper-V and
+       tunnels like to squat in.
+    4. **Does the adapter name look virtual.** A hint, and deliberately last.
+    """
+    octets = [int(part) for part in address.split(".")]
+    if octets[0] == 192 and octets[1] == 168:
+        family = 0
+    elif octets[0] == 10:
+        family = 1
+    elif octets[0] == 172 and 16 <= octets[1] <= 31:
+        family = 2
+    else:
+        family = 9  # not RFC1918 -- a phone on the Wi-Fi will not reach this
+
+    width = 0
+    if netmask:
+        try:
+            bits = sum(bin(int(part)).count("1") for part in netmask.split("."))
+            # /24 or wider is a plausible LAN; anything narrower is a tunnel.
+            width = 0 if bits <= 24 else 1
+        except ValueError:
+            width = 0
+
+    lowered = name.lower()
+    virtual = 1 if any(hint in lowered for hint in _VIRTUAL_ADAPTER_HINTS) else 0
+    return (1 if family == 9 else 0, width, family, virtual, address)
+
+
 def detect_primary_and_other_ips() -> tuple[Optional[str], list[str]]:
-    # The UDP-connect trick (no packet actually sent) asks the OS which
-    # source interface it would use to route to an external address --
-    # this is the best available proxy for "the real, phone-reachable LAN
-    # adapter", and it's *not* something a same-machine reachability check
-    # can substitute for: a socket bound to 0.0.0.0 accepts a local connect
-    # to ANY of its own interfaces, including virtual ones (Hyper-V vSwitch,
-    # a VPN's virtual adapter) that a phone on the real Wi-Fi can never
-    # reach -- confirmed the hard way when this used to rank candidates by
-    # local reachability and it happily promoted a 172.16.x.x Hyper-V
-    # address over the real 192.168.x.x one.
-    primary = None
+    """This PC's most phone-reachable address, then all the others.
+
+    This used to be the UDP-connect-to-8.8.8.8 trick alone: ask the OS which
+    source address it would route an external packet from. That answer is
+    exactly the default route -- which is wrong for this app specifically,
+    because IT-Deck ships a VPN tile and **a running VPN owns the default
+    route**. Measured here: with v2RayTun up, the trick returned 172.16.0.1
+    (the tunnel's own /30) while the phone-reachable address was 192.168.0.15.
+    The window now puts that address in a QR code, so picking the wrong one
+    stopped being a cosmetic wart and became "the code doesn't work".
+
+    So every address is enumerated and ranked (see _rank_address), and the
+    UDP answer is kept only as a tie-breaking hint and a fallback for when
+    enumeration fails.
+    """
+    routed = None
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            primary = s.getsockname()[0]
+            routed = s.getsockname()[0]
     except OSError:
         pass
 
-    # Every other adapter, for the secondary "other addresses" line -- this
-    # app has a first-class VPN toggle, so a VPN becoming the default route
-    # (and thus `primary` above) is a real scenario; listing the rest gives
-    # the user something to try by hand if the primary guess is wrong.
-    others: set[str] = set()
+    candidates = []
     try:
         import psutil
 
-        for addrs in psutil.net_if_addrs().values():
+        stats = psutil.net_if_stats()
+        for name, addrs in psutil.net_if_addrs().items():
+            interface = stats.get(name)
+            if interface is not None and not interface.isup:
+                continue
             for addr in addrs:
-                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                    if addr.address != primary:
-                        others.add(addr.address)
+                if addr.family != socket.AF_INET:
+                    continue
+                if addr.address.startswith("127.") or addr.address.startswith("169.254."):
+                    continue
+                candidates.append((_rank_address(name, addr.address, addr.netmask), addr.address))
     except Exception:
         pass
-    return primary, sorted(others)
+
+    if not candidates:
+        # Enumeration unavailable: fall back to exactly the old behaviour.
+        return routed, []
+
+    candidates.sort()
+    ordered = []
+    for _, address in candidates:
+        if address not in ordered:
+            ordered.append(address)
+
+    primary = ordered[0]
+    # Only when the routed address ranks equally well does the OS's own
+    # opinion win -- it is the better tie-break between two real LAN
+    # adapters (a laptop on Wi-Fi and Ethernet at once).
+    if routed in ordered and routed != primary:
+        best = candidates[0][0][:-1]
+        routed_rank = next(rank[:-1] for rank, address in candidates if address == routed)
+        if routed_rank == best:
+            primary = routed
+    return primary, [address for address in ordered if address != primary]
 
 
 def watched_process_name(data_dir: Path) -> Optional[str]:
@@ -425,7 +514,25 @@ def check_reachable(ip: str, port: int, timeout: float = 2.0) -> bool:
 # --- role: backend -----------------------------------------------------
 
 
+def _line_buffer_stdio() -> None:
+    """Make this role's stdout/stderr flush per line.
+
+    The launcher hands each child a *file* for stdout, and Python
+    block-buffers a non-tty stream -- so the last thing written before a
+    problem is precisely what is still sitting in the buffer. Measured while
+    debugging a live install: agent.log's tail was minutes behind the agent's
+    actual state, which makes the log useless for the one job it has. The
+    window points users at these files by name, so they have to be current.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except Exception:
+            pass  # a frozen build can hand us something that isn't a TextIO
+
+
 def run_backend() -> int:
+    _line_buffer_stdio()
     if is_frozen():
         os.environ.setdefault("ITDECK_FRONTEND_DIR", str(Path(sys._MEIPASS) / "frontend"))
     else:
@@ -444,6 +551,7 @@ def run_backend() -> int:
 
 
 def run_agent() -> int:
+    _line_buffer_stdio()
     if not is_frozen():
         sys.path.insert(0, str(REPO_ROOT / "agents" / "windows"))
 
@@ -529,6 +637,7 @@ _STRINGS = {
         "step1_body_no_qr": "Open this address on your phone. It has to be on the same Wi-Fi as this PC.",
         "copy": "Copy link",
         "copied": "Copied",
+        "other_ips": "Doesn't open? This PC is also reachable at:",
         "step2_title": "Set up your tiles (optional)",
         "step2_body": "Every tile works out of the box except VPN: it doesn't know which program to launch yet. Open Studio on this PC and give it the path to your VPN client.",
         "open_studio": "Open Studio",
@@ -552,6 +661,7 @@ _STRINGS = {
         "step1_body_no_qr": "Открой этот адрес на телефоне. Он должен быть в той же сети Wi-Fi, что и этот компьютер.",
         "copy": "Скопировать ссылку",
         "copied": "Скопировано",
+        "other_ips": "Не открывается? Этот ПК доступен ещё по адресам:",
         "step2_title": "Настрой плитки (не обязательно)",
         "step2_body": "Все плитки работают сразу, кроме VPN: она пока не знает, какую программу запускать. Открой Studio на этом ПК и укажи путь до своего VPN-клиента.",
         "open_studio": "Открыть Studio",
@@ -744,6 +854,7 @@ def show_info_window(
     logs_dir: Path,
     on_quit,
     update_queue: "Optional[queue.Queue]" = None,
+    other_ips: "Optional[list]" = None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1047,6 +1158,19 @@ def show_info_window(
         ).pack(side="left")
         dash_feedback.pack(side="left", padx=(10, 0))
 
+        # The address above is a ranked guess (see detect_primary_and_other_ips),
+        # and a guess needs a visible fallback: on a PC with several adapters
+        # the runner-up is often the right one. The console has printed this
+        # line for a while; on a --windowed build nobody can read the console.
+        if other_ips:
+            label(
+                right,
+                f"{s['other_ips']} {', '.join(other_ips)}",
+                muted=True,
+                size=8,
+                wrap=300,
+            ).pack(anchor="w", pady=(8, 0))
+
         # --- step 2: Studio --------------------------------------------------
 
         step2 = card("2", s["step2_title"])
@@ -1188,8 +1312,16 @@ def run_launcher() -> int:
     agent_token = config["AGENT_TOKEN"]
     client_token = config["CLIENT_TOKEN"]
 
+    # Both children write to a *file*, and Python block-buffers a non-tty
+    # stdout -- so without this their logs lag by kilobytes and the last
+    # thing that happened before a problem is exactly what has not been
+    # flushed yet. Measured while debugging this build: agent.log's tail was
+    # several minutes stale. The window now points users at these files, so
+    # they have to be current, and one unbuffered pipe per process costs
+    # nothing at these volumes.
     backend_env = {
         **os.environ,
+        "PYTHONUNBUFFERED": "1",
         "AGENT_TOKEN": agent_token,
         "CLIENT_TOKEN": client_token,
         "SERVER_PORT": str(port),
@@ -1197,6 +1329,7 @@ def run_launcher() -> int:
     }
     agent_env = {
         **os.environ,
+        "PYTHONUNBUFFERED": "1",
         "AGENT_TOKEN": agent_token,
         "SERVER_IP": "127.0.0.1",
         "SERVER_PORT": str(port),
@@ -1301,7 +1434,7 @@ def run_launcher() -> int:
         threading.Thread(target=_update_check_worker, args=(update_queue,), daemon=True).start()
 
     show_info_window(
-        dashboard_url, studio_url, agent_token, logs_dir, quit_requested.set, update_queue
+        dashboard_url, studio_url, agent_token, logs_dir, quit_requested.set, update_queue, other_ips
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()

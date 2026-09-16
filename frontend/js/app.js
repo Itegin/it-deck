@@ -102,6 +102,15 @@ async function init() {
       }
     }
 
+    // One deck and no choice saved yet: show the deck, not a menu offering a
+    // single option. This is the very first screen after scanning the QR code
+    // on a fresh install, and "pick one of one" is a step that teaches
+    // nothing. The selector is still reachable any time via "Switch deck",
+    // and the moment a second deck exists this behaves exactly as before.
+    if (!workspace && workspaces.length === 1) {
+      workspace = workspaces[0];
+    }
+
     if (workspace) {
       loadWorkspace(workspace);
     } else {
