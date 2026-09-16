@@ -118,12 +118,18 @@ state snapshot every second.
 | File | Responsibility |
 | --- | --- |
 | `index.html` | Dashboard shell. Carries the **only inline script in the project**: it reads the cached theme from `localStorage` synchronously so the first paint isn't a flash of the wrong theme. |
-| `studio.html` | Desktop-only admin page; self-contained styling, five form groups (Identity / Action / Placement / Appearance / Advanced). Deliberately **not** linked to `css/themes.css`. |
+| `studio.html` | Desktop editor, always Liquid Glass (pinned `data-theme`, mode follows the shared setting). Links `base/button/widgets/themes/toast/studio.css` -- **not** `grid.css`, which pins `html/body` for the phone and would stop the page scrolling. |
 | `js/app.js` | Boot: fetch workspaces, resolve which deck to show (`localStorage` → `?workspace=` → selector), render, wire WebSocket callbacks, map tagged failures to actionable messages. Ends with the empty `touchstart` listener iOS needs for `:active`. |
 | `js/api.js` | REST fetches plus per-item `params` JSON parsing. Tags each failure kind (`unreachable`, `status`, `badReply`, `badParams`). |
 | `js/ws.js` | Client WebSocket: connect/reconnect with backoff (1 s → 30 s), `sendExecute`, `sendSetValue`, manual `req_id` generation, and the in-flight bookkeeping that turns raw result frames into per-tile `pending`/`ok`/`error` phases. |
 | `js/render.js` | Every DOM write: grid and tiles, the icon table, the WCAG ink calculation, the volume slider's pointer + keyboard handling, live state → colour/fill/subtitle, command-feedback classes, the workspace selector, the error state. |
-| `js/studio.js` | Admin UI: item table (filtered by workspace), add/edit form, delete, layout compaction, and the audio-device picker backed by `list_devices`. |
+| `js/studio.js` | Studio controller: loading, the agent token dialog + `api()` helper (drops the token on any 401), workspace/mode pickers, compaction, the VPN setup card. |
+| `js/studio-inspector.js` | Studio's editor panel, generated from the catalog (type cards, setup fields, appearance, size, "More settings" JSON for unmanaged keys). |
+| `js/studio-preview.js` | Studio's deck preview: real `.tile` markup + live widgets, `+` free cells, drag-to-move. |
+| `js/studio-i18n.js` | Studio EN/RU strings by `navigator.language`; keys must exist in both. |
+| `js/tile-catalog.js` | What tile types exist and what each needs configured. Must agree with agent `HANDLERS`, `WIDGETS`, `ICONS` and db.py seeds. |
+| `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item) -> destroy`), `clock-weather.js`. |
+| `css/widgets.css`, `css/studio.css` | Widget layout (currentColor only, container queries); Studio's glass panels and forms. |
 | `js/theme.js` | Fetch/PUT the theme, cycle it, apply it to `<html data-theme>`; derives the display label from the slug; re-validates every value against the allowlist before it reaches the DOM. |
 | `js/longpress.js` | 500 ms stationary hold → long press; movement past 10 px cancels. |
 | `js/contextmenu.js` | The long-press dialog (Force Stop / Cancel), `role="dialog" aria-modal="true"`, focus restored on dismiss. |
@@ -204,6 +210,7 @@ lookup key and never interpolated into `innerHTML`.
 | `false_color` | `render.js` | Inline `--tile-state-color` on the false side of a boolean |
 | `output_device_primary` / `output_device_secondary` | `handle_audio_switch` | SoundVolumeView Command-Line Friendly IDs; both present ⇒ A/B toggle |
 | `process_name` | `handle_force_stop` | Explicit override for the derived name |
+| `city`, `lat`, `lon`, `show_seconds` | `widgets/clock-weather.js` | Clock & weather widget: display name, coordinates (no weather without both), seconds tick |
 
 Nothing validates *which* keys a given `type` understands. `params` is checked
 for **parseability only**, and only on the API path.
@@ -277,6 +284,8 @@ Every endpoint in `backend/app/` and `backend/app/api/**`.
 | `POST /api/workspaces/{id}/compact` | `X-Agent-Token` | — | The full re-packed item list. `404` if the workspace is missing. Broadcasts `workspace_update` |
 | `POST /api/screenshot` | `X-Agent-Token` | `multipart/form-data`, `file` — must declare `image/png`, ≤ 10 MB | `{"status":"ok","filename":"YYYYmmdd_HHMMSS.png"}`; `400` wrong type, `413` too large. Filename comes from the **server clock**, never from `file.filename` |
 | `POST /api/agents/{agent_name}/list_devices` | `X-Agent-Token` | — | The agent's reply **verbatim**: `{"status":"ok","devices":[{name,id,direction,is_default,is_active}]}`. `404` agent offline, `504` no reply in 5 s |
+| `GET /api/widgets/weather?lat&lon` | **none** | — | `{temp, code, is_day, min, max, updated_at, stale}` normalized from Open-Meteo. Coordinates snapped to 0.01° *before* the upstream URL is built; 10 min fresh cache, stale served ≤6 h on failure, else `502`; ≤64 cache entries. Unauthenticated because the phone calls it (it holds only `CLIENT_TOKEN`) |
+| `GET /api/widgets/geocode?q&lang` | `X-Agent-Token` | — | Up to 8 `{name, admin1, country, lat, lon}`; `502` if the geocoder is unreachable (Studio then offers manual coordinates) |
 | `/` and everything else | none | — | Static frontend, `html=True` |
 
 Notes that matter:
@@ -613,49 +622,35 @@ single keypress is not a continuous drag.
   `.subtitle` child; a **number** drives the fill bar; a **boolean** drives the
   state class.
 
-### How Studio writes colours into `params` — and pins them
+### Widget tiles
 
-Studio's Appearance group has four colour inputs: `Color` (the `color`
-column), `Active color`, `Alert color`, `False color`. The last three are not
-columns — they live inside `params`.
+`kind = "widget"` tiles are drawn by `js/widgets/`: `mountWidget(tile, item)`
+runs after the tile is appended (container queries need a sized tile) and
+returns a `destroy()`. **`render.js` calls `destroyWidgets()` before each of its
+three `grid.innerHTML = ""` wipes** -- the wipe removes elements, not timers, and
+every `workspace_update` re-renders. Widgets use `target = "backend"`, so
+`setAgentOffline()` (which selects `data-kind="action"`) never greys them, and
+they never send `execute`. Unknown widget types keep the label-only fallback.
+Adding one: module in `js/widgets/`, register in `WIDGETS`, add a
+`tile-catalog.js` entry, and a backend provider under `api/widgets.py` if it
+needs data or secrets. (A phone-side recorder won't work over plain http --
+`getUserMedia` needs a secure context.)
 
-The submit handler in `studio.js` merges all three in **unconditionally**, on
-every save:
+### How Studio writes colours into `params`
 
-```js
-paramsObj.active_color = fields.activeColor.value;
-paramsObj.alert_color  = fields.alertColor.value;
-paramsObj.false_color  = fields.falseColor.value;
-```
+`active_color`/`alert_color`/`false_color` are written **only when explicitly
+chosen**, and "explicit" is decided by **key presence**: a key present in
+`params` opens as a chosen colour and is written back; an absent key opens as
+"Theme colour" and stays absent. Never by comparing with the teal/red defaults
+-- every tile saved by the pre-v0.5 Studio carries all three keys, and an
+equality test would silently delete a colour someone picked. Those older tiles
+stay pinned until someone ticks "Theme colour".
 
-Their pre-fills are `existingParams.active_color || "#0d9488"`,
-`existingParams.alert_color || "#dc2626"`, and
-`existingParams.false_color || item.color || "#2a2f38"`.
-
-`render.js` then writes `--active-color`/`--alert-color` inline **only when the
-key is present**, and an inline custom property outranks every stylesheet rule
-regardless of specificity. The consequence:
-
-> **Any item ever saved through Studio permanently pins its own active/alert
-> colours to the hardcoded teal/red, and no theme's fallback can reach it
-> again.** Pastel's deliberately darkened `--color-active: #0b7c72` and
-> `--color-alert: #b91c1c` — chosen to clear AA against a white card — are
-> dead on that item.
-
-`render.js`'s own comment describes exactly this bug in its former shape: it
-used to assign the two literals unconditionally at render time, which made
-`var(--active-color, var(--color-active))` unable to reach its fallback on any
-tile. That was fixed at the render layer; Studio reintroduces it at the data
-layer, one item at a time, whenever someone presses Save. See §12.
-
-`false_color` is written the same way, but its pre-fill is `item.color`, so
-saving an untouched item writes back the colour that was already rendering and
-nothing changes visually. It does mean the two can drift later: change `color`
-alone afterwards and the false state keeps the old value.
-
-The device pickers are the deliberate counter-example — they are written
-**only** for `audio_switch` and **only** when non-empty, because an empty
-select there means "the agent's list didn't load", not "none".
+Other params rules in `studio-inspector.js`: keys the catalog entry doesn't
+manage are preserved (shown as "More settings" JSON); changing a tile's type
+drops the previous type's managed keys; device IDs are removed only when the
+device list *loaded* and "none" was picked (a failed load means "unknown").
+Paths are cleaned of the quotes Explorer's "Copy as path" adds.
 
 ---
 
@@ -1588,14 +1583,10 @@ Ordered roughly by how likely each is to bite.
 
 ### Frontend / theming
 
-4. **Studio bypasses the theme tokens.** Every Save writes
-   `active_color`/`alert_color`/`false_color` into `params` unconditionally,
-   `render.js` turns the first two into inline custom properties, and an inline
-   custom property cannot be outranked — so a Studio-saved item can never again
-   pick up a theme's `--color-active`/`--color-alert` fallback. Pastel's
-   AA-corrected `#0b7c72`/`#b91c1c` are the concrete casualty. Full mechanism
-   in §6. *Fix shape: write the three keys only when the user actually changed
-   them from the pre-fill, or move theme-aware defaults out of the item row.*
+4. **Tiles saved by the old Studio still pin active/alert colours.** The new
+   Studio no longer writes them (§6), but existing rows keep the keys until
+   "Theme colour" is ticked per tile. No migration, on purpose: a key can't be
+   told apart from a deliberate choice.
 5. **Marginal contrast, knowingly left.** `fixup_toggle_off_colors`'s own
    comment measures the neutral off-state `#2a2f38` against the alert red at
    **2.78:1**, short of WCAG 1.4.11's 3:1 for state-identifying colours. Left

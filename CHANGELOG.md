@@ -7,6 +7,27 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## Unreleased
+
+### Added
+
+- **Widget tiles**, starting with **Clock & weather**: the phone's time and
+  date, plus the current weather for a city picked in Studio (Open-Meteo, no
+  API key, cached by the backend). It has a wide layout from 2×1 up. Any tile,
+  Terminal included, can be turned into one from Studio.
+- **Studio redesigned** in Liquid Glass: a live preview of the deck (click to
+  edit, `+` to add, drag to move) and a step-by-step editor where you pick what
+  a tile does from cards instead of typing command names and JSON. EN/RU.
+- **The VPN path has its own setup card** at the top of Studio until it's set.
+
+### Fixed
+
+- Saving a tile in Studio no longer pins teal/red onto it, overriding the
+  theme's colours.
+- Pressing Enter in Studio's token prompt no longer cancels it.
+
+---
+
 ## v0.4.0 — 2026-09-16
 
 Batched on purpose: everything below landed on `main` without a tag and ships
