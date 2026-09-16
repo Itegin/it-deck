@@ -1,610 +1,449 @@
-// Studio's first module import, and it is only for the two settings this page
-// now writes -- the value list, the display names, and the optimistic PUT.
-// Note what it deliberately does not do: nothing here applies a theme or a
-// mode to *this* page. css/themes.css is linked from index.html only, which is
-// what keeps Studio on its own look, and that is unchanged by the new axis.
-import { MODES, modeLabel, setMode } from "./theme.js";
-import { fetchSettings } from "./api.js";
+// Studio: the desktop editor for the deck. This module owns loading, the
+// agent token, the top bar and the VPN setup card. The deck preview is in
+// studio-preview.js and the editor panel in studio-inspector.js, and both
+// are built from js/tile-catalog.js.
+//
+// Studio is always Liquid Glass (studio.html pins data-theme) and follows
+// the shared light/dark "deck background" setting, which it also edits.
 
-const tbody = document.getElementById("items-tbody");
-const form = document.getElementById("item-form");
-const paramsError = document.getElementById("params-error");
-const devicesMessage = document.getElementById("devices-message");
+import { MODES, applyMode, setMode } from "./theme.js";
+import { fetchSettings } from "./api.js";
+import { showToast } from "./toast.js";
+import { applyStaticStrings, t } from "./studio-i18n.js";
+import { renderPreview, markSelection } from "./studio-preview.js";
+import { createInspector } from "./studio-inspector.js";
+import { cleanPath, detectEntry, vpnNeedsPath } from "./tile-catalog.js";
+import { ICONS } from "./render.js";
+
+const grid = document.getElementById("preview-grid");
+const workspaceSelect = document.getElementById("workspace-select");
 const modeSelect = document.getElementById("mode-select");
 const modeMessage = document.getElementById("mode-message");
-// Compact layout's target workspace. Kept out of `fields` on purpose --
-// that map is the item-edit form, and this picker exists precisely so
-// Compact no longer depends on it.
-const compactWorkspaceSelect = document.getElementById("compact-workspace-select");
+const setupCard = document.getElementById("setup-card");
+const tokenDialog = document.getElementById("token-dialog");
+const tokenInput = document.getElementById("token-input");
 
-const deviceLabels = {
-  primary: document.getElementById("primary-device-label"),
-  secondary: document.getElementById("secondary-device-label"),
-};
+document.getElementById("token-cancel").addEventListener("click", () => tokenDialog.close("cancel"));
+// Explicit, rather than trusting implicit form submission inside a modal
+// <dialog>, which didn't reliably fire in testing.
+tokenInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (tokenInput.value.trim()) tokenDialog.close("ok");
+  }
+});
 
-const fields = {
-  id: document.getElementById("field-id"),
-  workspaceId: document.getElementById("field-workspace-id"),
-  label: document.getElementById("field-label"),
-  icon: document.getElementById("field-icon"),
-  color: document.getElementById("field-color"),
-  activeColor: document.getElementById("field-active-color"),
-  alertColor: document.getElementById("field-alert-color"),
-  falseColor: document.getElementById("field-false-color"),
-  kind: document.getElementById("field-kind"),
-  type: document.getElementById("field-type"),
-  target: document.getElementById("field-target"),
-  stateKey: document.getElementById("field-state-key"),
-  row: document.getElementById("field-row"),
-  col: document.getElementById("field-col"),
-  width: document.getElementById("field-width"),
-  height: document.getElementById("field-height"),
-  params: document.getElementById("field-params"),
-  primaryDevice: document.getElementById("field-primary-device"),
-  secondaryDevice: document.getElementById("field-secondary-device"),
-};
-
-const AUDIO_SWITCH_TYPE = "audio_switch";
-
-// The two params keys the device pickers write, named after the env vars they
-// take priority over. Setting BOTH pins the Audio Switch tile to an A/B toggle
-// between exactly these two devices; leaving either empty lets the agent cycle
-// the default through every output device the PC currently has, which is what
-// picks up a newly plugged speaker. See handle_audio_switch in
-// agents/windows/handlers/audio.py.
-const PRIMARY_PARAM = "output_device_primary";
-const SECONDARY_PARAM = "output_device_secondary";
-
-// Bumped on every load and on every hide/close, so a slow reply for a Target
-// (or a Type) the user has since moved away from can't repopulate the
-// dropdowns with the wrong agent's devices.
-let deviceRequestSeq = 0;
-
-// Fallback only. New items follow compactWorkspaceSelect (i.e. whatever the
-// table is currently filtered to); this is what's used before that picker has
-// a value -- whichever workspace loaded first (position=0, i.e. "Home" today).
-let defaultWorkspaceId = null;
-
-// Last /api/workspaces response, kept so switching the workspace filter can
-// re-render the table from memory instead of refetching.
-let allWorkspaces = [];
-
-// Studio Mode has no login UI, so the agent token is collected via a plain
-// prompt() -- but it is now persisted to localStorage rather than held in
-// memory for one page load. Memory-only meant every reload, and every
-// navigation back from the Dashboard, reopened the dialog; "enter it once
-// and forget it" is the actual requirement for a single-user deck, and a
-// token re-asked on every visit is one people stop reading and start
-// dismissing. The same storage the Dashboard's own client token already
-// uses (ws.js's TOKEN_STORAGE_KEY), so this is the established pattern here,
-// not a new one -- the older comment claiming a project-wide convention
-// against browser storage was already contradicted by that file.
-//
-// Deliberately a *different* key from the Dashboard's: these are two
-// different secrets (see ws.js), and Studio is desktop-only, so this value
-// never reaches the phone.
+// ── Agent token ──────────────────────────────────────────────────────────
+// Persisted in localStorage, so it is entered once and then forgotten about.
+// A token re-asked on every visit is one people stop reading and start
+// dismissing. A different key from the Dashboard's client token: two secrets.
+// Dropped on any 401, so a wrong value saved once isn't re-sent forever.
 const AGENT_TOKEN_STORAGE_KEY = "itdeck.agent_token";
 
 let agentToken = null;
+let tokenPrompt = null;
 
-function getAgentToken() {
+function readStoredToken() {
+  try {
+    return localStorage.getItem(AGENT_TOKEN_STORAGE_KEY);
+  } catch (e) {
+    // Private mode or blocked site data. The dialog still works for this
+    // page load, it just can't be remembered.
+    return null;
+  }
+}
+
+function askForToken() {
+  // One dialog even if several requests need a token at once.
+  if (tokenPrompt) return tokenPrompt;
+  tokenPrompt = new Promise((resolve) => {
+    tokenInput.value = "";
+    // Escape closes without touching returnValue, so a stale "ok" from the
+    // last time would accept whatever is typed now.
+    tokenDialog.returnValue = "";
+    tokenDialog.addEventListener(
+      "close",
+      () => {
+        tokenPrompt = null;
+        const value = tokenInput.value.trim();
+        resolve(tokenDialog.returnValue === "ok" && value ? value : null);
+      },
+      { once: true },
+    );
+    tokenDialog.showModal();
+    tokenInput.focus();
+  });
+  return tokenPrompt;
+}
+
+async function getAgentToken() {
   if (agentToken === null) {
-    try {
-      agentToken = localStorage.getItem(AGENT_TOKEN_STORAGE_KEY);
-    } catch (e) {
-      // Private mode / blocked site data. The prompt below still works for
-      // this page load; it just can't be remembered.
-    }
+    agentToken = readStoredToken();
   }
   if (agentToken === null) {
-    agentToken = prompt("Agent token (X-Agent-Token) for Studio Mode:") || "";
+    const entered = await askForToken();
+    if (entered === null) return null;
+    agentToken = entered;
     try {
-      localStorage.setItem(AGENT_TOKEN_STORAGE_KEY, agentToken);
+      localStorage.setItem(AGENT_TOKEN_STORAGE_KEY, entered);
     } catch (e) {
-      // As above -- not fatal, the in-memory value still serves this load.
+      // Not fatal. The in-memory value still serves this page load.
     }
   }
   return agentToken;
 }
 
-// Called when the API rejects the stored token (401). Without this, a wrong
-// value saved once would be re-sent forever with no way to correct it short
-// of clearing site data -- the exact trap ws.js's own 4001 handling exists
-// to avoid on the Dashboard side.
 function forgetAgentToken() {
   agentToken = null;
   try {
     localStorage.removeItem(AGENT_TOKEN_STORAGE_KEY);
   } catch (e) {
-    // Nothing to do; the in-memory reset above is already enough to re-prompt.
+    // The in-memory reset above is already enough to ask again.
+  }
+}
+
+// Every token-bearing request goes through here, which is how every one of
+// them drops a rejected token on 401. The old studio.js had to remember that
+// at four separate call sites.
+async function api(path, { method = "GET", body, auth = true } = {}) {
+  const headers = {};
+  if (auth) {
+    const token = await getAgentToken();
+    if (token === null) {
+      return { ok: false, status: 0, detail: t("error.noToken") };
+    }
+    headers["X-Agent-Token"] = token;
+  }
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  let response;
+  try {
+    response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (err) {
+    return { ok: false, status: 0, detail: t("error.network", { detail: err.message }) };
+  }
+
+  if (response.status === 401 && auth) {
+    forgetAgentToken();
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    if (response.status === 401) {
+      detail = t("error.badToken");
+    } else if (data && typeof data.detail === "string") {
+      detail = data.detail;
+    } else if (data && Array.isArray(data.detail) && data.detail[0] && data.detail[0].msg) {
+      detail = data.detail[0].msg;
+    }
+    return { ok: false, status: response.status, detail, data };
+  }
+  return { ok: true, status: response.status, data };
+}
+
+// ── Workspaces ───────────────────────────────────────────────────────────
+
+let workspaces = [];
+let selection = null; // { itemId } | { cell: { row, col } } | null
+
+// Params arrive as a JSON string. One row that doesn't parse must not take
+// Studio down: it is kept raw and flagged, and the editor opens it with the
+// raw text so it can be fixed.
+function normalizeItem(item) {
+  try {
+    const parsed = JSON.parse(item.params);
+    return { ...item, params: parsed && typeof parsed === "object" ? parsed : {} };
+  } catch {
+    return { ...item, params: {}, paramsRaw: item.params, paramsInvalid: true };
+  }
+}
+
+function currentWorkspace() {
+  return workspaces.find((w) => String(w.id) === workspaceSelect.value) || workspaces[0] || null;
+}
+
+function allItems() {
+  return workspaces.flatMap((w) => w.items);
+}
+
+// Keeps the current pick across a reload. Every save ends in loadItems(), and
+// without this each one would bounce the picker back to the first deck.
+function populateWorkspaceSelect() {
+  const previous = workspaceSelect.value;
+  workspaceSelect.replaceChildren(
+    ...workspaces.map((w) => {
+      const option = document.createElement("option");
+      option.value = w.id;
+      option.textContent = w.name;
+      return option;
+    }),
+  );
+  if (previous && workspaces.some((w) => String(w.id) === previous)) {
+    workspaceSelect.value = previous;
   }
 }
 
 async function loadItems() {
-  const response = await fetch("/api/workspaces");
-  const workspaces = await response.json();
-  defaultWorkspaceId = workspaces[0] ? workspaces[0].id : null;
-  allWorkspaces = workspaces;
-  populateWorkspaceSelect(workspaces);
-  // Before renderFilteredTable(), which reads the picker's live value to
-  // decide what to show.
-  populateCompactWorkspaceSelect(workspaces);
-  renderFilteredTable();
-}
-
-// The table shows one workspace at a time -- the one the toolbar picker is
-// on. Reads allWorkspaces, never refetches, so switching the picker is
-// instant. Falls back to the first workspace when the picker has no value
-// yet, the same default populateWorkspaceSelect/defaultWorkspaceId use.
-function renderFilteredTable() {
-  const selected = compactWorkspaceSelect.value;
-  // String() on both sides for the same reason populateCompactWorkspaceSelect
-  // does it: workspace.id is a number, a select's value is always a string.
-  const workspace =
-    allWorkspaces.find((candidate) => String(candidate.id) === selected) || allWorkspaces[0];
-  // Kept as the raw params string here (unlike the dashboard's
-  // fetchWorkspaces in api.js, which parses it) -- the form's textarea
-  // and the CRUD endpoints both want the JSON string form directly.
-  renderTable(workspace ? workspace.items : []);
-}
-
-function populateWorkspaceSelect(workspaces) {
-  fields.workspaceId.innerHTML = "";
-  for (const workspace of workspaces) {
-    const option = document.createElement("option");
-    option.value = workspace.id;
-    option.textContent = workspace.name;
-    fields.workspaceId.appendChild(option);
-  }
-}
-
-// Deliberately a separate function from populateWorkspaceSelect rather than a
-// shared helper, so nothing about the item form's own dropdown changes.
-// compactLayout() ends with loadItems(), which lands back here -- so the
-// current pick is captured and restored, otherwise compacting one workspace
-// would silently re-point the picker at the first one for the next press.
-function populateCompactWorkspaceSelect(workspaces) {
-  const previous = compactWorkspaceSelect.value;
-  compactWorkspaceSelect.innerHTML = "";
-  for (const workspace of workspaces) {
-    const option = document.createElement("option");
-    option.value = workspace.id;
-    option.textContent = workspace.name;
-    compactWorkspaceSelect.appendChild(option);
-  }
-  if (previous && workspaces.some((workspace) => String(workspace.id) === previous)) {
-    compactWorkspaceSelect.value = previous;
-  }
-}
-
-function renderTable(items) {
-  tbody.innerHTML = "";
-  for (const item of items) {
-    const tr = document.createElement("tr");
-
-    for (const value of [item.label, item.type, item.target, `${item.row},${item.col}`]) {
-      const td = document.createElement("td");
-      td.textContent = value;
-      tr.appendChild(td);
-    }
-
-    const actionsTd = document.createElement("td");
-    // Same flex-row-with-a-gap idiom as .toolbar and #item-form
-    // .form-actions -- without it Edit and Delete sit flush, which is
-    // worst for the destructive one of the pair.
-    actionsTd.className = "row-actions";
-
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.textContent = "Edit";
-    // The visible word stays "Edit"; the accessible name names the row. A
-    // screen reader reading this table out of visual context otherwise gets a
-    // run of identical "Edit / Delete" buttons with nothing to tell them apart
-    // -- and one of each pair deletes an item.
-    editBtn.setAttribute("aria-label", `Edit "${item.label}"`);
-    editBtn.addEventListener("click", () => openForm(item));
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "danger";
-    deleteBtn.textContent = "Delete";
-    deleteBtn.setAttribute("aria-label", `Delete "${item.label}"`);
-    deleteBtn.addEventListener("click", () => deleteItem(item));
-
-    actionsTd.append(editBtn, deleteBtn);
-    tr.appendChild(actionsTd);
-
-    tbody.appendChild(tr);
-  }
-}
-
-// Used only to pre-fill the active/alert color pickers -- malformed
-// params shouldn't block opening the form (the params textarea itself
-// still shows the raw string, errors included, for the user to fix).
-function parseParamsLoosely(paramsString) {
+  let raw;
   try {
-    return JSON.parse(paramsString) || {};
-  } catch {
-    return {};
-  }
-}
-
-function isAudioSwitch() {
-  return fields.type.value.trim() === AUDIO_SWITCH_TYPE;
-}
-
-function setDevicesMessage(text, isError) {
-  devicesMessage.textContent = text;
-  devicesMessage.classList.toggle("error", Boolean(isError));
-  devicesMessage.hidden = !text;
-}
-
-function currentDeviceSelection() {
-  return {
-    primary: fields.primaryDevice.value,
-    secondary: fields.secondaryDevice.value,
-  };
-}
-
-// devicesLoaded=false is the pre-load/failed state: `devices` being empty
-// then means "no list to compare against", not "the agent doesn't have it",
-// and the saved option is labelled accordingly.
-function populateDeviceSelect(select, devices, selectedId, devicesLoaded = true) {
-  select.innerHTML = "";
-
-  const noneOption = document.createElement("option");
-  noneOption.value = "";
-  noneOption.textContent = "— none —";
-  select.appendChild(noneOption);
-
-  for (const device of devices) {
-    const option = document.createElement("option");
-    // The value is SoundVolumeView's "Command-Line Friendly ID" verbatim --
-    // the exact string /SwitchDefault expects. Never shortened or parsed.
-    option.value = device.id;
-    // Name alone is not a unique label: two endpoints on the same machine
-    // can both be called "Микрофон", so the direction is part of the label,
-    // not decoration.
-    //
-    // Windows keeps a row for every endpoint it has ever seen, so this list
-    // mixes the speaker currently on the desk with HDMI ports nothing is
-    // plugged into and headsets from months ago. They are still selectable --
-    // configuring a device you are about to plug back in is legitimate -- but
-    // they are marked, because picking one silently gets you a pair that only
-    // half works. is_active is undefined against an agent still running the
-    // previous build, which reads as "don't claim either way" rather than as
-    // "disconnected".
-    const disconnected = device.is_active === false ? ", disconnected" : "";
-    option.textContent = `${device.name} (${device.direction}${disconnected})`;
-    select.appendChild(option);
-  }
-
-  // A saved ID can be absent from the list -- device unplugged, or the item
-  // was configured against a different agent. Show it as a selected option
-  // rather than letting select.value silently fall back to "none", which
-  // would read as "never configured" and quietly drop the ID on save.
-  if (selectedId && !devices.some((device) => device.id === selectedId)) {
-    const missing = document.createElement("option");
-    missing.value = selectedId;
-    missing.textContent = devicesLoaded
-      ? `${selectedId} (not in this agent's list)`
-      : `${selectedId} (saved)`;
-    select.appendChild(missing);
-  }
-
-  select.value = selectedId || "";
-}
-
-async function loadDevices(target, selected) {
-  const seq = ++deviceRequestSeq;
-  setDevicesMessage("Loading devices…", false);
-
-  // Clear to just the saved selection up front: whatever the previous Target
-  // returned is wrong for this one, and every failure path below leaves the
-  // pickers in this state -- empty but usable, per the "must not block the
-  // rest of the form" requirement.
-  populateDeviceSelect(fields.primaryDevice, [], selected.primary, false);
-  populateDeviceSelect(fields.secondaryDevice, [], selected.secondary, false);
-
-  let response;
-  try {
-    response = await fetch(`/api/agents/${encodeURIComponent(target)}/list_devices`, {
-      method: "POST",
-      headers: { "X-Agent-Token": getAgentToken() },
-    });
+    const response = await fetch("/api/workspaces");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    raw = await response.json();
   } catch (err) {
-    if (seq !== deviceRequestSeq) {
-      return;
-    }
-    setDevicesMessage(`Could not load devices: ${err.message}`, true);
+    showToast(t("error.load", { detail: err.message }));
     return;
   }
-
-  if (seq !== deviceRequestSeq) {
-    return;
-  }
-
-  if (!response.ok) {
-    // 404 = agent offline, 504 = agent didn't answer inside the backend's 5s
-    // budget, 401 = missing/wrong token. The endpoint's `detail` already
-    // phrases each of these for a human ("agent offline").
-    if (response.status === 401) {
-      forgetAgentToken();
-    }
-    const error = await response.json().catch(() => ({}));
-    setDevicesMessage(
-      `Could not load devices: ${error.detail || `HTTP ${response.status}`}`,
-      true,
-    );
-    return;
-  }
-
-  const result = await response.json();
-  if (seq !== deviceRequestSeq) {
-    return;
-  }
-
-  // A 200 still carries the agent's own outcome: the endpoint returns the
-  // agent's reply verbatim, so SoundVolumeView failing on a live, responsive
-  // agent arrives here as {"status": "error"} with HTTP 200.
-  if (result.status !== "ok") {
-    setDevicesMessage(`Could not load devices: ${result.message || "agent reported an error"}`, true);
-    return;
-  }
-
-  // Render only: handle_audio_switch drives `/SwitchDefault primary secondary
-  // 0`, and that trailing 0 is the render/multimedia role -- a capture
-  // endpoint is not a valid choice for it, so inputs are filtered out rather
-  // than offered and left to fail at execute time.
-  const outputs = (result.devices || []).filter((device) => device.direction === "Render");
-  populateDeviceSelect(fields.primaryDevice, outputs, selected.primary);
-  populateDeviceSelect(fields.secondaryDevice, outputs, selected.secondary);
-
-  setDevicesMessage(outputs.length ? "" : "This agent reported no output devices.", false);
+  workspaces = raw.map((w) => ({ ...w, items: w.items.map(normalizeItem) }));
+  populateWorkspaceSelect();
+  renderSetupCard();
+  renderDeck();
 }
 
-// Shows/hides via the .hidden property, the same idiom form/paramsError
-// already use on this page, rather than a new class or style toggle.
-function syncDeviceFields(selected) {
-  const show = isAudioSwitch() && Boolean(fields.target.value);
-  deviceLabels.primary.hidden = !show;
-  deviceLabels.secondary.hidden = !show;
-
-  if (!show) {
-    deviceRequestSeq++;
-    setDevicesMessage("", false);
-    // Cleared, not merely hidden. Only loadDevices resets these selects, and
-    // it doesn't run on this branch -- so without this they keep the
-    // previously edited item's options and selected IDs. Editing a plain
-    // item's Type into "audio_switch" afterwards would then read those stale
-    // IDs back out via currentDeviceSelection() and save another item's
-    // devices into this one's params.
-    populateDeviceSelect(fields.primaryDevice, [], "", false);
-    populateDeviceSelect(fields.secondaryDevice, [], "", false);
-    return;
-  }
-
-  loadDevices(fields.target.value, selected);
+function renderDeck() {
+  renderPreview(grid, currentWorkspace(), {
+    onSelectItem: (item) => {
+      selection = { itemId: item.id };
+      markSelection(grid, selection);
+      inspector.open({ item });
+    },
+    onSelectEmpty: (row, col) => {
+      selection = { cell: { row, col } };
+      markSelection(grid, selection);
+      inspector.open({ item: null, cell: { row, col } });
+    },
+    onMove: moveItem,
+  });
+  markSelection(grid, selection);
 }
 
-// Scans the workspace's grid in reading order for a cell no item covers, the
-// same rectangle test backend/app/api/items.py's _validate_placement applies.
-// Reads allWorkspaces (the last /api/workspaces response) rather than
-// refetching: the table the user is looking at was rendered from it, so it is
-// already the state they expect this answer to be about.
-function firstFreeCell(workspaceId) {
-  const workspace = allWorkspaces.find((w) => String(w.id) === String(workspaceId));
-  if (!workspace) {
-    return null;
-  }
+// Same rectangle test as the backend's _validate_placement, in reading order.
+function firstFreeCell(workspace) {
   const taken = new Set();
   for (const item of workspace.items) {
-    for (let r = item.row; r < item.row + item.height; r++) {
-      for (let c = item.col; c < item.col + item.width; c++) {
+    for (let r = item.row; r < item.row + (item.height || 1); r++) {
+      for (let c = item.col; c < item.col + (item.width || 1); c++) {
         taken.add(`${r},${c}`);
       }
     }
   }
   for (let row = 0; row < workspace.grid_rows; row++) {
     for (let col = 0; col < workspace.grid_cols; col++) {
-      if (!taken.has(`${row},${col}`)) {
-        return { row, col };
-      }
+      if (!taken.has(`${row},${col}`)) return { row, col };
     }
   }
   return null;
 }
 
-// What had focus when the form opened -- an Edit button, or "+ New Item".
-// closeForm hands focus back to it, so Cancel/Save returns the keyboard to the
-// row it came from rather than dropping it on <body> at the top of the page.
-let formOpener = null;
-
-function openForm(item) {
-  paramsError.hidden = true;
-  formOpener = document.activeElement;
-
-  // Carried down to syncDeviceFields rather than assigned to the selects
-  // here: the <option>s don't exist until the agent's device list arrives.
-  let savedDevices = { primary: "", secondary: "" };
-
-  if (item) {
-    fields.id.value = item.id;
-    fields.workspaceId.value = item.workspace_id;
-    fields.label.value = item.label;
-    fields.icon.value = item.icon || "";
-    fields.color.value = item.color || "#2a2f38";
-    fields.kind.value = item.kind;
-    fields.type.value = item.type;
-    fields.target.value = item.target;
-    fields.stateKey.value = item.state_key || "";
-    fields.row.value = item.row;
-    fields.col.value = item.col;
-    fields.width.value = item.width;
-    fields.height.value = item.height;
-    // active_color/alert_color live inside params, not their own DB
-    // columns -- pre-fill from there, falling back to the same
-    // hardcoded teal/red the dashboard itself falls back to, so an
-    // untouched item's picker reflects what's actually rendering now.
-    const existingParams = parseParamsLoosely(item.params);
-    // Pretty-print for readability; fall back to the raw string if it
-    // somehow isn't valid JSON so a malformed value is still visible/editable.
-    try {
-      fields.params.value = JSON.stringify(JSON.parse(item.params), null, 2);
-    } catch {
-      fields.params.value = item.params;
-    }
-    fields.activeColor.value = existingParams.active_color || "#0d9488";
-    fields.alertColor.value = existingParams.alert_color || "#dc2626";
-    // Unlike active/alert (which fall back to a fixed hardcoded color when
-    // unset), the false-state fallback is item.color itself -- a
-    // per-item, not fixed, value. Pre-filling with that same value (not
-    // a fixed constant) means saving unchanged writes back the color
-    // that was already rendering, so untouched items stay visually
-    // identical even though false_color now has a concrete value in params.
-    fields.falseColor.value = existingParams.false_color || item.color || "#2a2f38";
-    savedDevices = {
-      primary: existingParams[PRIMARY_PARAM] || "",
-      secondary: existingParams[SECONDARY_PARAM] || "",
-    };
-  } else {
-    form.reset();
-    fields.id.value = "";
-    // The workspace the table is currently filtered to, not whichever one
-    // loaded first: with filtering on, a new item defaulting to a workspace
-    // the user isn't looking at would save and then immediately vanish from
-    // the table. Safe to read after form.reset() -- the picker lives in the
-    // toolbar, outside #item-form, so reset() doesn't touch it.
-    fields.workspaceId.value = compactWorkspaceSelect.value || (defaultWorkspaceId ?? "");
-    fields.color.value = "#2a2f38";
-    fields.activeColor.value = "#0d9488";
-    fields.alertColor.value = "#dc2626";
-    fields.falseColor.value = "#2a2f38";
-    fields.width.value = 1;
-    fields.height.value = 1;
-    fields.params.value = "{}";
-
-    // Row/Col are `required` with no value in the markup, so this form used to
-    // open with both blank and leave the user to work out which cell was free
-    // by reading the table. That was merely tedious before; now that
-    // POST /api/items refuses a placement that overlaps an existing item, it
-    // would be a guess that fails. Prefill the first free 1x1 cell instead.
-    const firstFree = firstFreeCell(fields.workspaceId.value);
-    if (firstFree) {
-      fields.row.value = firstFree.row;
-      fields.col.value = firstFree.col;
-    }
-    // No free cell (or no workspace resolved yet) leaves them blank, exactly
-    // as before -- `required` still stops an empty submit, and the backend
-    // still has the final say on whatever is typed.
-  }
-
-  form.hidden = false;
-  // The form renders below the table, so on a workspace with a full item list
-  // it can open well past the bottom of the viewport -- Edit then looks like
-  // it did nothing. Both paths land here (edit and "+ New Item"), so one call
-  // covers them. Must follow form.hidden = false: scrollIntoView on a
-  // display:none element has nothing to scroll to.
-  //
-  // "auto" for anyone who has asked their OS for reduced motion. A smooth
-  // scroll is a JS-driven animation, so base.css's reduced-motion block can't
-  // suppress it the way it does the dashboard's transitions, and studio.html
-  // sets no scroll-behavior for it to inherit -- this is the only place the
-  // preference can be honoured.
-  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  form.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "start" });
-  // Scrolling the form into view is only half the job: focus was still on the
-  // Edit button up in the table, so a keyboard user's next Tab went to the
-  // *next row's* buttons rather than into the form that just opened.
-  // preventScroll, because the scrollIntoView above is already handling that
-  // and a second, instant scroll would cancel the smooth one mid-flight.
-  fields.label.focus({ preventScroll: true });
-  // After form.hidden = false, so "Loading devices…" lands on a form the
-  // user can already see.
-  syncDeviceFields(savedDevices);
-}
-
-function closeForm() {
-  // Before the form is hidden: focus sitting inside a display:none subtree is
-  // dropped to <body>, and moving it afterwards would be a second jump.
-  if (formOpener && formOpener.isConnected) {
-    formOpener.focus();
-  }
-  formOpener = null;
-  form.hidden = true;
-  paramsError.hidden = true;
-  // Same reason syncDeviceFields bumps it: a reply still in flight when the
-  // form closes must not populate it for whatever item is opened next.
-  deviceRequestSeq++;
-  setDevicesMessage("", false);
-}
-
-async function deleteItem(item) {
-  if (!confirm(`Delete "${item.label}"?`)) {
+async function moveItem(item, row, col) {
+  const result = await api(`/api/items/${item.id}`, { method: "PUT", body: { row, col } });
+  if (!result.ok) {
+    // Usually an overlap: a 2-wide tile dropped where its second cell is taken.
+    showToast(t("error.move", { label: item.label, detail: result.detail }));
     return;
   }
-  const response = await fetch(`/api/items/${item.id}`, {
-    method: "DELETE",
-    headers: { "X-Agent-Token": getAgentToken() },
-  });
-  if (!response.ok) {
-    // Adding auth here means delete can now fail (e.g. wrong/empty token,
-    // 401) in a way it never could before -- silently reloading the table
-    // as if it worked would hide that from the user.
-    if (response.status === 401) {
-      forgetAgentToken();
-    }
-    const error = await response.json().catch(() => ({}));
-    alert(`Delete failed (${response.status}): ${error.detail || "unknown error"}`);
-    return;
+  // The open editor holds the old row/col. Saving it afterwards would move the
+  // tile straight back, so it is closed if it's this tile.
+  if (inspector.currentItemId() === item.id) {
+    inspector.close({ restoreFocus: false });
   }
+  selection = { itemId: item.id };
   await loadItems();
 }
 
-async function compactLayout() {
-  // Read from the toolbar's own picker, never the item form's -- the form
-  // field only holds a meaningful value once an Edit view has been opened
-  // this page load, so Compact used to target a workspace the user never
-  // chose and had no way to see.
-  const workspaceId = compactWorkspaceSelect.value;
-  if (!workspaceId) {
+const inspector = createInspector(document.getElementById("inspector"), {
+  api,
+  getWorkspace: currentWorkspace,
+  targets: () => ["windows", "backend", ...allItems().map((item) => item.target)],
+  onSaved: async (saved) => {
+    selection = { itemId: saved.id };
+    await loadItems();
+    showToast(t("toast.saved", { label: saved.label }));
+    const tile = grid.querySelector(`[data-item-id="${saved.id}"]`);
+    if (tile) tile.focus();
+  },
+  onDeleted: async (item) => {
+    selection = null;
+    await loadItems();
+    showToast(t("toast.deleted", { label: item.label }));
+    document.getElementById("new-item-btn").focus();
+  },
+  onClose: () => {
+    selection = null;
+    markSelection(grid, null);
+  },
+});
+
+document.getElementById("new-item-btn").addEventListener("click", () => {
+  const workspace = currentWorkspace();
+  if (!workspace) return;
+  const cell = firstFreeCell(workspace);
+  if (!cell) {
+    showToast(t("error.gridFull"));
     return;
   }
-  // Still named in the prompt even though the picker is now visible right
-  // next to the button: this is a non-undoable rewrite, so the dialog says
-  // exactly which workspace is about to be repacked.
-  const workspaceName = compactWorkspaceSelect.selectedOptions[0]?.textContent || workspaceId;
-  if (!confirm(`Repack all tiles in "${workspaceName}" into the top-left? This rewrites their positions and can't be undone.`)) {
+  selection = { cell };
+  markSelection(grid, selection);
+  inspector.open({ item: null, cell });
+});
+
+workspaceSelect.addEventListener("change", () => {
+  // An editor open on another deck's tile doesn't belong to what's on screen.
+  inspector.close({ restoreFocus: false });
+  renderDeck();
+});
+
+document.getElementById("compact-btn").addEventListener("click", async () => {
+  const workspace = currentWorkspace();
+  if (!workspace) return;
+  if (!confirm(t("confirm.compact", { name: workspace.name }))) return;
+  const result = await api(`/api/workspaces/${workspace.id}/compact`, { method: "POST" });
+  if (!result.ok) {
+    showToast(t("error.compact", { detail: result.detail }));
     return;
   }
-  const response = await fetch(`/api/workspaces/${workspaceId}/compact`, {
-    method: "POST",
-    headers: { "X-Agent-Token": getAgentToken() },
-  });
-  if (!response.ok) {
-    // Same handling as deleteItem(): a bad token (401) or missing
-    // workspace (404) must surface, not silently reload as if it worked.
-    if (response.status === 401) {
-      forgetAgentToken();
-    }
-    const error = await response.json().catch(() => ({}));
-    alert(`Compact failed (${response.status}): ${error.detail || "unknown error"}`);
-    return;
-  }
-  // Same close-then-reload order as the submit handler. Mandatory here, not
-  // cosmetic: an open form still holds the item's pre-compact row/col (and
-  // loadItems() rebuilds the workspace <select>, resetting it to the first
-  // option), so a Save afterwards would push the item back out of the packed
-  // layout and into whichever workspace the reset dropdown landed on.
-  closeForm();
+  // Close BEFORE reloading, and that order matters. An open editor still
+  // holds the pre-compact row/col, so a Save afterwards would push the tile
+  // back out of the packed layout.
+  inspector.close({ restoreFocus: false });
   await loadItems();
+});
+
+// ── VPN setup card ───────────────────────────────────────────────────────
+// The one thing a fresh install has to configure, so it sits above
+// everything. Shown only if a VPN tile exists.
+
+let setupEditing = false;
+let setupJustSaved = false;
+
+function el(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key === "html") node.innerHTML = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2).toLowerCase(), value);
+    else if (key === "value") node.value = value;
+    else node.setAttribute(key, value);
+  }
+  node.append(...children);
+  return node;
 }
 
-// ── Deck background (the light/dark axis) ──────────────────────────────────
-// One shared, server-stored setting, same as the theme -- so this picker shows
-// what the server currently holds and every connected Dashboard repaints off
-// the settings_update broadcast the PUT triggers. Studio itself does not
-// change appearance; see the import note at the top of this file.
+function renderSetupCard() {
+  const vpn = allItems().find((item) => detectEntry(item).id === "vpn");
+  if (!vpn) {
+    setupCard.hidden = true;
+    return;
+  }
+  setupCard.hidden = false;
+
+  const icon = el("div", { class: "setup-icon", html: ICONS.shield });
+  icon.setAttribute("aria-hidden", "true");
+  const needsPath = vpnNeedsPath(vpn);
+
+  if (!needsPath && !setupEditing) {
+    setupCard.classList.add("is-done");
+    setupCard.replaceChildren(
+      icon,
+      el("div", { class: "setup-done-text" }, [
+        el("strong", { text: t("setup.doneTitle") }),
+        el("code", { text: vpn.params.path }),
+        setupJustSaved ? el("span", { class: "field-hint", text: t("setup.restartNote") }) : "",
+        el("button", {
+          type: "button",
+          class: "btn",
+          text: t("setup.change"),
+          onClick: () => {
+            setupEditing = true;
+            renderSetupCard();
+            setupCard.querySelector("input").focus();
+          },
+        }),
+      ]),
+    );
+    return;
+  }
+
+  setupCard.classList.remove("is-done");
+  const inputId = "setup-vpn-path";
+  const input = el("input", {
+    id: inputId,
+    class: "input",
+    value: vpn.params.path || "",
+    placeholder: t("placeholder.vpn.path"),
+    spellcheck: "false",
+    autocomplete: "off",
+    "aria-describedby": "setup-vpn-hint",
+  });
+  const message = el("p", { class: "message", role: "alert" });
+
+  async function savePath(event) {
+    event.preventDefault();
+    const path = cleanPath(input.value);
+    if (!path) {
+      message.textContent = t("error.path", { field: t("field.path") });
+      message.classList.add("error");
+      input.focus();
+      return;
+    }
+    if (vpn.paramsInvalid) {
+      message.textContent = t("preview.badParams");
+      message.classList.add("error");
+      return;
+    }
+    message.textContent = t("common.saving");
+    message.classList.remove("error");
+    const params = { ...vpn.params, path };
+    const result = await api(`/api/items/${vpn.id}`, { method: "PUT", body: { params: JSON.stringify(params) } });
+    if (!result.ok) {
+      message.textContent = t("error.save", { detail: result.detail });
+      message.classList.add("error");
+      return;
+    }
+    setupEditing = false;
+    setupJustSaved = true;
+    if (inspector.currentItemId() === vpn.id) {
+      inspector.close({ restoreFocus: false });
+    }
+    await loadItems();
+    showToast(t("toast.vpnSaved"));
+  }
+
+  const actions = [el("button", { type: "submit", class: "btn btn-primary", text: t("common.save") })];
+  if (setupEditing) {
+    actions.push(
+      el("button", {
+        type: "button",
+        class: "btn",
+        text: t("common.cancel"),
+        onClick: () => {
+          setupEditing = false;
+          renderSetupCard();
+        },
+      }),
+    );
+  }
+
+  setupCard.replaceChildren(
+    icon,
+    el("h2", { id: "setup-title", text: t("setup.title") }),
+    el("p", { id: "setup-vpn-hint", text: t("setup.body") }),
+    el("form", { class: "setup-form", onSubmit: savePath }, [
+      el("label", { class: "visually-hidden", for: inputId, text: t("field.path") }),
+      el("div", { class: "setup-row" }, [input, ...actions]),
+      el("p", { class: "field-hint", text: t("hint.copyPath") }),
+      el("p", { class: "field-hint", text: t("hint.vpn.admin") }),
+      message,
+    ]),
+  );
+}
+
+// ── Deck background (light/dark) ─────────────────────────────────────────
+// One shared, server-stored setting. Every connected deck repaints off the
+// settings_update broadcast, and so does this page, since Studio follows
+// the same ground.
 
 function setModeMessage(text, isError) {
   modeMessage.textContent = text;
@@ -612,149 +451,46 @@ function setModeMessage(text, isError) {
 }
 
 function populateModeSelect(selected) {
-  modeSelect.innerHTML = "";
-  for (const mode of MODES) {
-    const option = document.createElement("option");
-    option.value = mode;
-    option.textContent = modeLabel(mode);
-    modeSelect.appendChild(option);
-  }
+  modeSelect.replaceChildren(
+    ...MODES.map((mode) => {
+      const option = document.createElement("option");
+      option.value = mode;
+      option.textContent = t(`mode.${mode}`);
+      return option;
+    }),
+  );
   modeSelect.value = selected;
 }
 
 async function loadMode() {
   try {
     const { mode } = await fetchSettings();
-    // normalizeMode inside theme.js guards the value that reaches the DOM;
-    // here an unknown value would just leave the <select> on nothing, so the
-    // fallback to the first option (MODES[0], i.e. "auto") is explicit.
-    populateModeSelect(MODES.includes(mode) ? mode : MODES[0]);
+    const safe = MODES.includes(mode) ? mode : MODES[0];
+    populateModeSelect(safe);
+    applyMode(safe);
   } catch (err) {
-    // The picker is useless without knowing the current value -- setting it
-    // blind would show a choice nobody made -- so it is disabled rather than
-    // left looking authoritative.
+    // Setting it blind would show a choice nobody made, so the picker is
+    // disabled rather than left looking authoritative.
     populateModeSelect(MODES[0]);
     modeSelect.disabled = true;
-    setModeMessage(`Couldn't read the current setting: ${err.message}`, true);
+    setModeMessage(t("mode.readFailed", { detail: err.message }), true);
   }
 }
 
 modeSelect.addEventListener("change", async () => {
   const chosen = modeSelect.value;
-  setModeMessage("Saving…", false);
+  setModeMessage(t("common.saving"), false);
   try {
     await setMode(chosen);
-    setModeMessage(`Saved. Every connected deck is now ${modeLabel(chosen)}.`, false);
+    setModeMessage(t("mode.saved", { mode: t(`mode.${chosen}`) }), false);
   } catch (err) {
-    setModeMessage(`Save failed: ${err.message}`, true);
-    // setMode has already put its own state back, but the <select> is showing
-    // a value the server rejected. Re-read rather than guess which one it
-    // kept -- and deliberately after the message above, which loadMode leaves
-    // alone on success.
+    setModeMessage(t("error.save", { detail: err.message }), true);
     loadMode();
   }
 });
 
-document.getElementById("new-item-btn").addEventListener("click", () => openForm(null));
-document.getElementById("compact-btn").addEventListener("click", compactLayout);
-document.getElementById("cancel-btn").addEventListener("click", closeForm);
-
-// Re-filters from allWorkspaces, no server round-trip. No risk of double
-// rendering from populateCompactWorkspaceSelect's own `.value =`: assigning
-// value programmatically doesn't fire "change".
-compactWorkspaceSelect.addEventListener("change", renderFilteredTable);
-
-// Type is a free-text input, not a select, so "input" is the event that
-// catches it -- the pickers appear the moment the typed value reaches
-// "audio_switch" exactly, and hide again on the next keystroke past it.
-// Both handlers keep whatever is currently picked as the selection to
-// restore, so re-resolving against a new Target doesn't discard it.
-fields.type.addEventListener("input", () => syncDeviceFields(currentDeviceSelection()));
-fields.target.addEventListener("change", () => syncDeviceFields(currentDeviceSelection()));
-
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  let paramsObj;
-  try {
-    paramsObj = JSON.parse(fields.params.value);
-  } catch (err) {
-    paramsError.textContent = `Params must be valid JSON: ${err.message}`;
-    paramsError.hidden = false;
-    return;
-  }
-  paramsError.hidden = true;
-
-  // Merge the color pickers in last -- they're the source of truth for
-  // active_color/alert_color/false_color, overriding whatever the raw
-  // params textarea happened to have typed in for those same keys.
-  paramsObj.active_color = fields.activeColor.value;
-  paramsObj.alert_color = fields.alertColor.value;
-  paramsObj.false_color = fields.falseColor.value;
-
-  // Written only for audio_switch, and only when something is actually
-  // selected. Unlike the color pickers above, an empty value here means
-  // "unknown", not "none": if the device list failed to load (agent
-  // offline), both selects are empty, and assigning unconditionally would
-  // erase IDs the item already had. Clearing a device ID deliberately is
-  // still possible by deleting the key in the raw params textarea.
-  if (isAudioSwitch()) {
-    if (fields.primaryDevice.value) {
-      paramsObj[PRIMARY_PARAM] = fields.primaryDevice.value;
-    }
-    if (fields.secondaryDevice.value) {
-      paramsObj[SECONDARY_PARAM] = fields.secondaryDevice.value;
-    }
-  }
-
-  const paramsValue = JSON.stringify(paramsObj);
-
-  const body = {
-    workspace_id: Number(fields.workspaceId.value),
-    row: Number(fields.row.value),
-    col: Number(fields.col.value),
-    width: Number(fields.width.value),
-    height: Number(fields.height.value),
-    label: fields.label.value,
-    icon: fields.icon.value || null,
-    color: fields.color.value,
-    kind: fields.kind.value,
-    type: fields.type.value,
-    target: fields.target.value,
-    params: paramsValue,
-    state_key: fields.stateKey.value || null,
-  };
-
-  const id = fields.id.value;
-  const url = id ? `/api/items/${id}` : "/api/items";
-  const method = id ? "PUT" : "POST";
-
-  const response = await fetch(url, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Agent-Token": getAgentToken(),
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    // Same as the other token-bearing calls: a stored token the server
-    // rejects has to be dropped, or every later save re-sends it silently.
-    if (response.status === 401) {
-      forgetAgentToken();
-    }
-    const error = await response.json().catch(() => ({}));
-    paramsError.textContent = `Save failed (${response.status}): ${error.detail || "unknown error"}`;
-    paramsError.hidden = false;
-    return;
-  }
-
-  closeForm();
-  await loadItems();
-});
-
+applyStaticStrings();
 loadItems();
-// Independent of loadItems: a settings read must not be able to take the item
-// table down with it, or the other way round.
+// Independent of loadItems: a settings read must not take the deck down with
+// it, or the other way round.
 loadMode();

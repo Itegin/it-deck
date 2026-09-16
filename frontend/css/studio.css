@@ -1,0 +1,937 @@
+/* Studio: the desktop editor for the deck. Always the Liquid Glass material
+   (studio.html pins data-theme="liquid-glass"), on whichever ground the
+   shared "deck background" setting picks. Every colour below comes from the
+   tokens themes.css already defines for that theme in both modes. This file
+   adds layout and a few Studio-only roles, no new palette.
+
+   Budget, the same rule the Dashboard theme keeps: backdrop-filter goes on
+   the three big panels only (the top bar, the preview, the inspector).
+   Fields, cards and buttons inside them get a translucent fill and a
+   hairline, never a second blurred layer.
+
+   grid.css is deliberately NOT linked on this page: it pins html/body with
+   position: fixed for the phone, which would take away Studio's page
+   scroll. */
+
+[data-theme="liquid-glass"]:not([data-mode="light"]) {
+  --studio-panel: rgba(21, 26, 35, 0.62);
+  --studio-well: rgba(0, 0, 0, 0.28);
+  --studio-card: rgba(255, 255, 255, 0.04);
+  --studio-card-hover: rgba(255, 255, 255, 0.08);
+  --studio-hairline: rgba(255, 255, 255, 0.10);
+  --studio-accent-wash: rgba(167, 139, 250, 0.12);
+  --studio-ok-wash: rgba(13, 148, 136, 0.14);
+}
+
+[data-theme="liquid-glass"][data-mode="light"] {
+  --studio-panel: rgba(255, 255, 255, 0.62);
+  --studio-well: rgba(255, 255, 255, 0.75);
+  --studio-card: rgba(255, 255, 255, 0.55);
+  --studio-card-hover: rgba(255, 255, 255, 0.9);
+  --studio-hairline: rgba(28, 36, 48, 0.12);
+  --studio-accent-wash: rgba(109, 40, 217, 0.08);
+  --studio-ok-wash: rgba(11, 124, 114, 0.10);
+}
+
+/* base.css is written for the phone deck: no text selection, no callout, no
+   double-tap zoom. On a desktop editor people copy paths and labels. */
+body.studio {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: auto;
+  overscroll-behavior: auto;
+  min-height: 100vh;
+  /* The ground pools in themes.css are sized to the viewport on the phone.
+     Here the page scrolls, so they're pinned or they scroll away. */
+  background-attachment: fixed;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.studio button,
+.studio input,
+.studio select,
+.studio textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.studio :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Specificity guard. This page shows and hides panels with the hidden
+   property, and any class rule below that sets display would otherwise
+   silently beat the UA [hidden] rule. CLAUDE.md records that trap causing a
+   real bad save once. */
+.studio [hidden] {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.glass {
+  background-color: var(--studio-panel);
+  background-image: var(--glass-veil);
+  box-shadow: var(--glass-edge);
+  border-radius: 20px;
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+/* ── Buttons and fields ─────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-card);
+  color: var(--color-text);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover {
+  background: var(--studio-card-hover);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The one filled button per view: Save. Accent fill with the light ink in
+   dark mode (#1A1F26 on #a78bfa is 7.0:1) and white on the darker light-mode
+   purple (#fff on #6d28d9 is 7.1:1). */
+.btn-primary {
+  background: var(--color-accent);
+  border-color: transparent;
+  color: #1A1F26;
+}
+
+[data-mode="light"] .btn-primary {
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: var(--color-accent);
+  filter: brightness(1.08);
+}
+
+.btn-danger {
+  color: var(--color-alert-text);
+}
+
+.btn-danger:hover {
+  border-color: var(--color-alert-text);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field-label {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.input,
+.studio select,
+.studio textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-well);
+  color: var(--color-text);
+}
+
+.studio select {
+  width: auto;
+  cursor: pointer;
+}
+
+.studio select option {
+  /* Native dropdown lists ignore translucent fills and show them on white. */
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.studio textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  min-height: 90px;
+  resize: vertical;
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.8;
+}
+
+.message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.message.error {
+  color: var(--color-alert-text);
+}
+
+/* Status lines are empty most of the time and must not hold a gap open. */
+.message:empty {
+  display: none;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+
+.studio-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.studio-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 12px 16px 12px 20px;
+}
+
+.studio-bar h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.studio-bar h1 span {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.bar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.bar-message {
+  margin: -8px 4px 0;
+  min-height: 0;
+}
+
+.bar-message:empty {
+  display: none;
+}
+
+.studio-columns {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .studio-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* ── Setup card: the VPN path ───────────────────────────────────────────── */
+
+.setup-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 16px;
+  padding: 18px 20px;
+  border-radius: 20px;
+  background: var(--studio-accent-wash);
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+.setup-card.is-done {
+  background: var(--studio-ok-wash);
+  box-shadow: inset 0 0 0 1px var(--studio-hairline);
+  align-items: center;
+}
+
+.setup-icon {
+  grid-row: span 3;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--color-accent);
+  color: #1A1F26;
+}
+
+[data-mode="light"] .setup-icon {
+  color: #ffffff;
+}
+
+.setup-card.is-done .setup-icon {
+  grid-row: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--color-active);
+  color: #ffffff;
+}
+
+.setup-icon svg {
+  width: 60%;
+  height: 60%;
+}
+
+.setup-card h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.setup-card p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.setup-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.setup-row .input {
+  flex: 1 1 360px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 14px;
+  min-height: 44px;
+}
+
+.setup-row .btn {
+  min-height: 44px;
+}
+
+.setup-done-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.setup-done-text code {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.setup-done-text .btn {
+  margin-left: auto;
+}
+
+/* ── Deck preview ───────────────────────────────────────────────────────── */
+
+.preview-panel {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preview-panel .panel-hint {
+  margin: 0;
+  max-width: 372px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+/* A phone-shaped frame. Cells are sized close to a real deck tile (about
+   112x150 against the phone's ~110x180) because a widget lays itself out with
+   container queries on the tile's size. A cell of a very different shape
+   would preview a layout the phone never shows. */
+.phone {
+  width: 372px;
+  padding: 12px;
+  border-radius: 30px;
+  background: var(--color-bg);
+  box-shadow: inset 0 0 0 1px var(--studio-hairline);
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+  grid-auto-rows: 150px;
+  gap: 10px;
+}
+
+.preview-grid .tile {
+  cursor: pointer;
+  min-width: 0;
+}
+
+/* Studio's selection ring. On ::before, which on the deck is the ok/error
+   ring and never occurs here. outline stays free for the keyboard focus
+   ring, so a selected tile that also has focus shows both. */
+.preview-grid .tile.is-selected::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 22px;
+  box-shadow: 0 0 0 2px var(--color-accent);
+  pointer-events: none;
+}
+
+.preview-grid .tile.is-dragging {
+  opacity: 0.45;
+}
+
+.preview-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--color-accent);
+  color: #1A1F26;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 20px;
+  text-align: center;
+}
+
+[data-mode="light"] .preview-badge {
+  color: #ffffff;
+}
+
+.preview-empty {
+  border: 1.5px dashed var(--studio-hairline);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 22px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.preview-empty:hover,
+.preview-empty.is-selected,
+.preview-empty.is-drop-target {
+  border-color: var(--color-accent);
+  background: var(--studio-accent-wash);
+  color: var(--color-accent);
+}
+
+/* ── Inspector ──────────────────────────────────────────────────────────── */
+
+.inspector {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.inspector-empty {
+  padding: 48px 32px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.inspector-empty h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: var(--color-text);
+}
+
+.inspector-empty p {
+  margin: 0 0 18px;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px 6px;
+}
+
+.inspector-head h2 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.inspector-body {
+  padding: 4px 22px 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.step {
+  padding: 18px 0;
+  border-top: 1px solid var(--studio-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.step:first-child {
+  border-top: 0;
+}
+
+.step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 15px;
+}
+
+.step-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 800;
+  background: var(--studio-accent-wash);
+  color: var(--color-accent);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.field-row > .field {
+  flex: 1 1 110px;
+}
+
+/* Type gallery: radio cards. */
+.type-group + .type-group {
+  margin-top: 6px;
+}
+
+.type-group-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.type-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.type-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.type-current .type-gallery {
+  flex: 0 1 320px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.type-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 2px 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-card);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.type-card:hover {
+  background: var(--studio-card-hover);
+}
+
+.type-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.type-card:has(input:checked) {
+  border-color: var(--color-accent);
+  background: var(--studio-accent-wash);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.type-card:has(input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.type-card .type-icon {
+  grid-row: span 2;
+  width: 28px;
+  height: 28px;
+  color: var(--color-accent);
+}
+
+.type-card .type-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.type-card .type-name {
+  font-weight: 600;
+}
+
+.type-card .type-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
+/* The field that matters: a launch path. Bigger, outlined in the accent,
+   labelled "Required" until it has a value. This is what makes "where does
+   the VPN path go" answer itself. */
+.field-highlight {
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--studio-accent-wash);
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+.field-highlight .input {
+  min-height: 44px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: 1px;
+  background: var(--color-accent);
+  color: #1A1F26;
+}
+
+[data-mode="light"] .badge {
+  color: #ffffff;
+}
+
+.badge.is-done {
+  background: var(--studio-ok-wash);
+  color: var(--color-text);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+}
+
+/* City search results. */
+.search-row {
+  display: flex;
+  gap: 8px;
+}
+
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-well);
+}
+
+.search-results button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-results button:hover {
+  background: var(--studio-card-hover);
+}
+
+.search-results small {
+  color: var(--color-text-muted);
+}
+
+/* Icon picker. */
+.icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.icon-choice {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-card);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.icon-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.icon-choice svg {
+  width: 22px;
+  height: 22px;
+  color: var(--color-text);
+}
+
+.icon-choice:has(input:checked) {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  background: var(--studio-accent-wash);
+}
+
+.icon-choice:has(input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Colour rows: a "use the theme's colour" checkbox, and the picker it
+   unlocks. */
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+}
+
+.color-row input[type="color"] {
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-well);
+  cursor: pointer;
+}
+
+.color-row input[type="color"]:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--studio-hairline);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  padding: 4px 0;
+}
+
+.advanced[open] summary {
+  margin-bottom: 12px;
+}
+
+.advanced .field-grid {
+  margin-bottom: 14px;
+}
+
+.inspector-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--studio-hairline);
+  border-radius: 0 0 20px 20px;
+  /* Nearly opaque. It sticks over scrolling fields, and at the panel's own
+     62% the text underneath read through the buttons. */
+  background-color: color-mix(in srgb, var(--color-surface) 94%, transparent);
+}
+
+.inspector-foot .message {
+  flex: 1 1 100%;
+  order: -1;
+}
+
+.inspector-foot .message:empty {
+  display: none;
+}
+
+.inspector-foot .btn-danger {
+  margin-left: auto;
+}
+
+/* ── Token dialog ───────────────────────────────────────────────────────── */
+
+.token-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 22px;
+  border: 0;
+  color: var(--color-text);
+}
+
+.token-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.token-dialog h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.token-dialog p {
+  margin: 0 0 14px;
+  color: var(--color-text-muted);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* On the page, not the phone: the toast sits bottom-right of a desktop
+   window rather than centred over the preview. */
+.studio .toast {
+  left: auto;
+  right: 24px;
+  transform: none;
+  bottom: 24px;
+  background: var(--color-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio *,
+  .studio *::before {
+    transition: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .studio-shell {
+    padding: 12px 16px 32px;
+  }
+
+  .phone {
+    width: 100%;
+  }
+}

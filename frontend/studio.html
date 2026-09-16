@@ -1,462 +1,87 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="liquid-glass">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>IT-Deck Studio</title>
+  <!-- Studio is always the Liquid Glass material, whatever theme the phone
+       deck has cycled to: data-theme is pinned above and never written by
+       JS on this page. It follows the shared light/dark "deck background"
+       setting, so themes.css is linked here now (it used to be Dashboard-
+       only). button.css and widgets.css are linked so the preview draws the
+       deck's real tiles and live widgets. grid.css is not linked on purpose:
+       it pins html/body for the phone and would stop this page scrolling. -->
   <link rel="stylesheet" href="/css/base.css">
-  <style>
-    /* Desktop-only admin page, not part of the phone PWA -- kept as one
-       self-contained file rather than a shared stylesheet since nothing
-       else uses these rules. */
-    body {
-      padding: 24px;
-      max-width: 900px;
-      margin: 0 auto;
+  <link rel="stylesheet" href="/css/button.css">
+  <link rel="stylesheet" href="/css/widgets.css">
+  <link rel="stylesheet" href="/css/themes.css">
+  <link rel="stylesheet" href="/css/toast.css">
+  <link rel="stylesheet" href="/css/studio.css">
+  <!-- The ground, read synchronously before first paint, for the same reason
+       as index.html's boot script. Only the mode, since the theme is fixed
+       here. "auto" means Liquid Glass's own ground, which is dark. -->
+  <script>
+    try {
+      var m = localStorage.getItem("itdeck:mode");
+      document.documentElement.dataset.mode = (m === "light") ? "light" : "dark";
+    } catch (e) {
+      document.documentElement.dataset.mode = "dark";
     }
-
-    header {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      margin-bottom: 16px;
-    }
-
-    header a {
-      color: var(--color-accent);
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 16px;
-    }
-
-    th, td {
-      text-align: left;
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--color-border);
-      font-size: 14px;
-    }
-
-    th {
-      color: var(--color-text-muted);
-      font-weight: 600;
-    }
-
-    button {
-      background: var(--color-surface);
-      color: var(--color-text);
-      border: 1px solid var(--color-border);
-      border-radius: 6px;
-      padding: 6px 12px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    button:hover {
-      background: var(--color-border);
-    }
-
-    /* Studio had :hover but no focus style at all, so tabbing through the
-       toolbar and the per-row Edit/Delete buttons was invisible. Same
-       convention base.css sets for the Dashboard -- 2px accent ring, 2px
-       outside the control -- restated here because studio.html carries its own
-       stylesheet and links none of the Dashboard's. */
-    button:focus-visible,
-    input:focus-visible,
-    select:focus-visible,
-    textarea:focus-visible {
-      outline: 2px solid var(--color-accent);
-      outline-offset: 2px;
-    }
-
-    /* Available to a screen reader, absent from the page. Used for the actions
-       column's header, which has to be empty on screen (the cell is two
-       buttons wide) but must not be an unnamed column. */
-    .visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      padding: 0;
-      overflow: hidden;
-      clip: rect(0 0 0 0);
-      clip-path: inset(50%);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    button.danger:hover {
-      background: var(--color-alert);
-      border-color: var(--color-alert);
-    }
-
-    /* Same flex row idiom as #item-form .form-actions -- two bare adjacent
-       buttons otherwise sit almost flush against each other. */
-    .toolbar {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-    }
-
-    /* The table's Edit/Delete cell, set by renderTable in studio.js. Same
-       display:flex + 8px gap as .toolbar and #item-form .form-actions, and
-       deliberately nothing else -- Delete sitting flush against Edit is
-       exactly the hazard the .toolbar comment above describes, and it's
-       worse here because one of the pair is destructive. (No align-items:
-       a blockified <td> doesn't stretch its flex line, so the buttons keep
-       their natural 29px height even on a wrapped, 74px-tall row.) */
-    .row-actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    /* The app-settings row under the toolbar. Same flex-row-with-a-gap idiom
-       as .toolbar, plus baseline alignment so the label sits level with the
-       text inside the <select> rather than with the control's box. */
-    .settings-row {
-      display: flex;
-      gap: 8px;
-      align-items: baseline;
-      margin-bottom: 16px;
-      font-size: 13px;
-      color: var(--color-text-muted);
-    }
-
-    /* The confirmation / failure text beside the picker. Empty most of the
-       time, so it carries no space of its own until studio.js writes to it. */
-    #mode-message.error {
-      /* Same reason as #devices-message.error below: --color-alert is under
-         AA as text on this page. */
-      color: var(--color-alert-text);
-    }
-
-    /* #item-form select doesn't reach the toolbar's own workspace picker or
-       the settings row's mode picker, and an unstyled select renders as an
-       OS-default light control on this dark page. Same field colors as the
-       form's inputs, but the button's padding and font-size so it sits level
-       with the two buttons in the flex row. */
-    .toolbar select,
-    .settings-row select {
-      background: var(--color-bg);
-      color: var(--color-text);
-      border: 1px solid var(--color-border);
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 13px;
-      font-family: inherit;
-    }
-
-    /* Four columns, not two: an ordinary field spans 2 of them (exactly the
-       half width it had before), and the quarter-width sets -- the four colour
-       pickers, and Row/Col/Width/Height -- take a single column each. Doing it
-       this way keeps every field a direct child of this one grid, so the
-       grouping needs no wrapper divs and the `grid-column: 1 / -1` rules below
-       (and both #item-form label selectors) keep resolving against it. */
-    #item-form {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 10px;
-      padding: 20px;
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-    }
-
-    /* #item-form's own ID selector otherwise beats the UA [hidden]
-       stylesheet rule on specificity, so form.hidden = true had no visual
-       effect and the form stayed rendered (with stale/blank field values)
-       across Cancel/Save and even before the first Edit click. */
-    #item-form[hidden] {
-      display: none;
-    }
-
-    /* Exactly the same specificity trap as #item-form[hidden] above, one
-       level down: #item-form label's display:flex outranks the UA [hidden]
-       rule, so the audio_switch device pickers would stay visible for every
-       other Type without this. #devices-message needs no such rule (like
-       #params-error, no ID selector sets its display). */
-    #item-form label[hidden] {
-      display: none;
-    }
-
-    #devices-message {
-      grid-column: 1 / -1;
-      font-size: 13px;
-      color: var(--color-text-muted);
-    }
-
-    #devices-message.error {
-      /* Text, so the brighter variant -- --color-alert is 3.43:1 on this
-         form's --color-surface, under AA at 13px. */
-      color: var(--color-alert-text);
-    }
-
-    #item-form label {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 13px;
-      color: var(--color-text-muted);
-      /* Half the form, as before -- see the four-column comment above. */
-      grid-column: span 2;
-    }
-
-    /* Group heading. The whole hierarchy signal is this being --color-text
-       against the fields' own --color-text-muted, plus the hairline and the
-       spacing -- deliberately no card, background or border-radius per
-       group, and no ALL-CAPS. The spacing is asymmetric on purpose: 24px of
-       margin plus the rule and 12px of padding above the heading, only the
-       grid's 12px below it, so each heading reads as belonging to the fields
-       under it. Identity has no heading (it's the form's first content), so
-       every h2 here -- including the first -- separates two groups and keeps
-       the same 24px. */
-    #item-form .form-group {
-      grid-column: 1 / -1;
-      margin: 24px 0 0;
-      padding-top: 12px;
-      border-top: 1px solid var(--color-border);
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--color-text);
-    }
-
-    /* Label and Params (JSON). Set on the <label>, never on the control inside
-       it: the label is the grid item, and #item-form label's display:flex makes
-       the input/textarea a flex child, where grid-column does nothing at all. */
-    #item-form .field-full {
-      grid-column: 1 / -1;
-    }
-
-    /* Label identifies the item, so it's the largest control in the form. Needs
-       the #item-form prefix to outrank #item-form input's own font-size below --
-       a bare #field-label would lose that on specificity and silently do
-       nothing, the same trap as #item-form label[hidden] above. */
-    #item-form #field-label {
-      font-size: 16px;
-      padding: 10px;
-    }
-
-    /* The four colour pickers, and Row/Col/Width/Height: one column each, so
-       each set lands as a single four-across row instead of four half-width
-       cells carrying the same visual weight as Label. */
-    #item-form .field-quarter {
-      grid-column: span 1;
-    }
-
-    /* On Row only, so the geometry quartet starts a fresh line rather than
-       filling the two columns left over by the half-width Workspace field above
-       it. Must stay after .field-quarter: same specificity, and this is what
-       overrides the grid-column-start that shorthand's `span 1` sets. */
-    #item-form .starts-row {
-      grid-column-start: 1;
-    }
-
-    #item-form input,
-    #item-form select,
-    #item-form textarea {
-      background: var(--color-bg);
-      color: var(--color-text);
-      border: 1px solid var(--color-border);
-      border-radius: 6px;
-      padding: 8px;
-      font-size: 14px;
-      font-family: inherit;
-    }
-
-    #item-form input[type="color"] {
-      padding: 2px;
-      height: 36px;
-    }
-
-    /* The `grid-column: 1 / -1` that used to sit here never applied: the grid
-       item is this textarea's parent <label>, which carries .field-full now. */
-    #field-params {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      min-height: 80px;
-      resize: vertical;
-    }
-
-    #params-error {
-      grid-column: 1 / -1;
-      /* Same reason as #devices-message.error above. */
-      color: var(--color-alert-text);
-      font-size: 13px;
-    }
-
-    #item-form .form-actions {
-      grid-column: 1 / -1;
-      display: flex;
-      gap: 8px;
-    }
-  </style>
+  </script>
 </head>
-<body>
-  <header>
-    <h1>IT-Deck Studio</h1>
-    <a href="/index.html">&larr; Dashboard</a>
-  </header>
+<body class="studio">
+  <div class="studio-shell">
+    <header class="studio-bar glass">
+      <h1>IT-Deck <span>Studio</span></h1>
+      <div class="bar-controls">
+        <label class="bar-field">
+          <span data-i18n="bar.deck">Deck</span>
+          <select id="workspace-select"></select>
+        </label>
+        <label class="bar-field">
+          <span data-i18n="bar.background">Deck background</span>
+          <select id="mode-select"></select>
+        </label>
+        <button type="button" id="compact-btn" class="btn" data-i18n="bar.compact">Compact layout</button>
+        <a href="/index.html" class="btn btn-ghost" data-i18n="bar.dashboard">Dashboard</a>
+      </div>
+    </header>
+    <p id="mode-message" class="message bar-message" role="status"></p>
 
-  <div class="toolbar">
-    <button id="new-item-btn" type="button">+ New Item</button>
-    <button id="compact-btn" type="button">Compact layout</button>
-    <!-- Compact's own target, deliberately outside #item-form: reading the
-         form's workspace field meant Compact silently hit whatever that
-         hidden dropdown happened to hold, which is only correct for the
-         workspace whose item was edited most recently. -->
-    <!-- No visible <label>: it sits directly beside the button it feeds and a
-         label would read as a second control in the row. Named for a screen
-         reader instead, which otherwise announces it as an unlabelled combo. -->
-    <select id="compact-workspace-select" aria-label="Workspace to show and compact"></select>
-  </div>
+    <!-- Filled by studio.js: the VPN path, the one thing a fresh install has
+         to set up. Shown only when a VPN tile exists. -->
+    <section id="setup-card" class="setup-card" hidden aria-live="polite"></section>
 
-  <!-- App-wide settings, deliberately its own row rather than a fourth
-       control in the toolbar above: everything in that row acts on items in a
-       workspace, and this acts on how every connected Dashboard looks. This
-       one does carry a visible <label> (unlike the compact picker) because
-       nothing next to it names it.
+    <div class="studio-columns">
+      <section class="preview-panel glass" aria-labelledby="preview-title">
+        <div class="panel-head">
+          <h2 id="preview-title" data-i18n="preview.title">Your deck</h2>
+          <button type="button" id="new-item-btn" class="btn" data-i18n="preview.new">+ New tile</button>
+        </div>
+        <p class="panel-hint" data-i18n="preview.hint">Click a tile to edit it. Click + to add a tile there. Drag a tile onto an empty cell to move it.</p>
+        <div class="phone">
+          <div id="preview-grid" class="preview-grid" role="group" aria-labelledby="preview-title"></div>
+        </div>
+      </section>
 
-       Not a duplicate of the Dashboard's theme pill -- that cycles the
-       material (Flat/Pastel/Glossy/Liquid Glass), this picks the ground each
-       material sits on. Two independent axes, two separate settings. -->
-  <div class="settings-row">
-    <label for="mode-select">Deck background</label>
-    <select id="mode-select"></select>
-    <!-- role="status" rather than "alert": the common case here is the
-         confirmation that a shared setting changed, and the same element
-         carries the failure when the PUT is rejected. -->
-    <span id="mode-message" role="status"></span>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Label</th>
-        <th>Type</th>
-        <th>Target</th>
-        <th>Position</th>
-        <th><span class="visually-hidden">Actions</span></th>
-      </tr>
-    </thead>
-    <tbody id="items-tbody"></tbody>
-  </table>
-
-  <!-- Grouped identity / action / placement / appearance / advanced. The
-       order is the grouping: every field is still a direct child of the one
-       grid (see #item-form's four-column comment), and the <h2>s are grid
-       children too, so nothing here wraps or nests a field. -->
-  <form id="item-form" hidden>
-    <input type="hidden" id="field-id">
-
-    <!-- Identity. No heading: it's the form's first content. -->
-    <label class="field-full">Label
-      <input id="field-label" required>
-    </label>
-
-    <label>Icon
-      <input id="field-icon" placeholder="e.g. lightbulb">
-    </label>
-
-    <h2 class="form-group">Action</h2>
-
-    <label>Kind
-      <select id="field-kind">
-        <option value="action">action</option>
-        <option value="widget">widget</option>
-      </select>
-    </label>
-
-    <label>Type
-      <input id="field-type" required placeholder="e.g. audio_mute_toggle">
-    </label>
-
-    <label>Target
-      <select id="field-target">
-        <option value="windows">windows</option>
-        <option value="backend">backend</option>
-        <option value="RINA-PC">RINA-PC</option>
-      </select>
-    </label>
-
-    <label>State key
-      <input id="field-state-key" placeholder="optional, e.g. mic.muted">
-    </label>
-
-    <!-- audio_switch only: studio.js shows/hides these (and the message
-         below) as Type/Target change, and fills them from the selected
-         Target agent's live device list. Hidden by default so a fresh form
-         for any other Type never flashes them. Kept in the Action group,
-         next to the Type and Target fields that drive them. -->
-    <label id="primary-device-label" hidden>Primary device
-      <select id="field-primary-device"></select>
-    </label>
-
-    <label id="secondary-device-label" hidden>Secondary device
-      <select id="field-secondary-device"></select>
-    </label>
-
-    <!-- Both messages are written by studio.js after an action the user took
-         and are never focused, so without a live region a screen-reader user
-         gets no signal at all that the device list failed or that Save was
-         rejected. role="alert" is the assertive one on purpose: each reports
-         that the thing just attempted did not happen. -->
-    <div id="devices-message" role="alert" hidden></div>
-
-    <h2 class="form-group">Placement</h2>
-
-    <label>Workspace
-      <select id="field-workspace-id"></select>
-    </label>
-
-    <label class="field-quarter starts-row">Row
-      <input type="number" id="field-row" required>
-    </label>
-
-    <label class="field-quarter">Col
-      <input type="number" id="field-col" required>
-    </label>
-
-    <label class="field-quarter">Width
-      <input type="number" id="field-width" value="1" min="1">
-    </label>
-
-    <label class="field-quarter">Height
-      <input type="number" id="field-height" value="1" min="1">
-    </label>
-
-    <h2 class="form-group">Appearance</h2>
-
-    <label class="field-quarter">Color
-      <input type="color" id="field-color" value="#2a2f38">
-    </label>
-
-    <label class="field-quarter">Active color
-      <input type="color" id="field-active-color" value="#0d9488">
-    </label>
-
-    <label class="field-quarter">Alert color
-      <input type="color" id="field-alert-color" value="#dc2626">
-    </label>
-
-    <label class="field-quarter">Off color
-      <input type="color" id="field-false-color" value="#2a2f38">
-    </label>
-
-    <h2 class="form-group">Advanced</h2>
-
-    <label class="field-full">Params (JSON)
-      <textarea id="field-params">{}</textarea>
-    </label>
-    <!-- Directly above the actions on purpose: studio.js writes both the
-         JSON-validation message and the "Save failed (...)" message here, and
-         the second of those has to land next to the button that just failed. -->
-    <div id="params-error" role="alert" hidden></div>
-
-    <div class="form-actions">
-      <button type="submit" id="save-btn">Save</button>
-      <button type="button" id="cancel-btn">Cancel</button>
+      <section id="inspector" class="inspector glass" aria-labelledby="inspector-title"></section>
     </div>
-  </form>
+  </div>
+
+  <dialog id="token-dialog" class="token-dialog glass" aria-labelledby="token-title">
+    <form method="dialog" id="token-form">
+      <h2 id="token-title" data-i18n="token.title">Agent token</h2>
+      <p data-i18n="token.body">Studio needs the agent token to save changes. It's AGENT_TOKEN in config.env. On a standard install it's "admin". Studio remembers it in this browser.</p>
+      <input id="token-input" class="input" type="password" autocomplete="off" required>
+      <div class="dialog-actions">
+        <!-- type="button", not a submit with value="cancel": Enter in the
+             field submits with the form's FIRST submit button, and when this
+             was one, pressing Enter after typing the token cancelled it. -->
+        <button type="button" id="token-cancel" class="btn btn-ghost" data-i18n="common.cancel">Cancel</button>
+        <button type="submit" value="ok" class="btn btn-primary" data-i18n="token.save">Save token</button>
+      </div>
+    </form>
+  </dialog>
 
   <script type="module" src="/js/studio.js"></script>
 </body>
