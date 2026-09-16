@@ -52,6 +52,14 @@ def resolve_toggle_target(params: dict) -> tuple[str, str]:
 
 
 def is_process_running(name: str) -> bool:
+    if not name:
+        # poll_loop asks this once a second, and on a standalone install the
+        # watched name is "" until the VPN tile has a path set in Studio --
+        # so without this the agent walked every process on the machine every
+        # second to answer a question that cannot match. proc.name() is
+        # basename() of a real exe path and can never be empty, so an empty
+        # target provably matches nothing.
+        return False
     target = name.lower()
     for proc in psutil.process_iter():
         try:

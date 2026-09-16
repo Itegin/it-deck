@@ -1,36 +1,11 @@
 from typing import Optional
 
-from pydantic import BaseModel
-
 from app.db import get_connection
 
-
-class Item(BaseModel):
-    id: int
-    workspace_id: int
-    row: int
-    col: int
-    width: int = 1
-    height: int = 1
-    label: str
-    icon: Optional[str] = None
-    color: str = "#2a2f38"
-    kind: str
-    type: str
-    target: str = "windows"
-    params: str = "{}"
-    state_key: Optional[str] = None
-    press_count: int = 0
-    last_pressed: Optional[str] = None
-
-
-class Workspace(BaseModel):
-    id: int
-    name: str
-    position: int
-    grid_cols: int = 3
-    grid_rows: int = 5
-    items: list[Item] = []
+# There were pydantic Item and Workspace models here. Nothing used them: every
+# endpoint in app/api/ builds and returns plain dicts, and none declares a
+# response_model. They described the schema a second time, in a place no code
+# read, which is the kind of documentation that goes quietly wrong.
 
 
 def get_workspaces_with_items() -> list[dict]:

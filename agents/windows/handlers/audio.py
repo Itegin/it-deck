@@ -71,17 +71,40 @@ def get_volume(device: str) -> int:
     return round(_get_volume_interface(device).GetMasterVolumeLevelScalar() * 100)
 
 
+# (device id -> friendly name) for the current default output. See
+# get_default_output_name() for why only the name is cached and not the
+# endpoint itself.
+_default_output_cache: tuple[str, str] | None = None
+
+
 def get_default_output_name() -> str:
     # Not built on _get_volume_interface (that resolves to an
     # IAudioEndpointVolume, which has no name) -- AudioUtilities.CreateDevice
     # wraps the same default-render endpoint into pycaw's AudioDevice,
     # whose .FriendlyName reads the DEVPKEY_Device_FriendlyName property
-    # (e.g. "Speakers (Realtek...)"). Re-resolved on every call, same
-    # reasoning as _get_volume_interface: the default output can change
-    # (switched in Windows sound settings, a device unplugged) between polls.
+    # (e.g. "Speakers (Realtek...)"). The endpoint is still re-resolved on
+    # every call, same reasoning as _get_volume_interface: the default output
+    # can change (switched in Windows sound settings, a device unplugged)
+    # between polls.
+    #
+    # The *name* is cached against the endpoint's id, though, and that is not
+    # a micro-optimisation: poll_loop calls this once a second forever, and
+    # pycaw's CreateDevice() opens the endpoint's property store and reads
+    # **every** property on it (typically 40-90, each its own COM call) to
+    # build a dict from which exactly one key is then used. GetId() is a
+    # single cheap call, so a device that hasn't changed costs one call
+    # instead of a hundred. A device whose id is unchanged cannot have
+    # changed its FriendlyName except by being renamed in Windows sound
+    # settings, which a later switch picks up anyway.
+    global _default_output_cache
     enumerator = AudioUtilities.GetDeviceEnumerator()
     endpoint = enumerator.GetDefaultAudioEndpoint(_DATA_FLOWS["speaker"], ERole.eMultimedia.value)
-    return AudioUtilities.CreateDevice(endpoint).FriendlyName
+    device_id = endpoint.GetId()
+    if _default_output_cache is not None and _default_output_cache[0] == device_id:
+        return _default_output_cache[1]
+    name = AudioUtilities.CreateDevice(endpoint).FriendlyName
+    _default_output_cache = (device_id, name)
+    return name
 
 
 def set_volume(device: str, value: int) -> None:

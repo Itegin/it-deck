@@ -161,7 +161,9 @@ def fixup_legacy_seed() -> None:
     # never touched it without overwriting the ones that did.
     conn = get_connection()
     try:
-        conn.execute("UPDATE item SET type = 'launch_app' WHERE label = 'Terminal'")
+        conn.execute(
+            "UPDATE item SET type = 'launch_app' WHERE label = 'Terminal' AND type <> 'launch_app'"
+        )
         placeholders = ", ".join("?" for _ in _DEFAULT_TERMINAL_PARAMS)
         conn.execute(
             f"""
@@ -218,14 +220,25 @@ def fixup_mic_item() -> None:
         # past it (before active_style existed) would never pick it up from
         # that statement alone. Backfill it separately, keyed on the label
         # the row actually settles into.
+        #
+        # Both backfills are guarded on the values they are upgrading *from*.
+        # Unguarded, `WHERE label = 'Mic'` matched on every single startup and
+        # reapplied these columns forever -- silently reverting any params or
+        # icon a user had set on this tile in Studio. That is the exact
+        # always-on-reapply bug fixup_volume_item documents having been fixed
+        # out of, and fixup_legacy_seed's Terminal params after it; this row
+        # was simply missed. Guarding it means an untouched install still
+        # upgrades and an edited one is left alone.
         conn.execute(
             """
             UPDATE item
-            SET params = '{"device":"microphone","active_style":"alert"}',
-                icon = 'mic'
+            SET params = '{"device":"microphone","active_style":"alert"}'
             WHERE label = 'Mic'
+              AND (params IS NULL OR params = '' OR params = '{}'
+                   OR params = '{"device":"microphone"}')
             """
         )
+        conn.execute("UPDATE item SET icon = 'mic' WHERE label = 'Mic' AND (icon IS NULL OR icon = '' OR icon = 'camera')")
         conn.commit()
     finally:
         conn.close()

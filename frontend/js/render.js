@@ -40,6 +40,10 @@ const ICONS = {
   // such key here -- so the VPN tile rendered label-only while every other
   // tile carried a glyph. Same 24x24 stroke geometry as the rest.
   shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>`,
+  // Same omission as shield above, one release later: fixup_close_agent_item
+  // seeds icon='power' and there was no such key, so the Close Agent tile
+  // rendered label-only next to eight tiles that all carry a glyph.
+  power: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`,
 };
 
 // The two inks a tile's content can be drawn in: base.css's --color-text, and
@@ -49,6 +53,12 @@ const ICONS = {
 // each time buys nothing.
 const INK_LIGHT = "#F1F5F9";
 const INK_DARK = "#1A1F26";
+
+// Parsed once. applyTileInk() runs per tile on every render and again on every
+// boolean state change, and re-running parseColor's regexes over two compile-
+// time constants each time is work whose answer can never differ.
+const INK_LIGHT_RGB = [0xf1, 0xf5, 0xf9];
+const INK_DARK_RGB = [0x1a, 0x1f, 0x26];
 
 // #rgb, #rrggbb, and the rgb()/rgba() forms a computed custom property can
 // come back as. Anything else (a named colour, a colour function this browser
@@ -99,8 +109,8 @@ function applyTileInk(tile) {
     tile.style.removeProperty("--tile-ink");
     return;
   }
-  const dark = contrastRatio(rgb, parseColor(INK_DARK));
-  const light = contrastRatio(rgb, parseColor(INK_LIGHT));
+  const dark = contrastRatio(rgb, INK_DARK_RGB);
+  const light = contrastRatio(rgb, INK_LIGHT_RGB);
   tile.style.setProperty("--tile-ink", dark > light ? INK_DARK : INK_LIGHT);
 }
 
@@ -154,6 +164,8 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   grid.style.setProperty("--rows", Math.max(occupiedRows, 1));
 
   grid.innerHTML = "";
+
+  const appended = [];
 
   for (const item of workspace.items) {
     const isSlider = item.kind === "action" && item.width >= 2 && item.type === "audio_volume_set";
@@ -284,8 +296,15 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
     }
 
     grid.appendChild(tile);
-    // After appendChild: --tile-state-color has no computed value on a
-    // detached element, so this has to run once the tile is in the document.
+    appended.push(tile);
+  }
+
+  // Second pass, deliberately: --tile-state-color has no computed value on a
+  // detached element, so ink can only be resolved once a tile is in the
+  // document -- but reading a computed style immediately after each
+  // appendChild forces a style recalculation between every insertion. Doing
+  // every insert first and every read after costs one recalculation total.
+  for (const tile of appended) {
     applyTileInk(tile);
   }
 }

@@ -110,7 +110,6 @@ let backoff = 1000;
 // non-negotiable. Any inbound frame proves the handshake passed, because the
 // server sends nothing at all until it has.
 let authenticated = false;
-const resultCallbacks = [];
 const stateChangeCallbacks = [];
 const agentStatusCallbacks = [];
 const workspaceUpdateCallbacks = [];
@@ -167,9 +166,6 @@ function connect() {
     const message = JSON.parse(event.data);
     if (message.type === "result") {
       settleRequest(message.req_id, message.status, message.message);
-      for (const callback of resultCallbacks) {
-        callback(message);
-      }
     } else if (message.type === "state") {
       for (const callback of stateChangeCallbacks) {
         callback(message.data);
@@ -336,12 +332,10 @@ export function sendSetValue(itemId, value) {
   );
 }
 
-export function onResult(callback) {
-  resultCallbacks.push(callback);
-}
-
 // Resolved per-item command feedback: {itemId, phase: "pending"|"ok"|"error",
-// message}. Distinct from onResult, which stays the raw verbatim frame.
+// message}. This is the only subscription to a result frame -- there used to
+// be an onResult() handing out the raw frame as well, but nothing ever
+// imported it, so every result fanned out to an array that was always empty.
 export function onCommandState(callback) {
   commandStateCallbacks.push(callback);
 }
