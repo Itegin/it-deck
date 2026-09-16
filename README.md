@@ -289,6 +289,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.3.7 is the latest tag. `main` is ahead of it with the changes listed under
-**Unreleased** in [`CHANGELOG.md`](CHANGELOG.md) — personal project, active
-development, API may change.
+v0.4.0 — personal project, active development, API may change.

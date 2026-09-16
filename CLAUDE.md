@@ -22,7 +22,7 @@ documented under "Deploy" as the legacy path.
 > the code. Release-by-release history is in
 > [`CHANGELOG.md`](CHANGELOG.md).
 
-Current version: **v0.3.7** (`ITDECK_VERSION` in `standalone/launcher.py` --
+Current version: **v0.4.0** (`ITDECK_VERSION` in `standalone/launcher.py` --
 bump it in the same commit as the tag). The bullets below are the constraints that are
 easy to break; the reference doc explains the same mechanisms at length.
 
@@ -50,7 +50,7 @@ These three are non-negotiable and get checked on every relevant change:
   previously-dead `SERVER_PORT` into real use. The legacy Docker path still
   hardcodes it in three places — see the reference doc's tech-debt section.)
 
-## Standalone mode (v0.3.0+, current as of v0.3.7)
+## Standalone mode (v0.3.0+, current as of v0.4.0)
 
 - **`standalone/launcher.py`** is the single entry point, for both
   `python standalone/launcher.py` (dev) and the frozen `ITDeck.exe`

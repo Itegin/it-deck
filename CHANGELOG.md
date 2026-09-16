@@ -7,10 +7,12 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
-## Unreleased
+## v0.4.0 — 2026-09-16
 
-Batched on purpose: these land on `main` without a tag, and go out together in
-the next release.
+Batched on purpose: everything below landed on `main` without a tag and ships
+as one release. The headline is that the window an installed copy shows you is
+now a setup guide rather than a page of raw values -- and that it tells you
+when something is wrong instead of looking fine regardless.
 
 ### Added
 
