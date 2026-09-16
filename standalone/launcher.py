@@ -15,6 +15,7 @@ the existing "close the console window, relaunch" recovery story intact.
 import argparse
 import json
 import os
+import queue
 import socket
 import sqlite3
 import subprocess
@@ -34,6 +35,26 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
 ITDECK_VERSION = "0.3.7"
+
+# Where an installed copy looks to find out it is out of date, and where it
+# sends the user when it is. An install has no other way to learn this: the
+# exe does not phone home, is not packaged by any store, and the phone side
+# cannot be stale independently (it is served by this same build).
+UPDATE_CHECK_URL = "https://api.github.com/repos/Itegin/it-deck/releases/latest"
+RELEASES_PAGE_URL = "https://github.com/Itegin/it-deck/releases/latest"
+
+# Info-window layout constants. PAD is the single outer gutter every block
+# uses -- one number, so the window keeps a consistent rhythm.
+PAD = 16
+# A QR module of 5px puts a 33-module code at ~185px, which scans reliably
+# from arm's length on a phone; the quiet zone is required by the spec, not
+# decoration -- scanners need the clear border to find the code at all.
+QR_MODULE_PX = 5
+QR_QUIET_MODULES = 2
+# The window raises itself once and then stops being topmost. Long enough to
+# be noticed on a busy desktop, short enough that it is not in the way.
+TOPMOST_RELEASE_MS = 4000
+UPDATE_POLL_MS = 1000
 
 # The frozen exe is built --windowed, so it has NO console: sys.stdout and
 # sys.stderr are None and a bare print() would raise AttributeError. They are
@@ -184,6 +205,11 @@ def write_config(path: Path, values: dict) -> None:
         "# SERVER_PORT is safe to change to any free port you prefer; IT-Deck",
         "# uses whatever is here. Changing it changes the address your phone",
         "# uses, so open the newly printed link on the phone once afterwards.",
+        "#",
+        "#",
+        "# UPDATE_CHECK=0 turns off the one-off check for a newer release that",
+        "# runs at startup. It only ever reads the public releases page, and",
+        "# failing to reach it is silently ignored.",
         "#",
         "# The keys below are optional and safe to hand-edit for your own",
         "# hardware -- see agents/windows/.env.example in the source repo.",
@@ -485,36 +511,61 @@ _GLASS = {
     "text_muted": "#9aa3b2",
     "accent": "#a78bfa",
     "accent_active": "#8e5ff5",
+    # Added for the step cards: "surface" is the card fill, so buttons
+    # sitting on a card need to be a shade above it to read as raised.
+    # "ok" is the running dot in the header -- the one non-purple accent,
+    # because green means running in every other status UI a person has
+    # ever used.
+    "surface_raised": "#1d2330",
+    "ok": "#4ade80",
 }
 
 _STRINGS = {
     "en": {
         "title": "IT-Deck",
         "running": "IT-Deck is running",
-        "phone_hint": "Open this on your phone once (same Wi-Fi as this PC):",
+        "step1_title": "Open the deck on your phone",
+        "step1_body": "Point your phone's camera at the code. The phone has to be on the same Wi-Fi as this PC.",
+        "step1_body_no_qr": "Open this address on your phone. It has to be on the same Wi-Fi as this PC.",
         "copy": "Copy link",
         "copied": "Copied",
-        "studio_hint": "Studio (edit tiles, this PC only):",
+        "step2_title": "Set up your tiles (optional)",
+        "step2_body": "Every tile works out of the box except VPN: it doesn't know which program to launch yet. Open Studio on this PC and give it the path to your VPN client.",
         "open_studio": "Open Studio",
-        "agent_token_hint": "If Studio asks for an agent token:",
-        "logs_hint": "Logs (for troubleshooting):",
+        "show_token": "Show agent token",
+        "token_hint": "Studio asks for this once:",
+        "copy_token": "Copy",
+        "step3_title": "When you're done here",
+        "step3_body": "Minimize keeps IT-Deck running in the background -- your phone stays connected. Quit stops it, and the deck on your phone goes offline.",
+        "logs_hint": "Logs:",
         "close": "Minimize",
         "quit": "Quit IT-Deck",
         "quit_confirm": "Stop IT-Deck? The deck on your phone will go offline.",
+        "update_available": "Version {version} is available",
+        "update_download": "Download",
     },
     "ru": {
         "title": "IT-Deck",
-        "running": "IT-Deck запущен",
-        "phone_hint": "Открой на телефоне один раз (та же сеть Wi-Fi):",
-        "copy": "Скопировать",
+        "running": "IT-Deck работает",
+        "step1_title": "Открой деку на телефоне",
+        "step1_body": "Наведи камеру телефона на код. Телефон должен быть в той же сети Wi-Fi, что и этот компьютер.",
+        "step1_body_no_qr": "Открой этот адрес на телефоне. Он должен быть в той же сети Wi-Fi, что и этот компьютер.",
+        "copy": "Скопировать ссылку",
         "copied": "Скопировано",
-        "studio_hint": "Studio (редактирование плиток, только на этом ПК):",
+        "step2_title": "Настрой плитки (не обязательно)",
+        "step2_body": "Все плитки работают сразу, кроме VPN: она пока не знает, какую программу запускать. Открой Studio на этом ПК и укажи путь до своего VPN-клиента.",
         "open_studio": "Открыть Studio",
-        "agent_token_hint": "Если Studio спросит токен агента:",
-        "logs_hint": "Логи (для отладки):",
+        "show_token": "Показать токен агента",
+        "token_hint": "Studio спросит его один раз:",
+        "copy_token": "Копировать",
+        "step3_title": "Когда всё готово",
+        "step3_body": "«Свернуть» — IT-Deck продолжит работать в фоне, телефон останется подключён. «Выйти» — остановит его, и дека на телефоне отключится.",
+        "logs_hint": "Логи:",
         "close": "Свернуть",
         "quit": "Выйти из IT-Deck",
         "quit_confirm": "Остановить IT-Deck? Дека на телефоне отключится.",
+        "update_available": "Доступна версия {version}",
+        "update_download": "Скачать",
     },
 }
 
@@ -622,13 +673,90 @@ def hide_console() -> None:
         pass  # convenience only -- never let this block IT-Deck from running
 
 
+def _version_tuple(text: str) -> tuple:
+    """"0.3.7" / "v0.3.7" -> (0, 3, 7). Unparseable trailing parts are dropped.
+
+    Deliberately forgiving: this compares a tag somebody typed on GitHub
+    against a constant somebody typed in this file, and the only outcome that
+    matters is "is the remote one bigger". A tag like "v0.4.0-beta" stops at
+    the first non-digit and compares as (0, 4, 0) rather than raising.
+    """
+    parts = []
+    for chunk in text.strip().lstrip("vV").split("."):
+        digits = ""
+        for char in chunk:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def newer_version_available() -> Optional[str]:
+    """The latest published version if it is newer than this one, else None.
+
+    Every failure is silent and returns None -- no network, no DNS, GitHub's
+    unauthenticated rate limit, a JSON shape change, a machine with the clock
+    wrong enough to break TLS. An update check is a convenience; a launcher
+    that fails to start because GitHub is down would be a disaster.
+    """
+    try:
+        request = urllib.request.Request(
+            UPDATE_CHECK_URL,
+            headers={
+                "User-Agent": f"IT-Deck/{ITDECK_VERSION}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        # 10s, not 5: measured on the maintainer's own machine (a VPN is
+        # usually up), where the TLS handshake intermittently needed more
+        # than 5 seconds while the request itself completes in ~0.7s when it
+        # does connect. A short timeout here does not fail loudly -- it
+        # silently disables the whole feature on exactly the networks it was
+        # written for. Nothing waits on this; it runs on a daemon thread.
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        latest = str(payload.get("tag_name") or "").strip().lstrip("vV")
+    except Exception:
+        return None
+    if not latest:
+        return None
+    if _version_tuple(latest) > _version_tuple(ITDECK_VERSION):
+        return latest
+    return None
+
+
+def _update_check_worker(result_queue: queue.Queue) -> None:
+    # Always puts exactly one item, even on failure, so the window's poll
+    # terminates instead of re-arming its timer forever.
+    version = newer_version_available()
+    if version:
+        print(f"Update available: v{version} (running v{ITDECK_VERSION}) -- {RELEASES_PAGE_URL}")
+    result_queue.put(version)
+
+
 def show_info_window(
-    dashboard_url: str, studio_url: str, agent_token: str, logs_dir: Path, on_quit
+    dashboard_url: str,
+    studio_url: str,
+    agent_token: str,
+    logs_dir: Path,
+    on_quit,
+    update_queue: "Optional[queue.Queue]" = None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
-    # log files below), and a URL a person has to scroll to find is a URL
-    # they'll give up on -- which is exactly what happened on a real install.
+    # log files below), and on the frozen --windowed build there is no
+    # console at all. This window is the entire desktop-side UI.
+    #
+    # It is shaped as three numbered steps rather than a list of facts. The
+    # previous version showed two bare URLs and a raw token, and a real new
+    # user (a second PC, someone who had never seen the project) could not
+    # tell what any of it was for -- including that the VPN tile does nothing
+    # until it is given a path in Studio, which is the single most common
+    # "it's broken" report this project gets.
+    #
     # Runs tkinter's mainloop() in a daemon thread rather than on the main
     # thread: run_launcher()'s own poll loop is what actually keeps the
     # process alive and responds to Ctrl+C (per the module's own
@@ -646,8 +774,22 @@ def show_info_window(
         root = tk.Tk()
         root.title(s["title"])
         root.configure(bg=g["bg"])
+        # Vertical resize stays available on purpose. Everything here is
+        # auto-sized by Tk from the content, and Windows display scaling
+        # (125%/150% is ordinary) scales the fonts but not the screen -- so
+        # on a small, scaled display the natural height can exceed what fits.
+        # Width is still frozen: the QR block and the URL field define it and
+        # nothing good comes of stretching them.
+        root.resizable(False, True)
+
+        # Raised once so it is not born behind the browser someone launched
+        # it from, then released. It used to set -topmost and never clear it,
+        # which left this window floating above full-screen browsers and
+        # games for its entire life.
         root.attributes("-topmost", True)
-        root.resizable(False, False)
+        root.lift()
+        root.after(TOPMOST_RELEASE_MS, lambda: root.attributes("-topmost", False))
+
         try:
             if is_frozen():
                 icon_path = Path(sys._MEIPASS) / "icon.ico"
@@ -660,11 +802,17 @@ def show_info_window(
 
         style = ttk.Style(root)
         style.theme_use("clam")
-        style.configure("Glass.TEntry", fieldbackground=g["surface"], foreground=g["text"],
-                         insertcolor=g["text"], borderwidth=1, relief="flat")
+        style.configure(
+            "Glass.TEntry",
+            fieldbackground=g["surface"],
+            foreground=g["text"],
+            insertcolor=g["text"],
+            borderwidth=1,
+            relief="flat",
+        )
         style.configure(
             "Glass.TButton",
-            background=g["surface"],
+            background=g["surface_raised"],
             foreground=g["text"],
             borderwidth=1,
             relief="flat",
@@ -682,31 +830,45 @@ def show_info_window(
         style.map("Accent.TButton", background=[("active", g["accent"])])
         style.configure(
             "Mini.TButton",
-            background=g["surface"],
+            background=g["surface_raised"],
             foreground=g["text_muted"],
             borderwidth=1,
             relief="flat",
-            padding=(6, 1),
-            font=("Segoe UI", 7),
+            padding=(6, 2),
+            font=("Segoe UI", 8),
         )
         style.map("Mini.TButton", background=[("active", g["border"])])
+        # clam draws a light focus/border ring on an Entry, which on a
+        # read-only field that exists only to be copied reads as "this is
+        # selected, type here". Pin every border colour to the card edge.
+        style.map(
+            "Glass.TEntry",
+            bordercolor=[("focus", g["border"]), ("!focus", g["border"])],
+            lightcolor=[("focus", g["border"]), ("!focus", g["border"])],
+            darkcolor=[("focus", g["border"]), ("!focus", g["border"])],
+            fieldbackground=[("readonly", g["surface"])],
+            foreground=[("readonly", g["text"])],
+        )
 
-        def label(text: str, muted: bool = False, bold: bool = False, size: int = 9) -> tk.Label:
-            return tk.Label(
-                root,
+        # --- small helpers -------------------------------------------------
+
+        def label(parent, text, muted=False, bold=False, size=9, wrap=None):
+            # bg is taken from the parent so the same helper works on the
+            # window background and inside a card, which are different
+            # colours -- a label carrying the wrong bg is the one thing that
+            # makes a flat tkinter layout look broken rather than plain.
+            widget = tk.Label(
+                parent,
                 text=text,
                 font=("Segoe UI", size, "bold" if bold else "normal"),
-                bg=g["bg"],
+                bg=parent.cget("bg"),
                 fg=g["text_muted"] if muted else g["text"],
                 anchor="w",
                 justify="left",
             )
-
-        def url_row(url: str) -> None:
-            entry = ttk.Entry(root, width=52, font=("Consolas", 10), style="Glass.TEntry")
-            entry.insert(0, url)
-            entry.configure(state="readonly")
-            entry.pack(padx=16, pady=(0, 8), fill="x")
+            if wrap:
+                widget.configure(wraplength=wrap)
+            return widget
 
         def copy_text(text: str, feedback: tk.Label) -> None:
             root.clipboard_clear()
@@ -714,47 +876,245 @@ def show_info_window(
             feedback.configure(text=s["copied"])
             root.after(1500, lambda: feedback.configure(text=""))
 
-        label(f'{s["running"]}  v{ITDECK_VERSION}', bold=True, size=12).pack(
-            anchor="w", padx=16, pady=(16, 10)
-        )
+        def fit_window(place=None) -> None:
+            """Resize to the content, clamped to the screen; optionally move.
 
-        label(s["phone_hint"]).pack(anchor="w", padx=16, pady=(0, 4))
-        url_row(dashboard_url)
-        dash_row = tk.Frame(root, bg=g["bg"])
-        dash_row.pack(anchor="w", padx=16, pady=(0, 14), fill="x")
-        dash_feedback = label("", muted=True)
+            Called once at the end of build-up and again any time a block is
+            added afterwards (the update notice). Tk auto-sizes a window only
+            until it is given an explicit geometry -- after that, new content
+            is simply clipped, which is how the update notice first pushed the
+            Quit button off the bottom edge.
+            """
+            root.update_idletasks()
+            width = root.winfo_reqwidth()
+            height = min(root.winfo_reqheight(), int(root.winfo_screenheight() * 0.9))
+            if place is None:
+                root.geometry(f"{width}x{height}")
+            else:
+                root.geometry(f"{width}x{height}+{place[0]}+{place[1]}")
+
+        def card(number: str, title: str) -> tk.Frame:
+            """One numbered step: a flat panel with a badge, a title, a body.
+
+            tkinter has no rounded corners, no shadow and no blur, so the
+            separation between a step and the background is carried entirely
+            by a lighter fill and generous padding. That is the whole visual
+            vocabulary available here; anything else would be a lie.
+            """
+            outer = tk.Frame(root, bg=g["surface"])
+            outer.pack(fill="x", padx=PAD, pady=(0, 8))
+            head = tk.Frame(outer, bg=g["surface"])
+            head.pack(fill="x", padx=12, pady=(10, 6))
+            tk.Label(
+                head,
+                text=f" {number} ",
+                font=("Segoe UI", 9, "bold"),
+                bg=g["accent"],
+                fg=g["bg"],
+            ).pack(side="left")
+            tk.Label(
+                head,
+                text=title,
+                font=("Segoe UI", 10, "bold"),
+                bg=g["surface"],
+                fg=g["text"],
+            ).pack(side="left", padx=(8, 0))
+            body = tk.Frame(outer, bg=g["surface"])
+            body.pack(fill="x", padx=12, pady=(0, 12))
+            return body
+
+        def draw_qr(parent, data: str):
+            """The dashboard URL as a scannable code, or None.
+
+            Deliberately black on white rather than themed: a QR code is read
+            by a camera, not by a person, and the scanners on phones want the
+            contrast and the quiet zone they were designed for. Tinting it to
+            match the window would look tidier and scan worse.
+
+            Every failure path returns None and the window simply shows the
+            link instead -- the import (a dev checkout may not have qrcode
+            installed) and the encode both.
+            """
+            try:
+                import qrcode
+            except Exception:
+                return None
+            try:
+                code = qrcode.QRCode(
+                    box_size=1, border=0, error_correction=qrcode.constants.ERROR_CORRECT_M
+                )
+                code.add_data(data)
+                code.make(fit=True)
+                matrix = code.get_matrix()
+            except Exception:
+                return None
+
+            modules = len(matrix)
+            side = (modules + QR_QUIET_MODULES * 2) * QR_MODULE_PX
+            canvas = tk.Canvas(
+                parent, width=side, height=side, bg="#ffffff", highlightthickness=0, bd=0
+            )
+            for y, row in enumerate(matrix):
+                for x, filled in enumerate(row):
+                    if not filled:
+                        continue
+                    x0 = (x + QR_QUIET_MODULES) * QR_MODULE_PX
+                    y0 = (y + QR_QUIET_MODULES) * QR_MODULE_PX
+                    canvas.create_rectangle(
+                        x0, y0, x0 + QR_MODULE_PX, y0 + QR_MODULE_PX, fill="#000000", outline=""
+                    )
+            return canvas
+
+        # --- header ---------------------------------------------------------
+
+        header = tk.Frame(root, bg=g["bg"])
+        header.pack(fill="x", padx=PAD, pady=(14, 8))
+        tk.Label(
+            header, text="●", font=("Segoe UI", 9), bg=g["bg"], fg=g["ok"]
+        ).pack(side="left", padx=(0, 6))
+        label(header, s["running"], bold=True, size=13).pack(side="left")
+        label(header, f"v{ITDECK_VERSION}", muted=True, size=9).pack(side="right")
+
+        separator = tk.Frame(root, bg=g["border"], height=1)
+        separator.pack(fill="x", padx=PAD, pady=(0, 10))
+
+        # --- update notice (hidden until the check says otherwise) -----------
+
+        update_bar = tk.Frame(root, bg=g["surface"])
+        update_text = label(update_bar, "", size=9)
+        update_text.pack(side="left", padx=(12, 0), pady=8)
         ttk.Button(
-            dash_row, text=s["copy"], style="Accent.TButton", command=lambda: copy_text(dashboard_url, dash_feedback)
+            update_bar,
+            text=s["update_download"],
+            style="Accent.TButton",
+            command=lambda: webbrowser.open(RELEASES_PAGE_URL),
+        ).pack(side="right", padx=12, pady=8)
+
+        def show_update(version: str) -> None:
+            update_text.configure(text=s["update_available"].format(version=version))
+            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=separator)
+            # The window already has an explicit geometry by the time this
+            # runs, so it will NOT grow on its own -- packing a new block into
+            # a fixed-height window pushes the footer buttons off the bottom
+            # instead. Confirmed by screenshot before this call was added.
+            fit_window()
+
+        def poll_update() -> None:
+            # The check runs on its own thread, and tkinter must only ever be
+            # touched from the thread running its mainloop -- so the worker
+            # hands the answer over through a Queue and this, on the Tk
+            # thread, picks it up. Scheduling root.after() from the worker
+            # instead would be touching Tk from the wrong thread.
+            try:
+                version = update_queue.get_nowait()
+            except queue.Empty:
+                root.after(UPDATE_POLL_MS, poll_update)
+                return
+            if version:
+                show_update(version)
+
+        if update_queue is not None:
+            root.after(UPDATE_POLL_MS, poll_update)
+
+        # --- step 1: the phone ----------------------------------------------
+
+        step1 = card("1", s["step1_title"])
+        qr = draw_qr(step1, dashboard_url)
+        if qr is not None:
+            qr.pack(side="left", padx=(0, 12))
+
+        right = tk.Frame(step1, bg=g["surface"])
+        right.pack(side="left", fill="both", expand=True)
+        label(
+            right, s["step1_body"] if qr is not None else s["step1_body_no_qr"], muted=True, wrap=300
+        ).pack(anchor="w", pady=(0, 8))
+
+        url_entry = ttk.Entry(
+            right, width=38, font=("Consolas", 9), style="Glass.TEntry", takefocus=False
+        )
+        url_entry.insert(0, dashboard_url)
+        url_entry.configure(state="readonly")
+        url_entry.pack(fill="x", pady=(0, 8))
+
+        dash_row = tk.Frame(right, bg=g["surface"])
+        dash_row.pack(fill="x")
+        dash_feedback = label(dash_row, "", muted=True)
+        ttk.Button(
+            dash_row,
+            text=s["copy"],
+            style="Accent.TButton",
+            command=lambda: copy_text(dashboard_url, dash_feedback),
         ).pack(side="left")
-        dash_feedback.pack(in_=dash_row, side="left", padx=(10, 0))
+        dash_feedback.pack(side="left", padx=(10, 0))
 
-        label(s["studio_hint"]).pack(anchor="w", padx=16, pady=(0, 4))
-        url_row(studio_url)
-        ttk.Button(root, text=s["open_studio"], style="Glass.TButton", command=lambda: webbrowser.open(studio_url)).pack(
-            anchor="w", padx=16, pady=(0, 14)
+        # --- step 2: Studio --------------------------------------------------
+
+        step2 = card("2", s["step2_title"])
+        label(step2, s["step2_body"], muted=True, wrap=460).pack(anchor="w", pady=(0, 8))
+
+        studio_row = tk.Frame(step2, bg=g["surface"])
+        studio_row.pack(fill="x")
+        ttk.Button(
+            studio_row,
+            text=s["open_studio"],
+            style="Glass.TButton",
+            command=lambda: webbrowser.open(studio_url),
+        ).pack(side="left")
+
+        # The agent token used to sit on screen as a bare 32-character string
+        # with no explanation, which is exactly the "what is this" the rework
+        # is about. It is needed once, by Studio, and only sometimes -- so it
+        # is behind a button until it is actually wanted.
+        token_holder = tk.Frame(step2, bg=g["surface"])
+        token_holder.pack(fill="x", pady=(8, 0))
+
+        def reveal_token() -> None:
+            for child in token_holder.winfo_children():
+                child.destroy()
+            label(token_holder, s["token_hint"], muted=True, size=8).pack(anchor="w")
+            row = tk.Frame(token_holder, bg=g["surface"])
+            row.pack(fill="x", pady=(2, 0))
+            entry = ttk.Entry(
+                row, width=20, font=("Consolas", 9), style="Glass.TEntry", takefocus=False
+            )
+            entry.insert(0, agent_token)
+            entry.configure(state="readonly")
+            entry.pack(side="left")
+            feedback = label(row, "", muted=True, size=8)
+            ttk.Button(
+                row,
+                text=s["copy_token"],
+                style="Mini.TButton",
+                command=lambda: copy_text(agent_token, feedback),
+            ).pack(side="left", padx=(8, 0))
+            feedback.pack(side="left", padx=(6, 0))
+            # Same reason as the update notice: the window has an explicit
+            # geometry by now, so replacing the button with this taller row
+            # clips the footer instead of growing the window.
+            fit_window()
+
+        ttk.Button(
+            token_holder, text=s["show_token"], style="Mini.TButton", command=reveal_token
+        ).pack(anchor="w")
+
+        # --- step 3: what the two buttons do ---------------------------------
+
+        step3 = card("3", s["step3_title"])
+        label(step3, s["step3_body"], muted=True, wrap=460).pack(anchor="w")
+        label(step3, f"{s['logs_hint']} {logs_dir}", muted=True, size=8, wrap=460).pack(
+            anchor="w", pady=(8, 0)
         )
 
-        token_row = tk.Frame(root, bg=g["bg"])
-        token_row.pack(anchor="w", padx=16, fill="x")
-        label(f"{s['agent_token_hint']} {agent_token}", muted=True, size=8).pack(in_=token_row, side="left")
-        token_feedback = label("", muted=True, size=8)
-        ttk.Button(
-            token_row, text=s["copy"], style="Mini.TButton", command=lambda: copy_text(agent_token, token_feedback)
-        ).pack(side="left", padx=(8, 0))
-        token_feedback.pack(in_=token_row, side="left", padx=(6, 0))
-
-        label(f"{s['logs_hint']} {logs_dir}", muted=True, size=8).pack(anchor="w", padx=16, pady=(4, 10))
+        # --- footer ----------------------------------------------------------
 
         # Two buttons, and the distinction is load-bearing: this window is
-        # now the *only* interface IT-Deck has. The exe is built --windowed,
-        # so there is no console to fall back to -- no Ctrl+C, and nothing to
+        # the only interface IT-Deck has. The exe is built --windowed, so
+        # there is no console to fall back to -- no Ctrl+C, and nothing to
         # restore from the taskbar. "Minimize" therefore iconifies rather
-        # than destroys: destroying it (which is what it used to do, under
-        # the label "Hide this window") left IT-Deck running with no way to
+        # than destroys: destroying it left IT-Deck running with no way to
         # see the URL again and no way to stop it short of Task Manager.
-        # "Quit" is the actual stop button, and the only one.
         buttons = tk.Frame(root, bg=g["bg"])
-        buttons.pack(padx=16, pady=(0, 16), fill="x")
+        buttons.pack(fill="x", padx=PAD, pady=(4, 14))
 
         def quit_itdeck() -> None:
             from tkinter import messagebox
@@ -767,16 +1127,38 @@ def show_info_window(
             on_quit()
             root.destroy()
 
-        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.iconify).pack(side="left")
-        ttk.Button(buttons, text=s["quit"], style="Glass.TButton", command=quit_itdeck).pack(side="right")
+        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.iconify).pack(
+            side="left"
+        )
+        ttk.Button(buttons, text=s["quit"], style="Glass.TButton", command=quit_itdeck).pack(
+            side="right"
+        )
 
         # The title bar's X goes to Quit, not to Tk's default destroy. With
         # no console behind it, a destroyed window is an IT-Deck nobody can
         # see, reach or stop -- so the close box means what it means in every
         # other desktop app, and the confirmation dialog is what keeps a
-        # stray click from taking the phone offline. Minimize is the button
-        # for "get it off my screen".
+        # stray click from taking the phone offline.
         root.protocol("WM_DELETE_WINDOW", quit_itdeck)
+
+        # Nothing should open with a focus ring drawn around a read-only URL
+        # field, which is what happens otherwise -- the first focusable widget
+        # takes focus and clam renders it selected.
+        root.focus_set()
+
+        root.update_idletasks()
+        screen_h = root.winfo_screenheight()
+        max_h = int(screen_h * 0.9)
+        if qr is not None and root.winfo_reqheight() > max_h:
+            # Out of vertical room -- the QR is the one big optional block,
+            # and a window whose Quit button is off-screen is worse than a
+            # window with no QR in it. This is what makes the layout survive
+            # a small screen at 150% display scaling.
+            qr.destroy()
+            qr = None
+        x = max(0, (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2)
+        y = max(0, (screen_h - root.winfo_reqheight()) // 3)
+        fit_window(place=(x, y))
 
         # After every widget is packed, not before: applying this earlier
         # (when the window was still its default un-sized shape) meant
@@ -906,7 +1288,21 @@ def run_launcher() -> int:
     # and must not tear down processes itself -- the supervisor loop below
     # owns that, and doing it from two threads would leave orphans.
     quit_requested = threading.Event()
-    show_info_window(dashboard_url, studio_url, agent_token, logs_dir, quit_requested.set)
+
+    # The update check runs on its own thread so a slow or unreachable GitHub
+    # can never delay startup, and hands its answer to the window through a
+    # Queue -- tkinter may only be touched from the thread running its own
+    # mainloop. Opt out with UPDATE_CHECK=0 in config.env; a config.env
+    # written before this existed has no such key, which reads as enabled.
+    update_queue: queue.Queue = queue.Queue(maxsize=1)
+    if config.get("UPDATE_CHECK", "1").strip().lower() in ("0", "no", "off", "false"):
+        update_queue.put(None)
+    else:
+        threading.Thread(target=_update_check_worker, args=(update_queue,), daemon=True).start()
+
+    show_info_window(
+        dashboard_url, studio_url, agent_token, logs_dir, quit_requested.set, update_queue
+    )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()
 

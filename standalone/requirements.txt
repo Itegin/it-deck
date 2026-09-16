@@ -3,4 +3,13 @@
 # pinned deps rather than duplicating versions here.
 -r ../backend/requirements.txt
 -r ../agents/windows/requirements.txt
+
+# The info window's QR code of the dashboard URL. Pure Python -- the matrix
+# comes from QRCode.get_matrix() and is drawn straight onto a tk.Canvas, so
+# no image backend is involved. (Pillow is already pinned by the agent for
+# the screenshot handler, so this adds no heavyweight dependency either way.)
+# Only the launcher imports it, behind a try/except: a checkout without it
+# shows the window with the link and no code, rather than no window at all.
+qrcode==8.2
+
 pyinstaller==6.22.3
