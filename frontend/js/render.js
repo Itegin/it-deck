@@ -1,4 +1,5 @@
 import { attachLongPress } from "./longpress.js";
+import { mountWidget, destroyWidgets } from "./widgets/index.js";
 
 const SLIDER_THROTTLE_MS = 100;
 
@@ -26,7 +27,11 @@ const commandTimers = new Map();
 // Literal, module-authored SVG markup only -- never build a key from
 // item.icon and interpolate untrusted content into innerHTML. Missing keys
 // render no icon rather than falling back to any kind of text/placeholder.
-const ICONS = {
+//
+// Exported so Studio's icon picker offers exactly this set. A key db.py seeds
+// that is missing here renders a label-only tile, and that has happened twice,
+// so the picker shows the whole table where that gap would be visible.
+export const ICONS = {
   lightbulb: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2.3h6c0-1.1.4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></svg>`,
   music: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
   moon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>`,
@@ -163,7 +168,12 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // `grid-row: 1 / -1` to span.
   grid.style.setProperty("--rows", Math.max(occupiedRows, 1));
 
+  // Before the wipe, every time: innerHTML = "" removes a widget's elements
+  // but not its timers. See js/widgets/index.js.
+  destroyWidgets();
   grid.innerHTML = "";
+
+  const widgets = [];
 
   const appended = [];
 
@@ -297,6 +307,9 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
 
     grid.appendChild(tile);
     appended.push(tile);
+    if (item.kind === "widget") {
+      widgets.push([tile, item]);
+    }
   }
 
   // Second pass, deliberately: --tile-state-color has no computed value on a
@@ -306,6 +319,12 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // every insert first and every read after costs one recalculation total.
   for (const tile of appended) {
     applyTileInk(tile);
+  }
+
+  // Also after the append: a widget lays itself out with container queries,
+  // and those need a tile that is in the document and has a size.
+  for (const [tile, item] of widgets) {
+    mountWidget(tile, item);
   }
 }
 
@@ -505,6 +524,7 @@ export function renderWorkspaceSelector(workspaces, onSelect) {
   grid.style.setProperty("--cols", 1);
   grid.style.setProperty("--rows", workspaces.length);
 
+  destroyWidgets();
   grid.innerHTML = "";
 
   workspaces.forEach((workspace, index) => {
@@ -665,6 +685,7 @@ export function setAgentOffline(agent, isOffline) {
 
 export function renderError(message) {
   const grid = document.getElementById("grid");
+  destroyWidgets();
   grid.innerHTML = "";
   const errorEl = document.createElement("div");
   errorEl.className = "error-message";

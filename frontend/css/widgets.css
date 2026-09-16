@@ -1,0 +1,184 @@
+/* Widget tiles (item.kind === "widget", see js/widgets/). A widget sits in the
+   same .tile box as every other tile, so it inherits the theme's surface,
+   radius, edge and ink with no per-theme rules here. Everything below draws
+   in currentColor and opacity only. That is what keeps one widget correct
+   across 4 themes x 2 grounds: the theme decides the colour, the widget
+   decides the layout.
+
+   Linked before themes.css, so a theme can still override a widget rule at
+   equal specificity if one ever needs to. */
+
+/* The label stays in the DOM as the tile's accessible name ("Clock",
+   "Weather") but the widget draws its own content in its place. */
+.tile .label.widget-a11y-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A widget isn't pressable, so it gets no press feedback. .tile:active
+   scales and brightens, and on a div that only fires on iOS because of the
+   body touch listener app.js adds for the buttons. */
+.tile.tile-widget:active {
+  transform: none;
+  filter: none;
+}
+
+.tile-widget .widget-body {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 8cqmin;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4cqmin;
+  /* Digits that don't shift the time sideways every minute. */
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  min-width: 0;
+}
+
+/* ── Clock & weather ────────────────────────────────────────────────────── */
+
+.widget-clock-weather .wc-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.widget-clock-weather .wc-time {
+  font-size: 22px;
+  font-size: clamp(15px, 24cqmin, 56px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.widget-clock-weather .wc-date,
+.widget-clock-weather .wc-place,
+.widget-clock-weather .wc-range {
+  font-size: 12px;
+  font-size: clamp(9px, 9cqmin, 16px);
+  font-weight: 500;
+  /* 0.75, not button.css's 0.65 subtitle dimming. This is primary content on
+     a widget, not a secondary caption, and it has to stay readable on Liquid
+     Glass light's pale pane too. */
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.widget-clock-weather .wc-weather {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.widget-clock-weather .wc-weather[hidden] {
+  display: none;
+}
+
+.widget-clock-weather .wc-now {
+  display: flex;
+  align-items: center;
+  gap: 3cqmin;
+}
+
+.widget-clock-weather .wc-icon {
+  width: clamp(14px, 16cqmin, 40px);
+  height: clamp(14px, 16cqmin, 40px);
+}
+
+.widget-clock-weather .wc-icon:empty {
+  display: none;
+}
+
+.widget-clock-weather .wc-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.widget-clock-weather .wc-temp {
+  font-size: 15px;
+  font-size: clamp(11px, 14cqmin, 34px);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A reading older than the cache's fresh window, or a failed refresh. Dimmed,
+   not hidden: an hour-old temperature is still roughly right, and a clearly
+   dimmed one doesn't claim to be current. */
+.widget-clock-weather .wc-weather.wc-stale {
+  opacity: 0.6;
+}
+
+/* 1x1 (square-ish): time on top, current weather under it. The city and
+   min/max don't fit legibly at this size, so they wait for a wider tile. */
+.widget-clock-weather .wc-place,
+.widget-clock-weather .wc-range {
+  display: none;
+}
+
+/* Wide tile (2x1 and wider): clock on the left, weather on the right, and
+   now there is room for the city and today's range. The breakpoint is 6:5,
+   not 2:1, because a 2x1 tile on a 4-row phone deck measures only ~1.3:1
+   (230x180 on a 375x812 screen). Each size is the smaller of a height-based
+   and a width-based value: the two halves share the width, so sizing off
+   the height alone overflowed into each other on exactly that tile. */
+@container (min-aspect-ratio: 6 / 5) {
+  .tile-widget.widget-clock-weather .widget-body {
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 6cqw;
+    padding: 6cqh 7cqw;
+  }
+
+  .widget-clock-weather .wc-clock,
+  .widget-clock-weather .wc-weather {
+    align-items: flex-start;
+  }
+
+  .widget-clock-weather .wc-time {
+    font-size: clamp(18px, min(30cqh, 16cqw), 64px);
+  }
+
+  .widget-clock-weather .wc-date,
+  .widget-clock-weather .wc-place,
+  .widget-clock-weather .wc-range {
+    font-size: clamp(10px, min(12cqh, 6.5cqw), 18px);
+  }
+
+  .widget-clock-weather .wc-place,
+  .widget-clock-weather .wc-range {
+    display: block;
+  }
+
+  .widget-clock-weather .wc-icon {
+    width: clamp(16px, min(22cqh, 11cqw), 44px);
+    height: clamp(16px, min(22cqh, 11cqw), 44px);
+  }
+
+  .widget-clock-weather .wc-temp {
+    font-size: clamp(14px, min(22cqh, 11cqw), 44px);
+  }
+}
+
+/* A very short tile (an 8-row deck): drop the date before the time starts
+   clipping. */
+@container (max-height: 70px) {
+  .widget-clock-weather .wc-date {
+    display: none;
+  }
+}
