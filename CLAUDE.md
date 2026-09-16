@@ -293,6 +293,24 @@ These three are non-negotiable and get checked on every relevant change:
   fires when frozen. Kept here only as history: the `MoveWindow(...,
   bRepaint=TRUE)` that used to shrink it, and then the minimize itself, were
   both removed while chasing the stray rectangle. The minimize was the cause.
+- **Exit code 3 from the agent is retried, not treated as deliberate.**
+  It used to sit in `AGENT_DELIBERATE_EXIT_CODES` alongside 0, and that was
+  wrong in the case that matters most -- an **upgrade**. The outgoing install's
+  agent can still hold the singleton mutex when the new launcher spawns its
+  own, so the first spawn exits 3, the supervisor reads "stopped on purpose"
+  and never tries again: a backend, a window, three processes and no agent,
+  with nothing on screen saying so. Reproduced deliberately (hold the mutex
+  20s, kill the agent) and confirmed fixed the same way. `AGENT_MUTEX_RETRIES`
+  bounds it, because if a genuinely separate IT-Deck is running no respawn
+  will ever win that mutex. **Keep the value 3 non-zero** --
+  `agents/windows/start_agent.bat` pauses on a non-zero exit, which is how
+  the legacy shortcut keeps its "already running" message readable.
+- **The header dot reports the real agent, not decoration.** The launcher
+  passes `agent_alive` into the window and the Tk thread polls it; a dead
+  agent turns the dot amber and adds a line saying what stops working. A dot
+  that is always green is worse than no dot: it is the one affordance a user
+  reads as health, and this window is the only place a stopped agent could
+  ever be visible now that there is no console.
 - **The launcher supervises the agent and restarts it; it does not restart
   the backend.** `run_launcher()`'s loop respawns the agent on an
   *unexpected* exit with 2s→30s backoff, resetting once one survives 60s.

@@ -55,6 +55,7 @@ QR_QUIET_MODULES = 2
 # be noticed on a busy desktop, short enough that it is not in the way.
 TOPMOST_RELEASE_MS = 4000
 UPDATE_POLL_MS = 1000
+AGENT_STATUS_POLL_MS = 2000
 
 # The frozen exe is built --windowed, so it has NO console: sys.stdout and
 # sys.stderr are None and a bare print() would raise AttributeError. They are
@@ -157,15 +158,27 @@ AGENT_RESTART_MAX_DELAY = 30.0
 # that is up and working.
 AGENT_HEALTHY_AFTER = 60.0
 
-# Exit codes that mean "the agent stopped on purpose" -- never respawned.
-# 0 is agent_shutdown's os._exit(0) (a tile the user pressed). 3 is
-# agent.py's EXIT_ALREADY_RUNNING: another agent holds the singleton mutex,
-# so respawning would just pit two processes that both refuse to run against
-# each other. It is deliberately not 0 there because
-# agents/windows/start_agent.bat pauses on a non-zero exit, which is how the
-# legacy shortcut keeps its "already running" message on screen -- keep the
-# two files in sync.
-AGENT_DELIBERATE_EXIT_CODES = (0, 3)
+# The exit code that means "the agent stopped on purpose" -- never respawned.
+# Only exit 0 -- agent_shutdown's os._exit(0), i.e. the Close Agent tile,
+# which the user pressed and must stay pressed.
+AGENT_DELIBERATE_EXIT_CODES = (0,)
+
+# agent.py's EXIT_ALREADY_RUNNING. This used to sit in the tuple above, and
+# that was wrong in the one case that matters most: on an **upgrade**, the
+# outgoing install's agent can still hold the singleton mutex when the new
+# launcher spawns its own, so the very first spawn exits 3, the supervisor
+# reads "stopped on purpose" and never tries again -- leaving a backend, a
+# window, three processes and no agent, with nothing on screen saying so.
+# Reproduced deliberately: hold the mutex for 20s, kill the agent, and the
+# deck stays agent-less long after the mutex is free.
+#
+# So 3 is retried, but only a few times: if a genuinely separate IT-Deck is
+# running, no amount of respawning will ever win that mutex and something has
+# to stop. Keep the value non-zero -- agents/windows/start_agent.bat pauses on
+# a non-zero exit, which is how the legacy shortcut keeps its "already
+# running" message readable.
+AGENT_EXIT_ALREADY_RUNNING = 3
+AGENT_MUTEX_RETRIES = 5
 
 
 def find_free_port(preferred: int, attempts: int = 20) -> int:
@@ -626,12 +639,14 @@ _GLASS = {
     # ever used.
     "surface_raised": "#1d2330",
     "ok": "#4ade80",
+    "warn": "#f59e0b",
 }
 
 _STRINGS = {
     "en": {
         "title": "IT-Deck",
         "running": "IT-Deck is running",
+        "agent_down": "the agent is not running -- tiles that control this PC won't work",
         "step1_title": "Open the deck on your phone",
         "step1_body": "Point your phone's camera at the code. The phone has to be on the same Wi-Fi as this PC.",
         "step1_body_no_qr": "Open this address on your phone. It has to be on the same Wi-Fi as this PC.",
@@ -656,6 +671,7 @@ _STRINGS = {
     "ru": {
         "title": "IT-Deck",
         "running": "IT-Deck работает",
+        "agent_down": "агент не запущен — плитки, которые управляют этим ПК, не сработают",
         "step1_title": "Открой деку на телефоне",
         "step1_body": "Наведи камеру телефона на код. Телефон должен быть в той же сети Wi-Fi, что и этот компьютер.",
         "step1_body_no_qr": "Открой этот адрес на телефоне. Он должен быть в той же сети Wi-Fi, что и этот компьютер.",
@@ -855,6 +871,7 @@ def show_info_window(
     on_quit,
     update_queue: "Optional[queue.Queue]" = None,
     other_ips: "Optional[list]" = None,
+    agent_alive=None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1080,11 +1097,40 @@ def show_info_window(
 
         header = tk.Frame(root, bg=g["bg"])
         header.pack(fill="x", padx=PAD, pady=(14, 8))
-        tk.Label(
-            header, text="●", font=("Segoe UI", 9), bg=g["bg"], fg=g["ok"]
-        ).pack(side="left", padx=(0, 6))
+        status_dot = tk.Label(header, text="●", font=("Segoe UI", 9), bg=g["bg"], fg=g["ok"])
+        status_dot.pack(side="left", padx=(0, 6))
         label(header, s["running"], bold=True, size=13).pack(side="left")
         label(header, f"v{ITDECK_VERSION}", muted=True, size=9).pack(side="right")
+
+        # A dot that is always green is decoration pretending to be status.
+        # The launcher knows whether the agent process is alive -- it
+        # supervises it -- so the dot reports that, and a line appears saying
+        # what it means for the user. Without this, an agent that died (or one
+        # that lost the singleton mutex five times and gave up) leaves the
+        # window showing three confident steps and a healthy green dot.
+        agent_warning = label(root, s["agent_down"], muted=True, size=8, wrap=460)
+
+        def poll_agent() -> None:
+            try:
+                alive = bool(agent_alive())
+            except Exception:
+                alive = True  # never let a broken probe raise an alarm
+            status_dot.configure(fg=g["ok"] if alive else g["warn"])
+            if alive:
+                if agent_warning.winfo_ismapped():
+                    # Shrink back too, not just hide: fit_window() is the only
+                    # thing that resizes an explicitly-sized window, so
+                    # without this the window keeps the taller geometry after
+                    # the agent recovers.
+                    agent_warning.pack_forget()
+                    fit_window()
+            elif not agent_warning.winfo_ismapped():
+                agent_warning.pack(anchor="w", padx=PAD, pady=(0, 6), after=header)
+                fit_window()
+            root.after(AGENT_STATUS_POLL_MS, poll_agent)
+
+        if agent_alive is not None:
+            root.after(AGENT_STATUS_POLL_MS, poll_agent)
 
         separator = tk.Frame(root, bg=g["border"], height=1)
         separator.pack(fill="x", padx=PAD, pady=(0, 10))
@@ -1387,6 +1433,11 @@ def run_launcher() -> int:
 
     agent_proc = spawn_agent()
     agent_started_at = time.time()
+    # A one-slot holder so the info window can ask about the *current* agent:
+    # the supervisor loop below rebinds agent_proc on every respawn, and a
+    # closure over the variable would keep reporting on a process that is
+    # already gone.
+    agent_handle = {"proc": agent_proc}
 
     # Pick one link to lead with, not three -- a phone user has no way to
     # tell which of several printed addresses is the right one.
@@ -1434,7 +1485,14 @@ def run_launcher() -> int:
         threading.Thread(target=_update_check_worker, args=(update_queue,), daemon=True).start()
 
     show_info_window(
-        dashboard_url, studio_url, agent_token, logs_dir, quit_requested.set, update_queue, other_ips
+        dashboard_url,
+        studio_url,
+        agent_token,
+        logs_dir,
+        quit_requested.set,
+        update_queue,
+        other_ips,
+        lambda: agent_handle["proc"].poll() is None,
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()
@@ -1446,11 +1504,13 @@ def run_launcher() -> int:
     # in, so nobody sees it, and the deck simply goes half-dead with no
     # explanation. Respawning is what makes the two paths equally reliable.
     #
-    # Only an unexpected exit is a crash worth restarting -- see
-    # AGENT_DELIBERATE_EXIT_CODES for the two that mean the agent stopped on
-    # purpose and must be left alone.
+    # Only an unexpected exit is a crash worth restarting on sight: exit 0 is
+    # the Close Agent tile and is left alone, and exit 3 (the singleton mutex)
+    # is retried a bounded number of times -- see the constants for why that
+    # one is not simply "deliberate".
     agent_restart_delay = AGENT_RESTART_MIN_DELAY
     agent_restart_due: Optional[float] = None
+    agent_mutex_retries = 0
     try:
         while True:
             if quit_requested.is_set():
@@ -1467,6 +1527,22 @@ def run_launcher() -> int:
                     # Nothing schedules a restart, and poll() keeps returning
                     # 0, so this prints once and then stays quiet.
                     agent_restart_due = float("inf")
+                elif agent_status == AGENT_EXIT_ALREADY_RUNNING:
+                    agent_mutex_retries += 1
+                    if agent_mutex_retries > AGENT_MUTEX_RETRIES:
+                        print(
+                            "Another IT-Deck agent holds the singleton mutex after "
+                            f"{AGENT_MUTEX_RETRIES} attempts -- giving up. Quit the other "
+                            "IT-Deck (or end ITDeck.exe in Task Manager) and relaunch."
+                        )
+                        agent_restart_due = float("inf")
+                    else:
+                        print(
+                            "Agent found another instance holding the mutex -- retrying in "
+                            f"{agent_restart_delay:.0f}s "
+                            f"({agent_mutex_retries}/{AGENT_MUTEX_RETRIES})."
+                        )
+                        agent_restart_due = time.time() + agent_restart_delay
                 else:
                     print(
                         f"Agent exited unexpectedly (code {agent_status}) -- restarting in "
@@ -1476,6 +1552,7 @@ def run_launcher() -> int:
 
             if agent_restart_due is not None and time.time() >= agent_restart_due:
                 agent_proc = spawn_agent()
+                agent_handle["proc"] = agent_proc
                 print("Agent restarted.")
                 agent_restart_due = None
                 # Backoff climbs across consecutive crashes so a genuinely
@@ -1488,6 +1565,9 @@ def run_launcher() -> int:
             elif agent_restart_due is None and agent_proc.poll() is None:
                 if time.time() - agent_started_at > AGENT_HEALTHY_AFTER:
                     agent_restart_delay = AGENT_RESTART_MIN_DELAY
+                    # An agent that has run this long won the mutex, so the
+                    # budget is for the *next* contended start, not this one.
+                    agent_mutex_retries = 0
 
             time.sleep(1)
     except KeyboardInterrupt:

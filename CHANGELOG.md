@@ -40,6 +40,16 @@ the next release.
   measured here, it offered the tunnel's 172.16.0.1/30 while the phone needed
   192.168.0.15. Addresses are now ranked (private range, subnet width, then a
   name hint) with the routed answer kept only as a tie-break.
+- **An upgrade could leave you with no agent at all, permanently.** The agent
+  exits with code 3 when another instance holds its singleton mutex, and the
+  supervisor treated that as "stopped on purpose" and never retried — so if
+  the outgoing install's agent was still shutting down when the new one
+  started, the deck came up with a backend, a window and no agent, and nothing
+  said so. Reproduced deliberately, fixed, and re-verified: it now retries
+  with backoff and recovers on its own.
+- **The status dot in the window is now real.** It reports whether the agent
+  process is actually alive, and a line appears saying what stops working when
+  it isn't. It used to be permanently green.
 - **The window no longer sits on top of everything.** It set `-topmost` at
   startup and never cleared it, so it floated above browsers and full-screen
   games for its whole life. It now releases the flag after four seconds.
