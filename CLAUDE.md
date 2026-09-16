@@ -52,7 +52,7 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
 ## Deploy
 
 - **Standalone:** changes in `backend/`, `frontend/`, `agents/windows/` need
-  `standalonebuild.ps1`; a `v*.*.*` tag makes CI attach `ITDeck.exe`.
+  `standalone/build.ps1`; a `v*.*.*` tag makes CI attach `ITDeck.exe`.
 - **Legacy (Athlon):** `ssh athlon ./deploy.sh` (backend, local build);
   `./check.sh` to verify. Frontend is a `git pull`, then Ctrl+Shift+R on the
   phone. Backend before frontend for themes; frontend first for the
