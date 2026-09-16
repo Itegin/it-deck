@@ -37,19 +37,17 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   symmetric EN/RU strings in `studio-i18n.js`. State colours are written only
   if the key is present/explicitly chosen (never by comparing values).
 - `/api/widgets/weather` is unauthenticated (the phone calls it) and bounded by
-  a snapped-coordinate cache. Everything that writes needs `X-Agent-Token`.
+  a snapped-coordinate cache. All writes need `X-Agent-Token`.
 - Standalone: tokens default to `admin`, port `49732`, and `config.env` is
   load-if-exists (never regenerate). The exe is `--windowed`: no console, and
   the info window is the only UI, so nothing may destroy it. `build.ps1` and
   `.github/workflows/release.yml` duplicate the PyInstaller call (absolute
   paths), so change both together.
-- Everything the agent launches must survive IT-Deck closing
-  (`_spawn_detached`). Launches run off the receive loop, and "ok" means
-  started. Elevation-required targets are reported, not swallowed.
+- Agent launches must survive IT-Deck closing (`_spawn_detached`) and run off
+  the receive loop ("ok" = started). `kill_process()` spares IT-Deck itself.
 - The VPN tile is `launch_app` + `state_key vpn.running`. The launcher passes
   `VPN_PROCESS_NAME` to the agent at spawn, so a new path lights the indicator
   only after a restart.
-- `kill_process()` never kills IT-Deck's own processes (`protected_pids()`).
 
 ## Deploy
 
@@ -60,6 +58,4 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   `./check.sh` to verify. Frontend is a `git pull`, then Ctrl+Shift+R on the
   phone. Backend before frontend for themes; frontend first for the
   `/ws/client` handshake.
-- The Windows agent is restarted by hand (desktop shortcut). Claude can't do
-  it, so ask the user.
-- No tests and no CD in CI.
+- A legacy agent is restarted by hand from its shortcut, so ask the user.
