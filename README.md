@@ -7,12 +7,26 @@ for your PC.
 
 | The deck, on your phone | Studio, on the PC |
 | --- | --- |
-| ![The IT-Deck dashboard on a phone](docs/screenshots/dashboard.png) | ![Studio Mode](docs/screenshots/studio.png) |
+| <img src="docs/screenshots/dashboard.png" alt="The IT-Deck deck on a phone: a clock and weather widget, the Mic tile red while muted, Volume at 62 %, Audio Switch showing the current device, VPN lit while it runs" width="300"> | ![Studio: a live preview of the deck next to the step-by-step editor for the VPN tile, with the VPN setup card on top](docs/screenshots/studio.png) |
+
+The tiles show the PC's real state, not just buttons: in the screenshot the
+microphone is **muted** (red), volume sits at **62 %**, Audio Switch names the
+**current output device**, and **VPN is lit** because the client is running.
+The top tile is the **Clock & weather** widget.
+
+**Studio** is where the deck is built: click a tile in the live preview to
+edit it, `+` to add one, drag to move. The editor walks you through it —
+what the tile does, its setup, its look — and the VPN path gets its own card
+at the top until it's set.
+
+Four themes, each working on a dark or light background:
+
+![The same deck in the Flat, Pastel, Glossy and Liquid Glass themes](docs/screenshots/themes.png)
 
 And the window `ITDeck.exe` opens on the PC it controls — the whole setup, in
 three steps, with a QR code so the phone needs no typing:
 
-![The IT-Deck window](docs/screenshots/window.png)
+<img src="docs/screenshots/window.png" alt="The IT-Deck window: step 1 is a QR code and link for the phone, step 2 opens Studio, step 3 explains Minimize and Quit" width="529">
 
 ## Quick start (standalone)
 
@@ -113,25 +127,36 @@ A fresh install seeds 8 tiles, all wired to a real command:
 - **Close Agent** — stop the agent. It stays stopped: quit IT-Deck from its
   window and relaunch to bring it back
 
+Beyond those, Studio can add a **Clock & weather** widget (the phone's time
+and date, plus the current weather for a city you pick — Open-Meteo, no API
+key; from 2×1 wide) and a **Program on/off** tile that starts a program or
+closes it if it's already running.
+
+The look is two settings: the **theme** — Flat, Pastel, Glossy or Liquid
+Glass — cycled from the pill in the deck's header, and the **background**
+(auto, light or dark), set in Studio. Both sync to every connected phone.
+
 (Three earlier placeholder tiles — Lights, Spotify, Sleep PC — had no
 handler behind them and just returned `unknown command`; they're gone from
 new installs, and a startup fixup removes them from existing databases too.)
 
-That catalog is only the starting point — **Studio Mode** (`/studio.html`) is
-a separate desktop-only admin page for editing it directly (add/edit/delete
-tiles, pick audio devices from the live agent, compact the layout). The phone
-Dashboard never mutates the catalog.
+That catalog is only the starting point — **Studio** (`/studio.html`, the
+**Open Studio** button in the window) is the desktop page for editing it: a
+live preview of the deck (click a tile to edit, `+` on an empty cell to add,
+drag to move), and an editor where you pick what a tile does from cards
+instead of typing command names and JSON. Audio devices are picked from the
+list the agent reports, **Compact layout** closes the gaps, and it's in
+English or Russian depending on the browser. The phone Dashboard never
+changes the catalog.
 
 ### Configuring the VPN tile
 
 It's the one seeded tile that can't work out of the box — it has to be told
-which program to launch. In Studio Mode, edit the VPN item's `params`. It's
-JSON, so Windows paths need doubled backslashes:
-
-```json
-{"active_style": "normal",
- "path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}
-```
+which program to launch. Open Studio: until a path is set, a **Set the path
+to your VPN client** card sits at the top. Paste the full path to the client's
+`.exe` there (or into the VPN tile's editor) and press **Save**. The easy way
+to get it: find the file in Explorer and press **Ctrl+Shift+C** to copy it as
+a path — the quotes Explorer adds are fine, Studio strips them.
 
 The tile then lights up whenever that program is running — including before
 you ever press it. Until it's configured, pressing it tells you what to set
@@ -152,14 +177,8 @@ another.)
 <details>
 <summary>If you'd rather have one tile that toggles it on and off</summary>
 
-Change the item's `type` to `process_toggle` in Studio and give it both a
-`path` and a `process_name`:
-
-```json
-{"active_style": "normal",
- "process_name": "v2RayTun.exe",
- "path": "C:\\Program Files (x86)\\v2RayTun\\v2RayTun.exe"}
-```
+In the VPN tile's editor, press **Change type**, pick **Program on/off**,
+and fill in the process name (e.g. `v2RayTun.exe`) and the path to the exe.
 
 Then one press starts it and the next stops it. There's no confirmation step,
 so a mis-tap on a lit tile disconnects you — which is why it isn't the
@@ -289,4 +308,4 @@ as mixed content on an HTTPS page.
 
 ## Status
 
-v0.4.0 — personal project, active development, API may change.
+v0.4.1 — personal project, active development, API may change.
