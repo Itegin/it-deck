@@ -32,6 +32,14 @@ standalone mode is §10, tech debt is §12.
   few seconds after launch with the reason buried in a log file. It now
   explains that the port is already in use, in a window, and stops.
 
+- **A tile turned into the clock widget came back as the old tile.** Replacing
+  the Terminal tile with "Clock & weather" in Studio and leaving its label
+  alone held until the next restart, when a startup fixup rewrote the tile's
+  type back and the deck — finding no widget of that type — drew the Terminal
+  tile again. The fixups now only touch tiles that are still what they were
+  seeded as, and a tile already broken this way is repaired on the next
+  start.
+
 ---
 
 ## v0.4.3 — 2026-09-19

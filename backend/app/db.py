@@ -159,17 +159,32 @@ def fixup_legacy_seed() -> None:
     # fixup_volume_item already had to be fixed out of), and it means moving
     # the default from Notepad to Windows Terminal upgrades the installs that
     # never touched it without overwriting the ones that did.
+    #
+    # The type UPDATE needed the same treatment and took longer to get it.
+    # `type <> 'launch_app'` reads like a guard and is not one: it is "every
+    # Terminal row that is not already what I want", which is the unguarded
+    # case wearing a disguise. Replacing this tile with the clock widget in
+    # Studio and leaving its label alone left a row at kind='widget',
+    # type='clock_weather' -- and one restart later this statement had put it
+    # back to type='launch_app'. The deck then has a widget row with a type
+    # no widget is registered for, so mountWidget() declines it and the tile
+    # falls back to its icon and label: the Terminal tile, apparently back
+    # from the dead. Reproduced against a scratch DB, which is also where the
+    # `kind = 'action'` clause below comes from -- see fixup_widget_types().
     conn = get_connection()
     try:
         conn.execute(
-            "UPDATE item SET type = 'launch_app' WHERE label = 'Terminal' AND type <> 'launch_app'"
+            """
+            UPDATE item SET type = 'launch_app'
+            WHERE label = 'Terminal' AND kind = 'action' AND type = 'launch'
+            """
         )
         placeholders = ", ".join("?" for _ in _DEFAULT_TERMINAL_PARAMS)
         conn.execute(
             f"""
             UPDATE item
             SET params = ?
-            WHERE label = 'Terminal'
+            WHERE label = 'Terminal' AND kind = 'action'
               AND (params IS NULL OR params = '' OR params = '{{}}'
                    OR params IN ({placeholders}))
             """,
@@ -212,7 +227,7 @@ def fixup_mic_item() -> None:
                 target = 'windows',
                 params = '{"device":"microphone","active_style":"alert"}',
                 state_key = 'mic.muted'
-            WHERE label = 'Camera'
+            WHERE label = 'Camera' AND kind = 'action'
             """
         )
         # The UPDATE above only ever matches once -- the label flips away
@@ -233,12 +248,15 @@ def fixup_mic_item() -> None:
             """
             UPDATE item
             SET params = '{"device":"microphone","active_style":"alert"}'
-            WHERE label = 'Mic'
+            WHERE label = 'Mic' AND kind = 'action'
               AND (params IS NULL OR params = '' OR params = '{}'
                    OR params = '{"device":"microphone"}')
             """
         )
-        conn.execute("UPDATE item SET icon = 'mic' WHERE label = 'Mic' AND (icon IS NULL OR icon = '' OR icon = 'camera')")
+        conn.execute(
+            "UPDATE item SET icon = 'mic' WHERE label = 'Mic' AND kind = 'action' "
+            "AND (icon IS NULL OR icon = '' OR icon = 'camera')"
+        )
         conn.commit()
     finally:
         conn.close()
@@ -255,6 +273,15 @@ def fixup_volume_item() -> None:
     # same way fixup_audio_switch_state_key() guards on state_key IS NULL:
     # the seeded row starts as type='run', so this still fires once on an
     # unmigrated install and never touches the row again afterwards.
+    #
+    # It said that while actually testing `type <> 'audio_volume_set'`, which
+    # is not the same clause and not a guard at all -- "anything that is not
+    # already the target" matches every deliberate change too. This row moves
+    # and resizes as well as retyping, so turning Volume into a widget in
+    # Studio got the widget dragged to (2,0), stretched to width 2 and handed
+    # speaker params on the next restart. Now spelled as the value it
+    # upgrades *from*, plus kind='action' so a converted tile is out of reach
+    # whatever its type says.
     conn = get_connection()
     try:
         conn.execute(
@@ -267,7 +294,7 @@ def fixup_volume_item() -> None:
                 width = 2,
                 row = 2,
                 col = 0
-            WHERE label = 'Volume' AND type <> 'audio_volume_set'
+            WHERE label = 'Volume' AND kind = 'action' AND type = 'run'
             """
         )
         conn.commit()
@@ -330,7 +357,7 @@ def fixup_audio_switch_state_key() -> None:
             """
             UPDATE item
             SET state_key = 'speaker.device_name'
-            WHERE label = 'Audio Switch' AND state_key IS NULL
+            WHERE label = 'Audio Switch' AND kind = 'action' AND state_key IS NULL
             """
         )
         conn.commit()
@@ -363,8 +390,14 @@ def fixup_toggle_off_colors() -> None:
     # params/icon UPDATE cannot undo it either.
     conn = get_connection()
     try:
-        conn.execute("UPDATE item SET color = '#2a2f38' WHERE label = 'Mic' AND color = '#e0575b'")
-        conn.execute("UPDATE item SET color = '#2a2f38' WHERE label = 'VPN' AND color = '#0d9488'")
+        conn.execute(
+            "UPDATE item SET color = '#2a2f38' "
+            "WHERE label = 'Mic' AND kind = 'action' AND color = '#e0575b'"
+        )
+        conn.execute(
+            "UPDATE item SET color = '#2a2f38' "
+            "WHERE label = 'VPN' AND kind = 'action' AND color = '#0d9488'"
+        )
         conn.commit()
     finally:
         conn.close()
@@ -446,6 +479,38 @@ def fixup_close_agent_item() -> None:
         conn.close()
 
 
+def fixup_widget_types() -> None:
+    """Put back the type on widget rows an earlier fixup overwrote.
+
+    Only `fixup_legacy_seed()` could produce this shape -- a row with
+    `kind = 'widget'` and `type = 'launch_app'` -- because it is the one
+    statement that ever wrote a type onto a row it had not just created, and
+    `launch_app` is the value it wrote. A real launch_app tile is an action,
+    never a widget, so the combination is unambiguous damage rather than
+    anything a person could have chosen in Studio.
+
+    The deck cannot show such a row at all: `mountWidget()` looks `type` up in
+    WIDGETS, finds nothing, declines, and the tile falls back to its icon and
+    label. On the install that reported this, that fallback was the Terminal
+    tile the widget had replaced, reappearing after every restart.
+
+    `clock_weather` is not a guess here: it is the only registered widget
+    type there has ever been (js/widgets/index.js, and CLAUDE.md's "keep in
+    step" list). **If a second widget type is ever added, this fixup has to
+    learn how to tell them apart or stop running** -- by then the damaged
+    rows it exists for are long since repaired.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE item SET type = 'clock_weather' "
+            "WHERE kind = 'widget' AND type = 'launch_app'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fixup_vpn_tile_type() -> None:
     """Move an unconfigured VPN tile from `process_toggle` to `launch_app`.
 
@@ -469,7 +534,7 @@ def fixup_vpn_tile_type() -> None:
             """
             UPDATE item
             SET type = 'launch_app'
-            WHERE label = 'VPN'
+            WHERE label = 'VPN' AND kind = 'action'
               AND type = 'process_toggle'
               AND params NOT LIKE '%process_name%'
               AND params NOT LIKE '%"path"%'

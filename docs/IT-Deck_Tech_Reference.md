@@ -239,29 +239,49 @@ theme — see §7.
 
 ### Seed and fixups
 
-`seed_if_empty()` inserts one workspace (`Home`, 3×5) and six placeholder
-items — but only on a genuinely fresh DB. Everything after it is an
-**idempotent fixup that runs on every startup**, because older installs still
-need backfilling. Order in `main.py` is load-bearing:
+`seed_if_empty()` inserts one workspace (`Home`, 3×5) and three placeholder
+items (`Terminal`, `Camera`, `Volume`) — but only on a genuinely fresh DB.
+Everything after it is an **idempotent fixup that runs on every startup**,
+because older installs still need backfilling. Order in `main.py` is
+load-bearing:
 
 | # | Function | What it does | Idempotency guard |
 |---|---|---|---|
-| 1 | `fixup_legacy_seed` | `Terminal` → `launch_app` / `notepad.exe` | Re-applies identical values forever (harmless) |
-| 2 | `fixup_mic_item` | `Camera` → `Mic` / `audio_mute_toggle`, then a second unguarded backfill of `params`/`icon` keyed on `label = 'Mic'` | Label flip + a second always-on UPDATE |
-| 3 | `fixup_volume_item` | `Volume` → `audio_volume_set`, width 2, moved to (2,0) | `AND type <> 'audio_volume_set'` — added after an always-on version silently reverted Studio edits on every restart |
-| 4 | `fixup_day4_items` | Inserts `Headphones`, `Audio Switch`, `Screenshot` | Insert-if-label-missing. **Must run after #3** — Headphones takes the cell Volume's move vacates |
-| 5 | `fixup_vpn_item` | Inserts `VPN` at (3,1) | `WHERE NOT EXISTS`; `workspace_id` hardcoded to `1` (unlike #4's dynamic lookup) |
-| 6 | `fixup_audio_switch_state_key` | Sets `Audio Switch`'s `state_key = speaker.device_name` | `AND state_key IS NULL` |
-| 7 | `fixup_toggle_off_colors` | Repaints `Mic` and `VPN` off-state colour to the neutral `#2a2f38` | Guarded on the exact colour being replaced. **Runs last** — it must see the rows the earlier fixups create |
+| 1 | `fixup_remove_placeholder_tiles` | Deletes `Lights`, `Spotify`, `Sleep PC` — prototype types no handler implements | Plain `DELETE`; nothing to migrate them into |
+| 2 | `fixup_legacy_seed` | `Terminal` → `launch_app` + Windows Terminal params | `AND kind = 'action' AND type = 'launch'` for the type; params guarded on every default it has ever shipped |
+| 3 | `fixup_mic_item` | `Camera` → `Mic` / `audio_mute_toggle`, then backfills `params`/`icon` on the label it settles into | Label flip, then guards on the exact old values |
+| 4 | `fixup_volume_item` | `Volume` → `audio_volume_set`, width 2, moved to (2,0) | `AND kind = 'action' AND type = 'run'` |
+| 5 | `fixup_day4_items` | Inserts `Headphones`, `Audio Switch`, `Screenshot` | Insert-if-label-missing. **Must run after #4** — Headphones takes the cell Volume's move vacates |
+| 6 | `fixup_vpn_item` | Inserts `VPN` at (3,1) | `WHERE NOT EXISTS`; `workspace_id` hardcoded to `1` (unlike #5's dynamic lookup) |
+| 7 | `fixup_vpn_tile_type` | An unconfigured `process_toggle` VPN tile → `launch_app` | `AND type = 'process_toggle'` and no real params — a configured toggle is a deliberate setup |
+| 8 | `fixup_close_agent_item` | Inserts `Close Agent` in the first free cell below the occupied rows | Insert-if-label-missing; the cell is computed, never hardcoded |
+| 9 | `fixup_audio_switch_state_key` | Sets `Audio Switch`'s `state_key = speaker.device_name` | `AND state_key IS NULL` |
+| 10 | `fixup_toggle_off_colors` | Repaints `Mic` and `VPN` off-state colour to the neutral `#2a2f38` | Guarded on the exact colour being replaced. **Runs after the inserts** — it must see the rows they create |
+| 11 | `fixup_widget_types` | Repairs widget rows whose `type` #2 overwrote | `kind = 'widget' AND type = 'launch_app'`, a combination only that bug could produce. **Runs last** |
+
+**A guard has to name the value it upgrades *from*.** `AND type <> 'the
+target'` looks like one and is not: it matches every row that is not already
+what the fixup wants, which includes every deliberate change. Both #2 and #4
+were written that way, and the bill came due when a user replaced the
+`Terminal` tile with the clock widget in Studio and left its label alone. One
+restart later #2 had rewritten `type` to `launch_app` on a `kind = 'widget'`
+row; `mountWidget()` then finds no widget registered for that type, declines,
+and the tile falls back to its icon and label — so the Terminal tile
+reappeared, on the deck and after every reload, with nothing in any log.
+Reproduced against a scratch DB, which is where the table's new guards were
+verified: the row survives two restarts unchanged, and #11 repairs the ones
+already damaged.
+
+`AND kind = 'action'` is on every label-matched UPDATE for the same reason
+one layer up. A fixup exists to migrate seeded *action* tiles; a row that is
+no longer an action is a row somebody deliberately turned into something
+else, whatever its other columns say.
 
 The fixups write to SQLite directly and therefore **bypass**
 `_validate_placement`; their placements are hand-verified in their own
-comments.
-
-Of the ten seeded tiles, seven are wired to a real handler. `Lights`,
-`Spotify` and `Sleep PC` still carry the prototype types `toggle`, `launch`
-and `run`, none of which are in `HANDLERS` — pressing one returns
-`unknown command: <type>`.
+comments. The insert-if-label-missing ones (#5, #6, #8) also mean a seeded
+tile that is *renamed* comes back as a second tile on the next start — see
+§12.
 
 ---
 
@@ -1932,6 +1952,16 @@ Ordered roughly by how likely each is to bite.
     and `MoveWindow(..., bRepaint=TRUE)` immediately before the console is
     minimized (§10.5). If it recurs, both hypotheses are wrong and the
     diagnosis starts over.
+
+24. **Renaming or deleting a seeded tile brings it back.** `fixup_day4_items`,
+    `fixup_vpn_item` and `fixup_close_agent_item` decide whether to insert by
+    looking for their own label, so a `Screenshot` renamed in Studio is a
+    *missing* `Screenshot` as far as the next startup is concerned, and a
+    second one is inserted — raw, bypassing `_validate_placement`, so it can
+    land on an occupied cell. The real fix is a record of which fixups a DB
+    has already had applied (a `schema_migration` table), so a one-shot insert
+    can be one-shot. The `kind = 'action'` guard added in §3 does not help
+    here: these are inserts, not updates.
 
 ---
 

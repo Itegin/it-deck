@@ -31,6 +31,7 @@ from app.db import (
     fixup_volume_item,
     fixup_vpn_item,
     fixup_vpn_tile_type,
+    fixup_widget_types,
     init_db,
     seed_if_empty,
 )
@@ -66,6 +67,10 @@ def on_startup() -> None:
     # to see them in their settled state (VPN in particular does not exist
     # until fixup_vpn_item() has run at least once).
     fixup_toggle_off_colors()
+    # After every fixup that writes a type, because it exists to undo what one
+    # of them used to write -- running it earlier would let the same startup
+    # break the row again.
+    fixup_widget_types()
 
 
 @app.get("/health")
