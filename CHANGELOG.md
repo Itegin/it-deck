@@ -7,6 +7,26 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.4.2 — 2026-09-19
+
+### Fixed
+
+- **Shutting Windows down with IT-Deck running left the PC switched on.**
+  Windows stopped at the "this app is preventing you from shutting down"
+  screen and waited for a click, so a PC that had been told to shut down
+  stayed on all night. IT-Deck now closes itself the moment Windows says the
+  session is ending — shutdown, restart or sign-out — and the machine goes
+  down without asking anything.
+
+  The cause was not the info window: Tk answers the shutdown query correctly
+  on its own and never opens the Quit confirmation. It was PyInstaller's
+  one-file launcher, which keeps a second, invisible process alive to delete
+  the exe's unpacked temp directory and asks Windows to hold the shutdown
+  while it waits for IT-Deck to exit — which IT-Deck never did, because
+  nothing had ever told it to. See §10.8 of the tech reference.
+
+---
+
 ## v0.4.1 — 2026-09-16
 
 ### Added

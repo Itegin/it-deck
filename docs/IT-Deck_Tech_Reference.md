@@ -1510,6 +1510,63 @@ The built exe gives itself a desktop shortcut (`IT-Deck.lnk`) on first launch �
 technique and idempotency check `start_agent.bat` uses, only fired from Python
 and only when frozen.
 
+### 10.8 Windows shutdown
+
+Shutting the PC down with IT-Deck running used to leave it switched on. The PC
+stopped at Windows' "this app is preventing you from shutting down" screen and
+waited for a click nobody was there to give — twice, overnight, which is what
+this section exists to prevent happening again.
+
+**It is not the info window.** That was the first suspect, since its close box
+opens a modal confirmation dialog and a modal dialog during shutdown is a
+classic stall. Tk clears itself: sending a real `WM_QUERYENDSESSION` to a real
+Tk `HWND` shows Tk answering `TRUE` immediately and mapping the message onto
+the `WM_SAVE_YOURSELF` protocol — *not* onto `WM_DELETE_WINDOW`. The Quit
+dialog never opens on this path.
+
+**It is PyInstaller's `--onefile` bootloader**, the part of `ITDeck.exe` that
+is not ours. One-file mode runs the program as a *child* process and keeps the
+parent alive to delete the unpacked `_MEIxxxx` temp directory after it. So the
+parent can survive long enough to do that, it creates its own hidden top-level
+window — class `PyInstallerOnefileHiddenWindow` — and on `WM_QUERYENDSESSION`
+it calls `ShutdownBlockReasonCreate()` and then waits in its `WM_ENDSESSION`
+handler for the child to exit. (All of this is legible in the bootloader
+binary's own log strings: `LOADER: creating hidden window to capture system
+shutdown events...`, `LOADER: handling session shutdown - giving the child %d
+ms to exit...`.) The child never exited: `run_launcher()` is a supervisor loop
+that only stops on Quit or on the backend dying. The parent waited, timed out,
+and Windows named `ITDeck.exe` as the reason the shutdown had stalled.
+
+**The fix lives in the child** — `install_session_end_handler()` — and is
+simply "exit when asked":
+
+- It registers a hidden window of its own, class `ITDeckSessionEndWatcher`,
+  with a message loop on its own thread. It must be a **real top-level
+  window**: a message-only (`HWND_MESSAGE`) window is never sent session-end
+  messages at all, which is the trap in doing this the obvious way.
+- `WM_QUERYENDSESSION` is the **primary** trigger, not `WM_ENDSESSION`. The
+  bootloader registers its block reason during the *query* phase, so by the
+  time `WM_ENDSESSION` is dispatched the blocking screen may already be up.
+  Acting a phase early means a shutdown somebody cancels at that screen also
+  stops IT-Deck — a relaunch, against a PC that stays on all night.
+- Every route (the watcher's two messages, Tk's `WM_SAVE_YOURSELF`) sets one
+  `threading.Event`, so the teardown is idempotent and the process exits
+  exactly once, in one place.
+- The window procedure returns `TRUE` *before* the teardown runs
+  (`SESSION_END_REPLY_GRACE`), and `DefWindowProcW`/the `WNDPROC` prototype
+  declare a pointer-sized `LRESULT`. Left at the ctypes default that return
+  value truncates to a C `int`, and a truncated answer to
+  `WM_QUERYENDSESSION` reads as `FALSE` — which would *add* a shutdown
+  blocker rather than remove one.
+- The teardown is `terminate()` on the agent and the backend, half a second of
+  grace, then `os._exit(0)` — not `sys.exit`, which would run interpreter
+  shutdown with a tkinter mainloop on another thread, i.e. one more place to
+  hang. Everything is about to be killed by the shutdown anyway; the only
+  thing that matters is that `ITDeck.exe` stops being the reason the PC is on.
+
+Sleep and hibernate are unaffected: those are `WM_POWERBROADCAST` and never
+send `WM_QUERYENDSESSION`.
+
 ### 10.7 Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -1521,6 +1578,7 @@ and only when frozen.
 | VPN tile errors "not configured yet" | No `process_name`/`path` in its params and no env fallback | Set them in Studio (§10.4) |
 | Tiles that need the PC stop responding | Agent died | The launcher respawns it; check the console for restart lines and `logs\agent.log` for why |
 | Backend didn't come up in time | Port conflict, or a startup exception | `logs\backend.log` |
+| Windows won't shut down / stops on "preventing you from shutting down" | A build older than v0.4.2 — PyInstaller's one-file parent holds the shutdown waiting for a child that never exits (§10.8) | Update to v0.4.2 or newer |
 
 ---
 

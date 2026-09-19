@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.4.1"
+ITDECK_VERSION = "0.4.2"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -56,6 +56,17 @@ QR_QUIET_MODULES = 2
 TOPMOST_RELEASE_MS = 4000
 UPDATE_POLL_MS = 1000
 AGENT_STATUS_POLL_MS = 2000
+
+# Windows session-end timing. Both are deliberately small: the PyInstaller
+# parent gives its child a bounded number of milliseconds to exit before it
+# gives up and lets the shutdown stall (see install_session_end_handler).
+#
+# REPLY_GRACE is the pause between the window procedure being told the session
+# is ending and the teardown actually running, so the procedure gets to return
+# TRUE to Windows before the process disappears underneath it. CHILD_GRACE is
+# how long the backend and agent get to die politely after terminate().
+SESSION_END_REPLY_GRACE = 0.15
+SESSION_END_CHILD_GRACE = 0.5
 
 # The frozen exe is built --windowed, so it has NO console: sys.stdout and
 # sys.stderr are None and a bare print() would raise AttributeError. They are
@@ -799,6 +810,169 @@ def hide_console() -> None:
         pass  # convenience only -- never let this block IT-Deck from running
 
 
+# --- Windows session end (shutdown / restart / logoff) --------------------
+
+# Kept alive for the process lifetime on purpose. ctypes does not own the
+# window procedure callback, the WNDCLASSW struct or the class-name buffer
+# once RegisterClassW has been handed them -- if Python collects any of them
+# the class points at freed memory and Windows calls into it at shutdown.
+_SESSION_END_REFS: list = []
+
+WM_QUERYENDSESSION = 0x0011
+WM_ENDSESSION = 0x0016
+
+
+def install_session_end_handler(on_session_end):
+    """Make IT-Deck get out of the way when Windows shuts down.
+
+    The bug this fixes: with IT-Deck running, choosing Shut down left the PC
+    switched on -- twice, overnight -- because Windows stopped at the "this
+    app is preventing you from shutting down" screen and waited for a click
+    nobody was there to give.
+
+    It is not the info window doing it. Tk answers WM_QUERYENDSESSION with
+    TRUE by itself and never routes it to the WM_DELETE_WINDOW handler, so the
+    Quit confirmation dialog is not involved (verified by sending the real
+    message to a real Tk HWND). The blocker is one level further out, in the
+    part of the exe that is not ours: PyInstaller's --onefile bootloader runs
+    the program as a *child* process and keeps the parent alive to delete the
+    unpacked _MEIxxxx temp directory afterwards. To survive long enough to do
+    that, the parent creates its own hidden top-level window -- window class
+    "PyInstallerOnefileHiddenWindow" -- and on WM_QUERYENDSESSION it calls
+    ShutdownBlockReasonCreate() and then sits in its WM_ENDSESSION handler
+    waiting for the child to exit. Our child never exits on its own: it is a
+    supervisor loop that only stops on Quit or on the backend dying. So the
+    parent waits, times out, and Windows blames ITDeck.exe for the stall.
+
+    The fix is therefore in the child, and it is simply "exit when asked".
+    This registers a hidden window of our own -- a real top-level window, and
+    that detail is the trap here: a message-only (HWND_MESSAGE) window is
+    never sent session-end messages at all -- and tears IT-Deck down the
+    moment one arrives. The parent then sees the child gone, cleans up its
+    temp directory, releases its block reason, and the shutdown proceeds.
+
+    WM_QUERYENDSESSION is the primary trigger, not WM_ENDSESSION: the parent
+    registers its block reason during the *query* phase, so by the time
+    WM_ENDSESSION is dispatched the blocking screen may already be up. The
+    cost of acting a phase early is that a shutdown somebody cancels at that
+    screen also stops IT-Deck -- a relaunch, weighed against a PC that stays
+    on all night. Sleep and hibernate are unaffected either way: those are
+    WM_POWERBROADCAST and never send this message.
+
+    Returns the trigger so other paths can feed the same teardown. It is an
+    Event.set, so every route into it is idempotent and the exit happens
+    exactly once, in one place.
+    """
+    trigger = threading.Event()
+
+    def waiter() -> None:
+        trigger.wait()
+        # Let whichever window procedure fired this return its answer to
+        # Windows before the process stops existing underneath it.
+        time.sleep(SESSION_END_REPLY_GRACE)
+        try:
+            on_session_end()
+        except Exception:
+            pass
+        # os._exit, not sys.exit: this is a daemon thread, there is a tkinter
+        # mainloop on another one, and interpreter shutdown here would be one
+        # more place to hang -- which is the exact failure being fixed.
+        os._exit(0)
+
+    threading.Thread(target=waiter, daemon=True).start()
+
+    if os.name != "nt":
+        return trigger.set
+
+    def pump() -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        # LRESULT is pointer-sized. Left at the ctypes default the return
+        # value is truncated to a C int, and the one return value that
+        # matters here is the answer to WM_QUERYENDSESSION -- a truncated one
+        # reads as FALSE, which would *add* a shutdown blocker rather than
+        # remove one.
+        LRESULT = ctypes.c_ssize_t
+        WNDPROC = ctypes.WINFUNCTYPE(
+            LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+        )
+
+        class WNDCLASSW(ctypes.Structure):
+            _fields_ = [
+                ("style", wintypes.UINT),
+                ("lpfnWndProc", WNDPROC),
+                ("cbClsExtra", ctypes.c_int),
+                ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wintypes.HINSTANCE),
+                ("hIcon", wintypes.HICON),
+                ("hCursor", wintypes.HANDLE),
+                ("hbrBackground", wintypes.HANDLE),
+                ("lpszMenuName", wintypes.LPCWSTR),
+                ("lpszClassName", wintypes.LPCWSTR),
+            ]
+
+        user32.DefWindowProcW.restype = LRESULT
+        user32.DefWindowProcW.argtypes = [
+            wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+        ]
+        user32.CreateWindowExW.restype = wintypes.HWND
+        user32.CreateWindowExW.argtypes = [
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+        ]
+
+        def window_proc(hwnd, msg, wparam, lparam):
+            if msg == WM_QUERYENDSESSION:
+                trigger.set()
+                return 1  # yes -- nothing here needs saving, go ahead
+            if msg == WM_ENDSESSION:
+                if wparam:
+                    trigger.set()
+                return 0
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        proc = WNDPROC(window_proc)
+        class_name = "ITDeckSessionEndWatcher"
+        wnd_class = WNDCLASSW()
+        wnd_class.lpfnWndProc = proc
+        wnd_class.hInstance = kernel32.GetModuleHandleW(None)
+        wnd_class.lpszClassName = class_name
+        _SESSION_END_REFS.extend([proc, wnd_class, class_name])
+
+        if not user32.RegisterClassW(ctypes.byref(wnd_class)):
+            print(f"Session-end watcher: RegisterClassW failed ({ctypes.get_last_error()}).")
+            return
+        # Never shown: no WS_VISIBLE, and ShowWindow is never called on it.
+        hwnd = user32.CreateWindowExW(
+            0, class_name, "IT-Deck session watcher", 0, 0, 0, 0, 0,
+            None, None, wnd_class.hInstance, None,
+        )
+        if not hwnd:
+            print(f"Session-end watcher: CreateWindowExW failed ({ctypes.get_last_error()}).")
+            return
+        _SESSION_END_REFS.append(hwnd)
+        print("Session-end watcher ready.")
+
+        # Session-end messages go to the thread that created the window, so
+        # the message loop has to live here and nowhere else.
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+    try:
+        threading.Thread(target=pump, daemon=True).start()
+    except Exception:
+        pass  # the info window's own hook below still covers the common case
+
+    return trigger.set
+
+
 def _version_tuple(text: str) -> tuple:
     """"0.3.7" / "v0.3.7" -> (0, 3, 7). Unparseable trailing parts are dropped.
 
@@ -872,6 +1046,7 @@ def show_info_window(
     update_queue: "Optional[queue.Queue]" = None,
     other_ips: "Optional[list]" = None,
     agent_alive=None,
+    on_session_end=None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1311,6 +1486,19 @@ def show_info_window(
         # stray click from taking the phone offline.
         root.protocol("WM_DELETE_WINDOW", quit_itdeck)
 
+        # A second, independent route into the same shutdown teardown as
+        # install_session_end_handler()'s hidden window. Tk maps Windows'
+        # WM_QUERYENDSESSION onto the X11-flavoured WM_SAVE_YOURSELF protocol
+        # -- so this fires when the machine is shutting down, and never when
+        # the user closes the window (that is WM_DELETE_WINDOW above). It
+        # costs one line and covers the case the hidden window cannot be
+        # tested for without an actual shutdown: that it was created at all.
+        # Both routes end in the same Event, so whichever arrives first wins
+        # and the other is a no-op. Deliberately no confirmation dialog: a
+        # modal prompt during shutdown is the failure mode, not the fix.
+        if on_session_end is not None:
+            root.protocol("WM_SAVE_YOURSELF", on_session_end)
+
         # Nothing should open with a focus ring drawn around a read-only URL
         # field, which is what happens otherwise -- the first focusable widget
         # takes focus and clam renders it selected.
@@ -1484,6 +1672,36 @@ def run_launcher() -> int:
     else:
         threading.Thread(target=_update_check_worker, args=(update_queue,), daemon=True).start()
 
+    def stop_for_session_end() -> None:
+        # Runs when Windows is shutting down, restarting or logging off, on
+        # the session watcher's own thread -- not on the supervisor loop
+        # below, which polls once a second and is far too slow to be what
+        # Windows waits on. It therefore does the teardown itself rather than
+        # signalling quit_requested: this is the one case where the loop does
+        # not get to own it. Deliberately brisk, and terminate() rather than
+        # a graceful stop -- every one of these processes is about to be
+        # killed by the shutdown anyway, and the only thing that matters is
+        # that ITDeck.exe stops being the reason the PC is still on.
+        print("Windows is ending the session -- stopping IT-Deck.")
+        for proc in (agent_handle["proc"], backend_proc):
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+        deadline = time.time() + SESSION_END_CHILD_GRACE
+        for proc in (agent_handle["proc"], backend_proc):
+            try:
+                proc.wait(timeout=max(0.0, deadline - time.time()))
+            except Exception:
+                pass
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+    session_end_trigger = install_session_end_handler(stop_for_session_end)
+
     show_info_window(
         dashboard_url,
         studio_url,
@@ -1493,6 +1711,7 @@ def run_launcher() -> int:
         update_queue,
         other_ips,
         lambda: agent_handle["proc"].poll() is None,
+        session_end_trigger,
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()
