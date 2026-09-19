@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.4.3"
+ITDECK_VERSION = "0.4.4"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -521,7 +521,40 @@ def watched_process_name(data_dir: Path) -> Optional[str]:
     return None
 
 
-def wait_for_health(port: int, timeout: float = 20.0) -> bool:
+def port_already_serving(port: int, timeout: float = 1.0) -> bool:
+    """True if something is already answering IT-Deck's /health on this port.
+
+    Asked *before* the backend is spawned, because afterwards it cannot be
+    answered at all: an orphaned backend from a previous run answers /health
+    exactly like a fresh one, byte for byte, and there is nothing in the
+    reply to tell them apart.
+
+    That ambiguity used to end the run in a way nobody could read. With an
+    orphan holding the port, the new backend loses the bind and exits,
+    wait_for_health() gets its 200 from the orphan and returns True, the
+    launcher carries on, the agent loses the singleton mutex to the orphaned
+    agent, and one second later the supervisor notices backend_proc is gone
+    and prints "Backend process exited -- stopping". IT-Deck vanishes a few
+    seconds after launch, and the only explanation is in a log file the user
+    has no reason to open.
+    """
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def wait_for_health(port: int, timeout: float = 20.0,
+                    proc: Optional[subprocess.Popen] = None) -> bool:
+    """Wait for the backend to answer, and give up the moment it dies.
+
+    Watching `proc` is what turns a 20-second wait for a backend that is
+    never coming into a one-second one. Anything fatal in the backend --
+    a bad config, a port lost between the pre-flight check and the bind, an
+    import error in a fresh build -- exits the process rather than hanging,
+    so its death is the earliest and most reliable signal available.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -530,6 +563,8 @@ def wait_for_health(port: int, timeout: float = 20.0) -> bool:
                     return True
         except Exception:
             pass
+        if proc is not None and proc.poll() is not None:
+            return False
         time.sleep(0.5)
     return False
 
@@ -685,6 +720,12 @@ _STRINGS = {
         "quit_confirm": "Stop IT-Deck? The deck on your phone will go offline.",
         "update_available": "Version {version} is available",
         "update_download": "Download",
+        "port_busy": (
+            "IT-Deck is already running on port {port} -- or another program is using it.\n\n"
+            "Quit the running IT-Deck from its window (or end ITDeck.exe in Task Manager), "
+            "then start this one again."
+        ),
+        "backend_failed": "IT-Deck could not start its server.\n\nDetails are in:\n{log}",
     },
     "ru": {
         "title": "IT-Deck",
@@ -710,6 +751,12 @@ _STRINGS = {
         "quit_confirm": "Остановить IT-Deck? Дека на телефоне отключится.",
         "update_available": "Доступна версия {version}",
         "update_download": "Скачать",
+        "port_busy": (
+            "IT-Deck уже запущен на порту {port} — или порт занят другой программой.\n\n"
+            "Закрой работающий IT-Deck кнопкой «Выйти» в его окне (или заверши ITDeck.exe "
+            "в диспетчере задач) и запусти этот снова."
+        ),
+        "backend_failed": "IT-Deck не смог запустить свой сервер.\n\nПодробности:\n{log}",
     },
 }
 
@@ -736,6 +783,38 @@ def _detect_ui_lang() -> str:
     except Exception:
         pass
     return "en"
+
+
+def report_startup_failure(message: str) -> None:
+    """Say why IT-Deck is not starting, somewhere the user will actually see.
+
+    Every other message this module prints goes to launcher.log, which is
+    correct for a running install and useless for one that never got that
+    far: the exe is built --windowed, so there is no console, and the info
+    window -- the only UI IT-Deck has -- is precisely what these failures
+    happen instead of. Without this, double-clicking ITDeck.exe and having
+    nothing whatsoever appear is the entire user-visible behaviour.
+
+    A native MessageBox rather than a Tk window: there is nothing to keep
+    alive afterwards, it cannot fail for the same reason the real window
+    might, and the process exits as soon as it is dismissed. Startup only --
+    a modal dialog during shutdown is the bug 10.8a exists to fix.
+    """
+    print(message, flush=True)
+    if not is_frozen() or os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        MB_OK = 0x0
+        MB_ICONERROR = 0x10
+        MB_SETFOREGROUND = 0x10000
+        MB_TOPMOST = 0x40000
+        ctypes.windll.user32.MessageBoxW(
+            None, message, "IT-Deck", MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+        )
+    except Exception:
+        pass  # the print above is still in launcher.log
 
 
 def _apply_windows11_chrome(root) -> None:
@@ -817,6 +896,12 @@ def hide_console() -> None:
         pass  # convenience only -- never let this block IT-Deck from running
 
 
+# What a directory is renamed to once the sweep has proven nothing has it
+# open. A rename this file does not recognise on the next start would be
+# swept as an ordinary _MEI* directory, so the suffix is checked for.
+STALE_UNPACK_SUFFIX = ".itdeck-stale"
+
+
 def sweep_stale_unpack_dirs() -> None:
     """Delete _MEIxxxx directories that no longer belong to a running IT-Deck.
 
@@ -827,12 +912,32 @@ def sweep_stale_unpack_dirs() -> None:
     directory is simply left there. They accumulate silently: this was found
     at 35 of them, 1.26 GB, on a machine that had never been told.
 
-    Deliberately timid, because a directory belonging to a *running* copy must
-    not be touched. It only removes ones older than this process's own start,
-    skips the one this process is running from, and treats every failure as
-    "in use, leave it alone" -- shutil.rmtree cannot delete a file another
-    process has open, so a live copy's directory fails the attempt rather than
-    being half-deleted. Nothing here is allowed to affect startup.
+    Every deletion is claimed by a rename first, and this is the whole safety
+    story. The v0.4.3 version of this function reasoned that rmtree "cannot
+    delete a file another process has open, so a live copy's directory fails
+    the attempt rather than being half-deleted" -- which is half true and
+    therefore wrong: rmtree deletes everything it *can* before it reaches the
+    locked file and raises. Measured: start IT-Deck, wait out the 60-second
+    cutoff, launch a second copy, and the second copy's sweep takes 32 files
+    out of the first copy's directory. The first copy then holds a
+    directory missing whatever it had not imported yet.
+
+    os.rename on the directory is the test that does not have that failure
+    mode: Windows refuses to rename a directory that has a file open anywhere
+    underneath it (verified against a running instance -- "Access to the path
+    ... is denied"), and it either moves the whole tree or moves nothing. So a
+    live directory is never touched at all, and only a directory that was
+    proven unused gets deleted, under its new name.
+
+    The same test is what makes it safe to be looking at _MEI* at all: that
+    prefix belongs to PyInstaller, not to IT-Deck, so some of these
+    directories are other onefile applications' -- and a running one of those
+    is protected by exactly the same refusal.
+
+    Also deliberately timid in the cheaper ways: it skips the directory this
+    process is running from, ignores anything touched in the last minute, and
+    treats every failure as "leave it alone". Nothing here is allowed to
+    affect startup.
     """
     if not is_frozen():
         return
@@ -847,17 +952,196 @@ def sweep_stale_unpack_dirs() -> None:
             try:
                 if not entry.is_dir() or os.path.normcase(str(entry)) == current:
                     continue
+                # A claim from an earlier sweep whose delete didn't finish.
+                # Renaming proved it unused then; nobody can have opened it
+                # since, because nothing knows this name.
+                if entry.name.endswith(STALE_UNPACK_SUFFIX):
+                    shutil.rmtree(entry)
+                    removed += 1
+                    continue
                 if entry.stat().st_mtime > cutoff:
                     continue  # too fresh to be sure it is nobody's
-                shutil.rmtree(entry)
+                claimed = entry.with_name(entry.name + STALE_UNPACK_SUFFIX)
+                os.rename(entry, claimed)
+            except Exception:
+                continue  # in use by a live copy, or not ours to delete
+            try:
+                shutil.rmtree(claimed)
                 removed += 1
             except Exception:
-                continue  # still in use, or not ours to delete
+                continue  # renamed but not deletable -- next start retries
         if removed:
             print(f"Cleaned up {removed} leftover unpack director"
                   f"{'y' if removed == 1 else 'ies'} in TEMP.")
     except Exception:
         pass
+
+
+# --- keeping backend and agent from outliving the launcher ----------------
+
+# Job object limit flags and the JOBOBJECTINFOCLASS value for the extended
+# limit struct, straight out of winnt.h -- ctypes has no names for these.
+JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
+JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+PROCESS_TERMINATE = 0x0001
+PROCESS_SET_QUOTA = 0x0100
+
+# The handle is the kill switch: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE fires
+# when the *last* handle to the job closes, so a handle Python garbage-
+# collects is a handle that kills the backend and the agent mid-run. One
+# module-level slot, written once, never cleared.
+_CHILD_JOB: list = []
+
+
+def create_child_job() -> Optional[int]:
+    """A job object that takes the backend and the agent down with this process.
+
+    The gap it fills: "End task" in Task Manager is TerminateProcess, and
+    TerminateProcess runs nothing. No WM_QUERYENDSESSION, so
+    install_session_end_handler() never hears about it; no unwinding, so the
+    supervisor loop's finally: never runs; no atexit. Observed on v0.4.3: the
+    launcher was ended by hand and its two children -- both re-invocations of
+    this same exe, both with python312.dll mapped out of the shared unpacked
+    _MEIxxxx directory -- kept running. PyInstaller's parent then failed to
+    delete that directory and put up its modal "Failed to remove temporary
+    directory" warning, which is the same dialog 10.8a fixed for the shutdown
+    path, arrived at from a direction no handler can cover.
+
+    So the enforcement has to belong to something other than this process.
+    A job object is exactly that: the kernel terminates every process in the
+    job when the last handle to it closes, and the kernel closes this
+    process's handles however this process ended -- Quit, a crash, End task,
+    or anything else that ends in TerminateProcess.
+
+    Both breakaway flags are load-bearing, not caution. Job membership is
+    inherited by child processes by default, and CLAUDE.md's rule is that
+    **anything the agent launches must survive IT-Deck closing** -- without
+    them, Quit would take the VPN client with it, which is a worse bug than
+    the one being fixed. BREAKAWAY_OK is what makes _spawn_detached's
+    CREATE_BREAKAWAY_FROM_JOB succeed rather than fall through to its
+    no-flags branch; SILENT_BREAKAWAY_OK covers the launches that have no way
+    to ask for themselves -- start_process()'s os.startfile() fallback, the
+    path for .lnk files, documents and anything demanding elevation, takes no
+    creationflags at all. Between them the job holds exactly the two
+    processes assigned to it below, which are exactly the two that have to be
+    gone before the temp directory can be deleted.
+
+    Returns the job handle, or None if any of this is unavailable -- in which
+    case the launcher behaves precisely as it did before, since every other
+    teardown path is still in place.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                # ULONG_PTR, so pointer-sized: a c_ulong here would shift
+                # every field after it on 64-bit, and LimitFlags -- read back
+                # by nothing, but written by us -- has to land where the
+                # kernel looks for it.
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+
+        # Unnamed: a named job could be opened by anything else on the
+        # machine, and nobody needs to find this one by name.
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = (
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | JOB_OBJECT_LIMIT_BREAKAWAY_OK
+            | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK
+        )
+        ok = kernel32.SetInformationJobObject(
+            job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info)
+        )
+        if not ok:
+            kernel32.CloseHandle(job)
+            return None
+
+        _CHILD_JOB.append(job)
+        return job
+    except Exception:
+        return None
+
+
+def assign_to_child_job(job: Optional[int], proc: subprocess.Popen) -> None:
+    """Put a freshly spawned child into the job, best-effort.
+
+    By pid rather than through Popen's private _handle, which is safe here
+    for the one reason that matters: the Popen object holds an open handle to
+    the process, and Windows does not recycle a pid while a handle to it is
+    open, so this cannot land on a different process than the one just
+    started.
+
+    A failure is logged and otherwise ignored. The job is a backstop for kill
+    paths that leave no code of ours running; losing it means losing that
+    backstop, not breaking the run in front of the user.
+    """
+    if job is None or os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+
+        handle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, proc.pid)
+        if not handle:
+            print(f"Warning: could not open pid {proc.pid} to put it in the cleanup job.", flush=True)
+            return
+        try:
+            if not kernel32.AssignProcessToJobObject(job, handle):
+                print(
+                    f"Warning: pid {proc.pid} could not join the cleanup job "
+                    f"(error {ctypes.get_last_error()}).",
+                    flush=True,
+                )
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception as exc:
+        print(f"Warning: cleanup job assignment failed for pid {proc.pid}: {exc}", flush=True)
 
 
 # --- Windows session end (shutdown / restart / logoff) --------------------
@@ -1674,6 +1958,20 @@ def run_launcher() -> int:
 
     print(f"IT-Deck v{ITDECK_VERSION} starting...")
     print(f"Data/config: {data_dir}")
+
+    # Created before anything is spawned, so both children can join it the
+    # instant they exist. See create_child_job() for what it is for; the
+    # short version is that it is the only teardown path that still works
+    # when this process is ended by Task Manager.
+    child_job = create_child_job()
+    if child_job is None:
+        print("Note: running without the cleanup job -- children will be stopped "
+              "by the usual paths only.")
+
+    strings = _STRINGS[_detect_ui_lang()]
+    if port_already_serving(port):
+        report_startup_failure(strings["port_busy"].format(port=port))
+        return 1
     # CREATE_NO_WINDOW: without it each child would allocate its own console
     # window, since the parent (built --windowed) has none to inherit -- two
     # terminal windows flashing onto the desktop at every launch. Their output
@@ -1683,9 +1981,10 @@ def run_launcher() -> int:
         self_invocation("backend"), env=backend_env, stdout=backend_log,
         stderr=subprocess.STDOUT, creationflags=no_window,
     )
+    assign_to_child_job(child_job, backend_proc)
 
-    if not wait_for_health(port):
-        print(f"Backend did not come up in time -- check {logs_dir / 'backend.log'} for errors.")
+    if not wait_for_health(port, proc=backend_proc):
+        report_startup_failure(strings["backend_failed"].format(log=logs_dir / "backend.log"))
         backend_proc.terminate()
         return 1
 
@@ -1702,10 +2001,15 @@ def run_launcher() -> int:
         env = dict(agent_env)
         if name and not env.get("VPN_PROCESS_NAME"):
             env["VPN_PROCESS_NAME"] = name
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             self_invocation("agent"), env=env, stdout=agent_log,
             stderr=subprocess.STDOUT, creationflags=no_window,
         )
+        # Every spawn, not just the first: the supervisor below respawns the
+        # agent on a crash, and an unassigned respawn is exactly the orphan
+        # the job exists to prevent.
+        assign_to_child_job(child_job, proc)
+        return proc
 
     agent_proc = spawn_agent()
     agent_started_at = time.time()

@@ -38,13 +38,15 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   if the key is present/explicitly chosen (never by comparing values).
 - `/api/widgets/weather` is unauthenticated (the phone calls it) and bounded by
   a snapped-coordinate cache. All writes need `X-Agent-Token`.
-- Standalone: tokens default to `admin`, port `49732`, and `config.env` is
-  load-if-exists (never regenerate). The exe is `--windowed`: no console, and
-  the info window is the only UI, so nothing may destroy it. `build.ps1` and
+- Standalone: tokens default to `admin`, port `49732`, `config.env` is
+  load-if-exists (never regenerate). The exe is `--windowed`: no console, the
+  info window is the only UI, so nothing may destroy it. `build.ps1` and
   `.github/workflows/release.yml` duplicate the PyInstaller call (absolute
-  paths), so change both together.
-- Agent launches must survive IT-Deck closing (`_spawn_detached`) and run off
-  the receive loop ("ok" = started). `kill_process()` spares IT-Deck itself.
+  paths) -- change both together.
+- Backend and agent live in the launcher's kill-on-close job; a new child must
+  join it, and its breakaway flags are what keep agent launches alive after
+  IT-Deck closes (`_spawn_detached`, run off the receive loop -- "ok" =
+  started; `kill_process()` spares IT-Deck itself).
 - The VPN tile is `launch_app` + `state_key vpn.running`. The launcher passes
   `VPN_PROCESS_NAME` to the agent at spawn, so a new path lights the indicator
   only after a restart.

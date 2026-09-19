@@ -7,6 +7,33 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.4.4 — 2026-09-19
+
+### Fixed
+
+- **Ending IT-Deck in Task Manager left the backend and the agent running**,
+  and Windows put up a modal **"Failed to remove temporary directory"**
+  warning. The same dialog v0.4.3 fixed for shutdown, reached from the one
+  direction no code of ours can cover: "End task" terminates the process
+  outright, so nothing IT-Deck could have written would have run.
+
+  The backend and the agent now belong to a Windows job object that the
+  kernel empties when IT-Deck's process ends, however it ends. Anything
+  launched *from a tile* still survives IT-Deck closing — that rule is older
+  than this fix and is now tested rather than assumed.
+
+- **A second copy of IT-Deck damaged the running one.** The startup cleanup
+  added in v0.4.3 deleted what it could out of a directory another copy was
+  running from before failing on the file it could not touch — measured at 32
+  files. It now renames a directory to claim it, which Windows refuses while
+  anything inside is open, so a live copy is left alone entirely.
+
+- **Starting IT-Deck twice now says so.** The second copy used to disappear a
+  few seconds after launch with the reason buried in a log file. It now
+  explains that the port is already in use, in a window, and stops.
+
+---
+
 ## v0.4.3 — 2026-09-19
 
 ### Fixed

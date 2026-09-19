@@ -1632,6 +1632,102 @@ that is not actually happening. That one surviving process is an artifact of
 the test, not a leak — it has already deleted the temp directory and released
 its block reason by then. Kill it afterwards.
 
+### 10.8b Ending the task, and the second copy
+
+§10.8 and §10.8a are about a shutdown IT-Deck is *told* about. This one is
+about the deaths it is told nothing about, which is the same modal dialog
+reached from the other side.
+
+**Reported:** the agent was closed with Task Manager's **End task** and
+Windows put up **"Failed to remove temporary directory: ...\_MEI000038302"**.
+
+**Read off the machine afterwards**, before anything was touched: `ITDeck.exe
+--role backend` and `--role agent` still running, both children of a launcher
+pid that no longer existed; `launcher.log` missing both the `Quit requested`
+line and the `Windows is ending the session` line for that run; and
+`_MEI000038302` holding 26.5 MB of its ~90, with `PIL\` and `win32\` stamped
+minutes after the rest. That is PyInstaller's parent getting partway through
+its cleanup and stopping at `python312.dll`, which the two orphans still had
+mapped.
+
+**Why no handler could have caught it.** End task is `TerminateProcess`. It
+sends no `WM_QUERYENDSESSION`, unwinds no stack, runs no `finally:` and fires
+no `atexit`. Every teardown route IT-Deck had was code, and code is exactly
+what does not run. This is not a regression of §10.8a — it is the case that
+section could never have covered.
+
+**The fix is a job object** (`create_child_job()`), because its enforcement is
+the kernel's rather than ours: `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` terminates
+every process in the job when the last handle to it closes, and the kernel
+closes this process's handles however this process died. The backend and the
+agent are assigned to it as they are spawned — `assign_to_child_job()`, on
+*every* agent spawn, respawns included.
+
+**Both breakaway flags are load-bearing.** Job membership is inherited by
+child processes, and CLAUDE.md's standing rule is that anything the agent
+launches must survive IT-Deck closing — so a naive job would take the VPN
+client down with the deck, which is a worse bug than the one being fixed.
+`JOB_OBJECT_LIMIT_BREAKAWAY_OK` is what makes `_spawn_detached`'s
+`CREATE_BREAKAWAY_FROM_JOB` succeed instead of falling through to its
+no-flags branch (§10.4a); `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK` covers the
+launches that cannot ask for themselves, namely `start_process()`'s
+`os.startfile()` fallback for `.lnk` files, documents and anything demanding
+elevation, which takes no `creationflags` at all.
+
+Verified end to end against the frozen exe, not just at the ctypes level: a
+temporary `launch_app` tile pointing at Notepad, pressed over `/ws/client`,
+then the launcher force-killed. All four `ITDeck.exe` processes gone, the
+run's `_MEIxxxx` directory deleted, no modal dialog — and Notepad still
+running.
+
+| `Stop-Process -Force` on the launcher | v0.4.3 | v0.4.4 |
+| --- | --- | --- |
+| Backend / agent afterwards | both alive | both gone |
+| Modal "Failed to remove temporary directory" | yes | no |
+| The run's `_MEIxxxx` directory | left behind, half-deleted | deleted |
+| An app launched from a tile | survives | survives |
+
+#### The sweep was eating live directories
+
+`sweep_stale_unpack_dirs()`, added in v0.4.3, reasoned that `shutil.rmtree`
+"cannot delete a file another process has open, so a live copy's directory
+fails the attempt rather than being half-deleted". Half true, and therefore
+wrong: rmtree deletes everything it *can* before it reaches the locked file
+and raises. Measured on this machine — start IT-Deck, wait out the 60-second
+cutoff, launch a second copy — the second copy's sweep took **32 files** out
+of the first copy's directory, which then holds whatever it had not imported
+yet.
+
+Every deletion is now claimed by `os.rename` first. Windows refuses to rename
+a directory that has a file open anywhere underneath it (`Access to the path
+... is denied`, verified against a running instance), and the rename either
+moves the whole tree or moves nothing — so a live directory is never touched,
+and only a directory proven unused is deleted, under its `.itdeck-stale`
+name. A claim left behind by a delete that failed part-way is recognised and
+retried on the next start. The same test is what makes it safe to be looking
+at `_MEI*` at all: that prefix is PyInstaller's, so some of those directories
+belong to other applications, and a running one of those is protected by
+exactly the same refusal.
+
+#### A second copy now says so
+
+Starting IT-Deck twice used to fail in a way nobody could read. The second
+copy's backend loses the bind and exits, but `wait_for_health()` gets its
+`200` from the *first* copy's backend — the two are byte-for-byte identical —
+so the launcher carried on, the agent lost the singleton mutex, and a second
+later the supervisor noticed `backend_proc` was gone and stopped. IT-Deck
+vanished a few seconds after launch, with the explanation in a log file
+nobody has a reason to open.
+
+`port_already_serving()` asks the question *before* the backend is spawned,
+which is the only time it can be answered, and `wait_for_health()` now also
+watches the process so a backend that is never coming is noticed in about a
+second instead of twenty. The answer is shown in a native MessageBox
+(`report_startup_failure()`) rather than printed: the exe is `--windowed`, so
+there is no console, and the info window is precisely what these failures
+happen instead of. Startup only — a modal dialog during *shutdown* is the bug
+§10.8a exists to fix.
+
 ### 10.7 Troubleshooting
 
 | Symptom | Cause | Fix |
