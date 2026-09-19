@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.4.5"
+ITDECK_VERSION = "0.4.6"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -1083,16 +1083,32 @@ def remove_firewall_rules(exe: Path) -> None:
     except Exception:
         return  # can't tell -- better than a prompt nobody can explain
 
-    inner = (
+    # The removal goes through a *file*, not through a command string nested
+    # inside another command string. The nested version did not work and did
+    # not say so: the inner text sits in double quotes inside the outer
+    # -Command, so the outer shell expands `$_` -- the pipeline variable the
+    # filter is built on -- to nothing before the elevated child ever sees
+    # it, leaving it to run `Where-Object { .Program -eq '...' }`. Measured
+    # against a disposable copy with two rules of its own: 2 rules before,
+    # 2 after, everything else about the uninstall correct. A -File argument
+    # has no such second round of parsing.
+    import tempfile
+
+    NEWLINE = chr(10)
+    script_path = Path(tempfile.gettempdir()) / f"itdeck-firewall-{os.getpid()}.ps1"
+    quoted = str(exe).replace("'", "''")
+    script_path.write_text(
         "Get-NetFirewallApplicationFilter | "
-        f"Where-Object {{ $_.Program -eq '{exe}' }} | "
-        "Get-NetFirewallRule | Remove-NetFirewallRule"
+        f"Where-Object {{ $_.Program -eq '{quoted}' }} | "
+        "Get-NetFirewallRule | Remove-NetFirewallRule -ErrorAction SilentlyContinue" + NEWLINE
+        + "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue" + NEWLINE,
+        encoding="utf-8",
     )
     # Two levels: the outer powershell asks for elevation and waits for the
     # inner one, so the UAC prompt is resolved before this returns.
     outer = (
         "Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList "
-        f"'-NoProfile','-ExecutionPolicy','Bypass','-Command',\"{inner}\""
+        f"'-NoProfile','-ExecutionPolicy','Bypass','-File','{script_path}'"
     )
     try:
         subprocess.run(
@@ -1107,6 +1123,13 @@ def remove_firewall_rules(exe: Path) -> None:
         )
     except Exception:
         pass  # declined, timed out, or no such rules -- the rest still goes
+    finally:
+        # It deletes itself on success; this covers a declined prompt, where
+        # it never ran at all.
+        try:
+            script_path.unlink()
+        except Exception:
+            pass
 
 
 def spawn_uninstall_helper(*targets) -> None:

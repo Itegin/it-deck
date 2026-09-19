@@ -186,4 +186,4 @@ that one on the phone.
 
 ## Status
 
-v0.4.5 — personal project, active development, API may change.
+v0.4.6 — personal project, active development, API may change.

@@ -7,6 +7,24 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.4.6 — 2026-09-19
+
+### Fixed
+
+- **The uninstall button left the Windows Firewall rules behind.** Everything
+  else it promised — the exe, the shortcut, the settings and tokens, the temp
+  directory — was removed correctly in v0.4.5, but the one step that needs
+  administrator rights quietly did nothing, so a later reinstall could still
+  meet the old **Block** rules and look dead on the network.
+
+  The elevated command was built as a string inside another string, and the
+  outer shell mangled the filter before the elevated half could run it. It is
+  a script file now. Measured on a disposable copy carrying two rules of its
+  own: two rules before and two after in v0.4.5, two before and none after
+  with this fix.
+
+---
+
 ## v0.4.5 — 2026-09-19
 
 ### Added

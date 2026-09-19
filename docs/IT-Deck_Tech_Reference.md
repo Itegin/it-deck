@@ -1861,6 +1861,20 @@ appearing after the app has vanished is how malware behaves -- and only after
 an unelevated query has confirmed there are rules to remove. Declining it
 costs that step and nothing else.
 
+**The elevated command goes through a file, and that is the second bug this
+section paid for.** It was first written as a command string nested inside
+another command string -- `Start-Process powershell -Verb RunAs -ArgumentList
+'-Command',"<filter>"` -- and the outer shell expands `$_` in that inner text
+before the elevated child is ever started, so the filter the whole thing is
+built on arrives as `Where-Object { .Program -eq '...' }`. It removed nothing
+and reported nothing; v0.4.5 shipped with it. Found only by testing the
+elevated branch on a disposable copy carrying two firewall rules of its own:
+**2 rules before, 2 after**, with every other part of the uninstall correct.
+It now writes the one-line filter to a `.ps1` in `%TEMP%` and elevates
+`-File`, which has no second round of parsing; the script deletes itself, and
+a declined prompt is cleaned up by the caller. Re-measured the same way:
+**2 rules before, 0 after.**
+
 **Never from a source checkout.** `sys.executable` is the frozen exe only
 when frozen; in a dev run it is `python.exe`. `perform_uninstall()` refuses
 when `is_frozen()` is false, and the window does not draw the button there,
