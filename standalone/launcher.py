@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.4.4"
+ITDECK_VERSION = "0.4.5"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -693,6 +693,11 @@ _GLASS = {
     "surface_raised": "#1d2330",
     "ok": "#4ade80",
     "warn": "#f59e0b",
+    # The deck's own alert red (themes.css's --state-alert), reused here so
+    # "red means something is about to be destroyed" is one decision across
+    # both surfaces rather than two similar-looking ones.
+    "danger": "#dc2626",
+    "danger_active": "#b91c1c",
 }
 
 _STRINGS = {
@@ -726,6 +731,27 @@ _STRINGS = {
             "then start this one again."
         ),
         "backend_failed": "IT-Deck could not start its server.\n\nDetails are in:\n{log}",
+        "uninstall": "Remove IT-Deck from this PC",
+        "uninstall_title": "Remove IT-Deck from this PC",
+        "uninstall_body": (
+            "This deletes, leaving nothing behind:\n"
+            "   •  ITDeck.exe itself\n"
+            "   •  the Desktop shortcut\n"
+            "   •  settings, both tokens and your tile layout\n"
+            "   •  its Windows Firewall rules"
+        ),
+        "uninstall_warning": "The deck on your phone stops working. This cannot be undone.",
+        "uninstall_uac": (
+            "Windows will ask for permission once — only to remove the firewall "
+            "rules. Refusing it still removes everything else."
+        ),
+        "uninstall_phone": (
+            "The home-screen icon on your phone stays where it is; remove that one "
+            "on the phone."
+        ),
+        "uninstall_go": "Remove IT-Deck",
+        "uninstall_busy": "Removing IT-Deck…",
+        "cancel": "Cancel",
     },
     "ru": {
         "title": "IT-Deck",
@@ -757,6 +783,27 @@ _STRINGS = {
             "в диспетчере задач) и запусти этот снова."
         ),
         "backend_failed": "IT-Deck не смог запустить свой сервер.\n\nПодробности:\n{log}",
+        "uninstall": "Удалить IT-Deck с этого ПК",
+        "uninstall_title": "Удалить IT-Deck с этого ПК",
+        "uninstall_body": (
+            "Будет удалено без следа:\n"
+            "   •  сам ITDeck.exe\n"
+            "   •  ярлык на рабочем столе\n"
+            "   •  настройки, оба токена и раскладка плиток\n"
+            "   •  правила брандмауэра Windows для него"
+        ),
+        "uninstall_warning": "Дека на телефоне перестанет работать. Отменить это нельзя.",
+        "uninstall_uac": (
+            "Windows один раз спросит разрешение — оно нужно только для правил "
+            "брандмауэра. Если отказаться, всё остальное всё равно удалится."
+        ),
+        "uninstall_phone": (
+            "Иконка на домашнем экране телефона останется — её удали на самом "
+            "телефоне."
+        ),
+        "uninstall_go": "Удалить IT-Deck",
+        "uninstall_busy": "Удаляю IT-Deck…",
+        "cancel": "Отмена",
     },
 }
 
@@ -975,6 +1022,234 @@ def sweep_stale_unpack_dirs() -> None:
                   f"{'y' if removed == 1 else 'ies'} in TEMP.")
     except Exception:
         pass
+
+
+# --- uninstall -----------------------------------------------------------
+
+# How long the leftover helper keeps retrying the two files it cannot delete
+# until this process is gone. Generous on purpose: it costs nothing to wait
+# and the alternative is an exe left on the desktop of someone who asked for
+# it to be gone.
+UNINSTALL_RETRY_SECONDS = 30
+
+
+def desktop_shortcut_path() -> Path:
+    """Where ensure_desktop_shortcut() put the icon, so both agree."""
+    return Path(os.environ.get("USERPROFILE", "")) / "Desktop" / "IT-Deck.lnk"
+
+
+def remove_firewall_rules(exe: Path) -> None:
+    """Delete the Windows Firewall rules that name this exe.
+
+    They are not ours -- Windows writes them when the user answers (or
+    cancels) the "allow this app to communicate" prompt on the first launch,
+    and they outlive the program that caused them. A cancelled prompt leaves
+    *Block* rules, which is the documented reason a reinstall later looks
+    dead on the network, so leaving them behind is the opposite of removing
+    IT-Deck without a trace.
+
+    Firewall changes need elevation, so this is the one step that can raise a
+    UAC prompt. It is raised here, while the window the user just clicked in
+    is still on screen, rather than from the detached helper below -- an
+    unexplained consent dialog appearing after the app has vanished is how
+    malware behaves. Declining it costs only this step.
+
+    Rules are matched on the full program path, case-insensitively (Windows
+    records the path it launched, often lowercased). A copy of the exe that
+    was moved after the rules were made is not matched, and nothing else
+    could be: a broader match would delete another program's rules.
+    """
+    if os.name != "nt":
+        return
+
+    # Asked first, unelevated, because reading the firewall configuration
+    # needs no rights and elevating does: an uninstall that raises a consent
+    # prompt to delete nothing is a prompt that teaches people to click
+    # through consent prompts.
+    count = (
+        "(Get-NetFirewallApplicationFilter | "
+        f"Where-Object {{ $_.Program -eq '{exe}' }} | Measure-Object).Count"
+    )
+    try:
+        found = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", count],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if found.stdout.strip() in ("", "0"):
+            return
+    except Exception:
+        return  # can't tell -- better than a prompt nobody can explain
+
+    inner = (
+        "Get-NetFirewallApplicationFilter | "
+        f"Where-Object {{ $_.Program -eq '{exe}' }} | "
+        "Get-NetFirewallRule | Remove-NetFirewallRule"
+    )
+    # Two levels: the outer powershell asks for elevation and waits for the
+    # inner one, so the UAC prompt is resolved before this returns.
+    outer = (
+        "Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList "
+        f"'-NoProfile','-ExecutionPolicy','Bypass','-Command',\"{inner}\""
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", outer],
+            capture_output=True,
+            timeout=120,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass  # declined, timed out, or no such rules -- the rest still goes
+
+
+def spawn_uninstall_helper(*targets) -> None:
+    """Leave something behind to delete the two files this process holds open.
+
+    A running exe cannot delete itself: Windows keeps the image file locked
+    for as long as any process is mapped to it, and with PyInstaller's onefile
+    build that is two processes, not one -- the bootloader parent as well as
+    this child. The unpacked _MEIxxxx directory is held the same way.
+
+    So the last act is a tiny PowerShell script that outlives us: it retries
+    both deletions until they succeed or UNINSTALL_RETRY_SECONDS is up, then
+    deletes itself. Retrying rather than waiting on a process name, because
+    "the file is no longer locked" is the actual condition and it stays true
+    if another IT-Deck happens to be running elsewhere.
+
+    Detached and broken out of the job object on purpose -- the job created by
+    create_child_job() would otherwise kill this helper at the very moment it
+    is needed.
+    """
+    if os.name != "nt":
+        return
+    wanted = [str(t) for t in targets if t]
+    if not wanted:
+        return
+    script = (
+        "$targets = @({targets})\n"
+        "foreach ($t in $targets) {{\n"
+        # A deadline each, not one shared across the loop: a first target that
+        # spends the whole budget would leave the rest with none, which is the
+        # same mistake the session-end teardown had to be fixed out of.
+        "  $deadline = (Get-Date).AddSeconds({seconds})\n"
+        "  while ((Get-Date) -lt $deadline) {{\n"
+        "    if (-not (Test-Path -LiteralPath $t)) {{ break }}\n"
+        "    try {{ Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction Stop; break }}\n"
+        "    catch {{ Start-Sleep -Milliseconds 250 }}\n"
+        "  }}\n"
+        "}}\n"
+        "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n"
+    ).format(
+        seconds=UNINSTALL_RETRY_SECONDS,
+        targets=", ".join(f"'{t}'" for t in wanted),
+    )
+    try:
+        import tempfile
+
+        path = Path(tempfile.gettempdir()) / f"itdeck-uninstall-{os.getpid()}.ps1"
+        path.write_text(script, encoding="utf-8")
+        # CREATE_NO_WINDOW, and deliberately *not* DETACHED_PROCESS, which is
+        # the flag the agent's own _spawn_detached() reaches for. Two findings
+        # from testing this, in order:
+        #
+        # 1. the two are mutually exclusive -- CreateProcess fails outright
+        #    when both are passed, which is how the first version of this
+        #    managed to launch nothing at all;
+        # 2. with DETACHED_PROCESS alone, powershell.exe starts, finds it has
+        #    no console, and exits 0 without running a line of the script.
+        #    Measured across all four combinations: only the CREATE_NO_WINDOW
+        #    ones actually ran.
+        #
+        # Nothing is lost by the swap. DETACHED_PROCESS exists to keep a
+        # console-close event from reaching the child, and this build has no
+        # console to close; surviving this process is what CREATE_NEW_PROCESS_
+        # GROUP and the breakaway flag below are for.
+        flags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+        breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+        command = [
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-WindowStyle", "Hidden", "-File", str(path),
+        ]
+        try:
+            subprocess.Popen(command, creationflags=flags | breakaway, close_fds=True)
+        except OSError:
+            # Same fallback shape as the agent's _spawn_detached: a job that
+            # forbids breakaway must not cost us the launch entirely.
+            subprocess.Popen(command, creationflags=flags, close_fds=True)
+    except Exception as exc:
+        # Printed rather than swallowed: this is the step whose failure leaves
+        # the exe sitting on disk after someone asked for it to be gone, and
+        # launcher.log is the only place that could ever say so.
+        print(f"Uninstall helper could not be started: {exc}", flush=True)
+
+
+def perform_uninstall(data_dir: Path, stop_children=None) -> None:
+    """Remove every trace of IT-Deck from this PC, then exit.
+
+    The inventory, and it is the whole inventory -- IT-Deck writes nothing to
+    the registry, installs no service and registers no scheduled task:
+
+    - `%LOCALAPPDATA%\\IT-Deck\\` — config.env with both tokens, the tile
+      database, the logs
+    - the Desktop shortcut the first launch created
+    - the Windows Firewall rules that name this exe (see above)
+    - the exe itself and its unpacked temp directory (via the helper above,
+      because this process is holding both open)
+
+    **Never runs from a source checkout.** `sys.executable` is the frozen exe
+    only when frozen; in a dev run it is python.exe, and deleting the
+    interpreter is not what anybody meant by removing IT-Deck. The window
+    does not offer the button there either, so this guard is the second of
+    two.
+    """
+    if not is_frozen():
+        print("Uninstall ignored: this is a source checkout, not an installed exe.", flush=True)
+        return
+
+    exe = Path(sys.executable)
+
+    # Before the teardown, so the consent prompt appears while the window the
+    # user clicked in is still there to explain it.
+    remove_firewall_rules(exe)
+
+    if stop_children is not None:
+        try:
+            stop_children()
+        except Exception:
+            pass
+
+    # Started before the deletions below, for two reasons: it is the step
+    # whose failure matters most, and this is the last moment its complaint
+    # can still reach launcher.log -- which lives inside the directory the
+    # next block removes. The data directory is one of its targets as well as
+    # being deleted inline: this process still has launcher.log open, so the
+    # inline attempt can legitimately fail, and then the retry loop gets it
+    # once the handle dies with us.
+    spawn_uninstall_helper(exe, getattr(sys, "_MEIPASS", ""), data_dir)
+
+    # The inline pass is the fast path -- after the children are gone, the
+    # SQLite file and the logs are nobody's any more.
+    for target in (data_dir, desktop_shortcut_path()):
+        try:
+            if target.is_dir():
+                import shutil
+
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.exists():
+                target.unlink()
+        except Exception:
+            pass  # a leftover log file is not worth aborting an uninstall for
+
+    # os._exit, not sys.exit: there is a tkinter mainloop on another thread and
+    # nothing left worth unwinding -- the files this process still holds are
+    # the helper's job now.
+    os._exit(0)
 
 
 # --- keeping backend and agent from outliving the launcher ----------------
@@ -1417,6 +1692,7 @@ def show_info_window(
     other_ips: "Optional[list]" = None,
     agent_alive=None,
     on_session_end=None,
+    on_uninstall=None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1511,6 +1787,22 @@ def show_info_window(
             font=("Segoe UI", 8),
         )
         style.map("Mini.TButton", background=[("active", g["border"])])
+        # The only red in this window, and it is spent on the one button that
+        # destroys something. Same alert red the deck uses for a muted mic, so
+        # the two surfaces agree about what red means.
+        style.configure(
+            "Danger.TButton",
+            background=g["danger"],
+            foreground="#ffffff",
+            borderwidth=0,
+            relief="flat",
+            padding=(10, 6),
+        )
+        style.map(
+            "Danger.TButton",
+            background=[("active", g["danger_active"]), ("disabled", g["surface_raised"])],
+            foreground=[("disabled", g["text_muted"])],
+        )
         # clam draws a light focus/border ring on an Entry, which on a
         # read-only field that exists only to be copied reads as "this is
         # selected, type here". Pin every border colour to the card edge.
@@ -1820,6 +2112,104 @@ def show_info_window(
             anchor="w", pady=(8, 0)
         )
 
+        def confirm_uninstall() -> None:
+            """What stands between a stray click and a deleted install.
+
+            A modal dialog that spells out what will go, rather than a yes/no
+            question about a sentence nobody reads. Cancel holds the focus and
+            Enter is bound to it, so the reflex that dismisses every other
+            dialog dismisses this one too; the red button has to be aimed at
+            and clicked. Escape closes it, and closing it does nothing.
+            """
+            dialog = tk.Toplevel(root)
+            dialog.title(s["uninstall_title"])
+            dialog.configure(bg=g["bg"])
+            dialog.resizable(False, False)
+            # transient + grab_set: it stays on top of its own window and takes
+            # the input, so the deck behind cannot be clicked mid-uninstall.
+            dialog.transient(root)
+            dialog.grab_set()
+
+            body = tk.Frame(dialog, bg=g["bg"])
+            body.pack(fill="both", expand=True, padx=PAD, pady=PAD)
+
+            label(body, s["uninstall_title"], bold=True, size=12).pack(anchor="w")
+            label(body, s["uninstall_body"], muted=True, size=9, wrap=420).pack(
+                anchor="w", pady=(10, 0)
+            )
+            label(body, s["uninstall_warning"], size=9, wrap=420).pack(anchor="w", pady=(10, 0))
+            label(body, s["uninstall_uac"], muted=True, size=8, wrap=420).pack(
+                anchor="w", pady=(8, 0)
+            )
+            label(body, s["uninstall_phone"], muted=True, size=8, wrap=420).pack(
+                anchor="w", pady=(4, 0)
+            )
+
+            status = label(body, "", muted=True, size=9)
+            status.pack(anchor="w", pady=(10, 0))
+
+            buttons = tk.Frame(body, bg=g["bg"])
+            buttons.pack(fill="x", pady=(14, 0))
+
+            def close() -> None:
+                dialog.grab_release()
+                dialog.destroy()
+
+            cancel_button = ttk.Button(
+                buttons, text=s["cancel"], style="Glass.TButton", command=close
+            )
+            cancel_button.pack(side="left")
+
+            def run_uninstall() -> None:
+                status.configure(text=s["uninstall_busy"])
+                go_button.state(["disabled"])
+                cancel_button.state(["disabled"])
+                # On a thread: the firewall step waits for a UAC prompt the
+                # user still has to answer, and doing that on the tkinter
+                # thread would freeze this dialog mid-sentence. The work ends
+                # in os._exit, so nothing comes back.
+                threading.Thread(target=on_uninstall, daemon=True).start()
+
+            go_button = ttk.Button(
+                buttons, text=s["uninstall_go"], style="Danger.TButton", command=run_uninstall
+            )
+            go_button.pack(side="right")
+
+            # Enter is bound to closing, not to the red button. A dialog
+            # whose default action is the destructive one gets answered by the
+            # same reflex that dismisses every other dialog -- so the only way
+            # to the deletion is to aim at it and click.
+            dialog.bind("<Return>", lambda _event: close())
+            dialog.bind("<Escape>", lambda _event: close())
+            dialog.protocol("WM_DELETE_WINDOW", close)
+
+            dialog.update_idletasks()
+            # Centred on the main window rather than on the screen: it belongs
+            # to this window, and a dialog this consequential should not
+            # appear somewhere unrelated.
+            x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+            y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 3
+            dialog.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+            # Focus goes to Cancel, and it is set *after* the dialog is mapped
+            # -- focus_set() on a widget in a window that does not exist on
+            # screen yet is silently dropped, which left the focus on the
+            # toplevel itself and Space one Tab away from the red button.
+            dialog.after(10, cancel_button.focus_set)
+
+        # Only on an installed exe. A source checkout has no exe, no shortcut
+        # and no firewall rules to remove, and perform_uninstall() refuses
+        # there anyway -- but an offer that cannot be honoured should not be
+        # on screen in the first place.
+        #
+        # Deliberately down here, small and quiet, and not in the footer next
+        # to Quit: those two are the buttons people press, and the one that
+        # deletes the install has no business being a neighbour of the one
+        # that ends the session.
+        if on_uninstall is not None and is_frozen():
+            ttk.Button(
+                step3, text=s["uninstall"], style="Mini.TButton", command=confirm_uninstall
+            ).pack(anchor="w", pady=(10, 0))
+
         # --- footer ----------------------------------------------------------
 
         # Two buttons, and the distinction is load-bearing: this window is
@@ -2064,26 +2454,17 @@ def run_launcher() -> int:
     else:
         threading.Thread(target=_update_check_worker, args=(update_queue,), daemon=True).start()
 
-    def stop_for_session_end() -> None:
-        # Runs when Windows is shutting down, restarting or logging off, on
-        # whichever window-procedure thread was told first -- not on the
-        # supervisor loop below, which polls once a second and is far too slow
-        # to be what Windows waits on. It therefore does the teardown itself
-        # rather than signalling quit_requested: this is the one case where
-        # the loop does not get to own it. terminate() rather than a graceful
-        # stop, because every one of these processes is about to be killed by
-        # the shutdown anyway.
-        #
-        # Waiting for them to be *gone* is the part that matters, and it is
-        # not tidiness. The backend and the agent are re-invocations of this
-        # same exe and share its unpacked _MEIxxxx directory -- each has
-        # python312.dll mapped out of it. Until their process handles are
-        # signalled the directory cannot be deleted, and when PyInstaller's
-        # parent fails to delete it, it puts up a modal "Failed to remove
-        # temporary directory" warning. A modal dialog during shutdown is a
-        # shutdown that never finishes, which is precisely the bug v0.4.2
-        # left behind.
-        print("Windows is ending the session -- stopping IT-Deck.", flush=True)
+    def stop_children(reason: str) -> None:
+        """Terminate the backend and the agent, and wait until they are gone.
+
+        Shared by the two paths that must leave nothing of IT-Deck running:
+        Windows ending the session, and the uninstall. "Gone" rather than
+        "asked to go" is the point in both -- until their handles are
+        signalled they still hold python312.dll inside the unpacked _MEIxxxx
+        directory, which is what decides whether a shutdown stalls (10.8a) or
+        an uninstall leaves that directory behind.
+        """
+        print(reason, flush=True)
         children = [agent_handle["proc"], backend_proc]
         for proc in children:
             try:
@@ -2114,6 +2495,34 @@ def run_launcher() -> int:
         except Exception:
             pass
 
+    def uninstall_itdeck() -> None:
+        """Handed to the info window; runs on its thread and never returns."""
+        perform_uninstall(
+            data_dir,
+            stop_children=lambda: stop_children("Uninstall requested -- stopping IT-Deck."),
+        )
+
+    def stop_for_session_end() -> None:
+        # Runs when Windows is shutting down, restarting or logging off, on
+        # whichever window-procedure thread was told first -- not on the
+        # supervisor loop below, which polls once a second and is far too slow
+        # to be what Windows waits on. It therefore does the teardown itself
+        # rather than signalling quit_requested: this is the one case where
+        # the loop does not get to own it. terminate() rather than a graceful
+        # stop, because every one of these processes is about to be killed by
+        # the shutdown anyway.
+        #
+        # Waiting for them to be *gone* is the part that matters, and it is
+        # not tidiness. The backend and the agent are re-invocations of this
+        # same exe and share its unpacked _MEIxxxx directory -- each has
+        # python312.dll mapped out of it. Until their process handles are
+        # signalled the directory cannot be deleted, and when PyInstaller's
+        # parent fails to delete it, it puts up a modal "Failed to remove
+        # temporary directory" warning. A modal dialog during shutdown is a
+        # shutdown that never finishes, which is precisely the bug v0.4.2
+        # left behind.
+        stop_children("Windows is ending the session -- stopping IT-Deck.")
+
     session_end_trigger = install_session_end_handler(stop_for_session_end)
 
     show_info_window(
@@ -2126,6 +2535,7 @@ def run_launcher() -> int:
         other_ips,
         lambda: agent_handle["proc"].poll() is None,
         session_end_trigger,
+        uninstall_itdeck,
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()

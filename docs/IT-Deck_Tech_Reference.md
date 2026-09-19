@@ -1802,6 +1802,71 @@ there is no console, and the info window is precisely what these failures
 happen instead of. Startup only — a modal dialog during *shutdown* is the bug
 §10.8a exists to fix.
 
+### 10.9 Removing IT-Deck
+
+IT-Deck has no installer, so it has no uninstaller either, and "just delete
+the exe" was wrong in four ways -- the data directory, the Desktop shortcut,
+the firewall rules and the unpacked temp directory all outlive it. Step 3 of
+the info window carries a quiet **Remove IT-Deck from this PC** button that
+does the whole job.
+
+**What it removes**, and this is the complete inventory -- IT-Deck writes
+nothing to the registry, installs no service and registers no scheduled task:
+
+| Thing | Where | Removed by |
+| --- | --- | --- |
+| config, tokens, tile database, logs | `%LOCALAPPDATA%\IT-Deck\` | inline, after the children are stopped |
+| Desktop shortcut | `%USERPROFILE%\Desktop\IT-Deck.lnk` | inline |
+| Windows Firewall rules naming the exe | firewall store | one elevated PowerShell, only if rules exist |
+| `ITDeck.exe` | wherever it was run from | the helper below |
+| the unpacked `_MEIxxxx` directory | `%TEMP%` | the helper below |
+
+**Two locks against a stray click**, and deliberately not three: a modal
+dialog that lists what will go, and Cancel holding the focus with `Return`
+bound to *closing* rather than to the red button. The reflex that dismisses
+every other dialog dismisses this one too, so the only route to the deletion
+is to aim at the red button and click it. (An earlier version also demanded
+that the word DELETE be typed; that is the kind of ceremony people learn to
+perform without reading, and it was dropped.)
+
+**Why there is a helper process at all.** A running exe cannot delete itself:
+Windows holds the image file for as long as anything is mapped to it, and in
+onefile mode that is two processes, not one. So `spawn_uninstall_helper()`
+writes a small PowerShell script to `%TEMP%` that retries each target until
+it succeeds or `UNINSTALL_RETRY_SECONDS` is up, then deletes itself. Retrying
+rather than waiting on a process name, because "the file is no longer locked"
+is the actual condition, and one deadline *per target* rather than one shared
+across the loop -- the same mistake the session-end teardown had to be fixed
+out of.
+
+**The creation flags on that helper cost two rounds of testing**, and neither
+failure said anything out loud:
+
+1. `DETACHED_PROCESS | CREATE_NO_WINDOW` -- mutually exclusive per the
+   CreateProcess docs. It fails with `ERROR_INVALID_PARAMETER`, so the helper
+   was never launched and the uninstall quietly left the exe in place.
+2. `DETACHED_PROCESS` alone -- `powershell.exe` starts, finds it has no
+   console, and exits `0` without running a line of the script. Measured
+   across all four combinations; only the `CREATE_NO_WINDOW` ones ran.
+
+So it is `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`, plus
+`CREATE_BREAKAWAY_FROM_JOB` with the same fallback shape `_spawn_detached()`
+uses -- without the breakaway, §10.8b's kill-on-close job would take the
+helper down at the moment it is needed.
+
+**Elevation.** Firewall changes need admin rights, so this is the one step
+that can raise a UAC prompt. It is asked for *before* the teardown, while the
+window the user just clicked in is still on screen -- a consent dialog
+appearing after the app has vanished is how malware behaves -- and only after
+an unelevated query has confirmed there are rules to remove. Declining it
+costs that step and nothing else.
+
+**Never from a source checkout.** `sys.executable` is the frozen exe only
+when frozen; in a dev run it is `python.exe`. `perform_uninstall()` refuses
+when `is_frozen()` is false, and the window does not draw the button there,
+which is two guards for one mistake that would otherwise delete an
+interpreter.
+
 ### 10.7 Troubleshooting
 
 | Symptom | Cause | Fix |

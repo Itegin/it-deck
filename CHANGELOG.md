@@ -7,6 +7,26 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.4.5 — 2026-09-19
+
+### Added
+
+- **A button that removes IT-Deck from the PC completely.** It is in step 3 of
+  the window, and it deletes the exe, the Desktop shortcut, the settings,
+  tokens and tile database, its Windows Firewall rules and the temp directory
+  the exe unpacks into — which is everything IT-Deck ever writes; there is no
+  registry key, service or scheduled task behind it.
+
+  Deleting the exe by hand never removed the other four, and the firewall
+  rules in particular are the reason a later reinstall can look dead on the
+  network.
+
+  It asks first, in a window that lists what is about to go. Cancel holds the
+  focus and Enter is bound to it, so the reflex that dismisses a dialog cannot
+  delete an install; the red button has to be aimed at.
+
+---
+
 ## v0.4.4 — 2026-09-19
 
 ### Added

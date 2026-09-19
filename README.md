@@ -148,6 +148,20 @@ any failure is ignored silently. Turn it off with `UPDATE_CHECK=0` in
 `config.env`. Only the exe can be out of date — the phone loads the deck from
 whatever version is running.
 
+## Removing it
+
+Step 3 of the window has a quiet **Remove IT-Deck from this PC** button. It
+deletes the exe, the Desktop shortcut, your settings, tokens and tile layout,
+its Windows Firewall rules, and the temp directory the exe unpacks into —
+which is everything IT-Deck ever writes. Deleting the exe on its own leaves
+the other four behind.
+
+It asks first, in a window listing what will go; Cancel holds the focus, so
+Enter or Escape closes it without deleting anything. Windows asks for
+permission once, only to remove the firewall rules — refusing that still
+removes everything else. The home-screen icon on your phone stays; remove
+that one on the phone.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -172,4 +186,4 @@ whatever version is running.
 
 ## Status
 
-v0.4.4 — personal project, active development, API may change.
+v0.4.5 — personal project, active development, API may change.
