@@ -2023,7 +2023,9 @@ Ordered roughly by how likely each is to bite.
 
 | File | Holds |
 | --- | --- |
-| `README.md` | What the project is, requirements, setup, Ansible, status |
+| `README.md` | What the project is, standalone setup, the tiles, Studio, troubleshooting |
+| `README.ru.md` | The same page in Russian; the two are kept in step |
+| `docs/legacy-server.md` | Setup for the pre-v0.3.0 Docker-on-a-server deployment, and the Ansible playbook (moved out of the README) |
 | `CHANGELOG.md` | What changed in each tagged release, newest first |
 | `CLAUDE.md` | Only what Claude Code needs loaded every session: core rules, deploy patterns, naming, Stage terminology, stage status |
 | **this file** | Everything detailed: schema, API, tile/theme internals, agent internals, deploy pipeline, tech debt |
