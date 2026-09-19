@@ -1567,6 +1567,30 @@ simply "exit when asked":
 Sleep and hibernate are unaffected: those are `WM_POWERBROADCAST` and never
 send `WM_QUERYENDSESSION`.
 
+**Measured, before and after.** Windows' real sequence is
+`WM_QUERYENDSESSION` to every top-level window, then `WM_ENDSESSION` to every
+top-level window; both builds were driven through exactly that against a
+running exe, with `SendMessageTimeout` timing each reply.
+
+| | pre-fix (v0.4.1) | v0.4.2 |
+| --- | --- | --- |
+| Parent's reply to `WM_QUERYENDSESSION` | `TRUE`, 4 ms | `TRUE`, 51 ms |
+| Block reason registered by the parent | `Needs to remove its temporary files.` | same — it is registered either way |
+| **Parent's reply to `WM_ENDSESSION`** | **never returned — still inside the handler after 120 s** | **330 ms** |
+| `ITDeck.exe` processes left afterwards | all 4 still running | none, within 1 s |
+
+The `WM_ENDSESSION` row is the whole bug. `WaitToKillAppTimeout` is five
+seconds by default, so a handler that never returns is a handler Windows gives
+up on — and the string it puts on the "preventing you from shutting down"
+screen is the block reason in the row above it, which is why that screen named
+`ITDeck.exe` and offered a button nobody was awake to press.
+
+Two notes for anyone re-running this. A synthetic `WM_ENDSESSION` strands the
+parent: it returns from the handler and then waits to be killed by a shutdown
+that is not actually happening, so kill it afterwards. And a drift of
+`_MEIxxxx` directories in `%TEMP%` is the visible residue of this bug's
+history — they are what the parent was trying to delete when it was killed.
+
 ### 10.7 Troubleshooting
 
 | Symptom | Cause | Fix |
