@@ -31,7 +31,7 @@ Python on that machine.
    [latest release](https://github.com/Itegin/it-deck/releases/latest) and
    run it. This window opens:
 
-   <img src="docs/screenshots/window.png" alt="The IT-Deck window: step 1 is a QR code and link for the phone, step 2 opens Studio, step 3 explains Minimize and Quit" width="529">
+   <img src="docs/screenshots/window.png" alt="The IT-Deck window: step 1 is a QR code and link for the phone, step 2 opens Studio, step 3 explains Minimize and Quit and offers to remove IT-Deck from the PC" width="518">
 
 2. **Point your phone's camera at the QR code**, on the same Wi-Fi. That is
    the only required step — the token is in the link, and the phone keeps it.

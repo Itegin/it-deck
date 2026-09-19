@@ -1098,7 +1098,11 @@ def remove_firewall_rules(exe: Path) -> None:
         subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", outer],
             capture_output=True,
-            timeout=120,
+            # Long enough to answer a consent prompt, short enough that
+            # ignoring one does not leave the dialog saying "removing" for
+            # two minutes. Whatever happens here, the uninstall carries on:
+            # the prompt is for the firewall rules and nothing else.
+            timeout=60,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception:
