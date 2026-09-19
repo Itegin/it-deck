@@ -1552,44 +1552,85 @@ simply "exit when asked":
 - Every route (the watcher's two messages, Tk's `WM_SAVE_YOURSELF`) sets one
   `threading.Event`, so the teardown is idempotent and the process exits
   exactly once, in one place.
-- The window procedure returns `TRUE` *before* the teardown runs
-  (`SESSION_END_REPLY_GRACE`), and `DefWindowProcW`/the `WNDPROC` prototype
-  declare a pointer-sized `LRESULT`. Left at the ctypes default that return
-  value truncates to a C `int`, and a truncated answer to
-  `WM_QUERYENDSESSION` reads as `FALSE` — which would *add* a shutdown
-  blocker rather than remove one.
-- The teardown is `terminate()` on the agent and the backend, half a second of
-  grace, then `os._exit(0)` — not `sys.exit`, which would run interpreter
-  shutdown with a tkinter mainloop on another thread, i.e. one more place to
-  hang. Everything is about to be killed by the shutdown anyway; the only
-  thing that matters is that `ITDeck.exe` stops being the reason the PC is on.
+- **The teardown runs inside the window procedure, before it answers.** Not
+  after, and not handed to another thread — see §10.8a, which is the entire
+  reason v0.4.2 did not work. Only the process's own exit is deferred, by
+  `SESSION_END_EXIT_DELAY` (50 ms), so the procedure gets to return `TRUE`
+  rather than vanishing mid-message; by the time that pause starts there is
+  nothing left that matters.
+- `DefWindowProcW` and the `WNDPROC` prototype declare a pointer-sized
+  `LRESULT`. Left at the ctypes default the return value truncates to a C
+  `int`, and a truncated answer to `WM_QUERYENDSESSION` reads as `FALSE` —
+  which would *add* a shutdown blocker rather than remove one.
+- The teardown is `terminate()` on the agent and the backend, then a **wait
+  for each of them to actually be gone** (`SESSION_END_CHILD_GRACE`, one
+  second each, not one second shared), then `os._exit(0)` — not `sys.exit`,
+  which would run interpreter shutdown with a tkinter mainloop on another
+  thread, i.e. one more place to hang.
 
 Sleep and hibernate are unaffected: those are `WM_POWERBROADCAST` and never
 send `WM_QUERYENDSESSION`.
+
+#### 10.8a The second blocker, and why v0.4.2 did not fix it
+
+v0.4.2 answered Windows correctly and still left the PC on all night. It set a
+`threading.Event` and let a waiter thread do the actual work 150 ms later, so
+that the window procedure could return `TRUE` first. **Windows does not wait
+150 ms.** It terminates a process as soon as its windows have answered, so
+that teardown never ran at all: the backend and the agent were left running.
+
+Both of them are re-invocations of this same exe sharing its unpacked
+`_MEIxxxx` directory — each has `python312.dll` mapped out of it — so
+PyInstaller's parent could not delete the directory, and when it cannot it
+puts up a modal `MessageBoxW`: **"Failed to remove temporary directory"**. A
+modal dialog during shutdown is a shutdown that never finishes. Same PC, same
+night, different blocker.
+
+The tell was in `launcher.log`: the `Windows is ending the session` line was
+missing from the run that failed, which is the proof the handler's work never
+reached it. That line's *presence* is now the signal the path ran.
+
+The lesson generalises past this bug: **anything that must happen at session
+end has to be finished before the window procedure returns.** There is no
+"later" — later is after the process has been killed.
+
+This also explains the `_MEIxxxx` drift. Each of those directories is ~90 MB;
+this machine had accumulated 35 of them, 1.26 GB, every one the residue of a
+parent killed before it could tidy up. `sweep_stale_unpack_dirs()` now clears
+them at startup, skipping the directory the running copy is using and treating
+any failure to delete as "in use, leave it alone".
 
 **Measured, before and after.** Windows' real sequence is
 `WM_QUERYENDSESSION` to every top-level window, then `WM_ENDSESSION` to every
 top-level window; both builds were driven through exactly that against a
 running exe, with `SendMessageTimeout` timing each reply.
 
-| | pre-fix (v0.4.1) | v0.4.2 |
-| --- | --- | --- |
-| Parent's reply to `WM_QUERYENDSESSION` | `TRUE`, 4 ms | `TRUE`, 51 ms |
-| Block reason registered by the parent | `Needs to remove its temporary files.` | same — it is registered either way |
-| **Parent's reply to `WM_ENDSESSION`** | **never returned — still inside the handler after 120 s** | **330 ms** |
-| `ITDeck.exe` processes left afterwards | all 4 still running | none, within 1 s |
+The first two columns below are the polite test: send the messages, then wait
+for the app to tidy up. That test is what let v0.4.2 look fixed. The third is
+the honest one — it terminates the launcher child the instant it has answered,
+which is what Windows actually does, and is the only column that separates
+v0.4.2 from v0.4.3.
 
-The `WM_ENDSESSION` row is the whole bug. `WaitToKillAppTimeout` is five
-seconds by default, so a handler that never returns is a handler Windows gives
-up on — and the string it puts on the "preventing you from shutting down"
-screen is the block reason in the row above it, which is why that screen named
-`ITDeck.exe` and offered a button nobody was awake to press.
+| | v0.4.1 (polite test) | v0.4.2 (polite test) | v0.4.2 (honest test) | v0.4.3 (honest test) |
+| --- | --- | --- | --- | --- |
+| Block reason registered by the parent | `Needs to remove its temporary files.` | same | same | same |
+| **Parent's reply to `WM_ENDSESSION`** | **never returned (120 s)** | 330 ms | **never returned (90 s)** | **120 ms** |
+| Backend / agent afterwards | both alive | both gone | **both alive** | both gone |
+| Modal "Failed to remove temporary directory" | — | no | **yes** | no |
+| The run's `_MEIxxxx` directory | left behind | deleted | **left behind** | deleted |
+| `ITDeck.exe` workers left | all | none | 2 | none |
 
-Two notes for anyone re-running this. A synthetic `WM_ENDSESSION` strands the
-parent: it returns from the handler and then waits to be killed by a shutdown
-that is not actually happening, so kill it afterwards. And a drift of
-`_MEIxxxx` directories in `%TEMP%` is the visible residue of this bug's
-history — they are what the parent was trying to delete when it was killed.
+`WaitToKillAppTimeout` is five seconds by default, so a handler that never
+returns is a handler Windows gives up on — and the string it then puts on the
+"preventing you from shutting down" screen is the block reason in the first
+row, which is why that screen named `ITDeck.exe` and offered a button nobody
+was awake to press.
+
+One note for anyone re-running this. A synthetic `WM_ENDSESSION` strands the
+parent: it returns from its handler and then waits to be killed by a shutdown
+that is not actually happening. That one surviving process is an artifact of
+the test, not a leak — it has already deleted the temp directory and released
+its block reason by then. Kill it afterwards.
 
 ### 10.7 Troubleshooting
 
@@ -1602,7 +1643,9 @@ history — they are what the parent was trying to delete when it was killed.
 | VPN tile errors "not configured yet" | No `process_name`/`path` in its params and no env fallback | Set them in Studio (§10.4) |
 | Tiles that need the PC stop responding | Agent died | The launcher respawns it; check the console for restart lines and `logs\agent.log` for why |
 | Backend didn't come up in time | Port conflict, or a startup exception | `logs\backend.log` |
-| Windows won't shut down / stops on "preventing you from shutting down" | A build older than v0.4.2 — PyInstaller's one-file parent holds the shutdown waiting for a child that never exits (§10.8) | Update to v0.4.2 or newer |
+| Windows won't shut down / stops on "preventing you from shutting down" | A build older than v0.4.3 — PyInstaller's one-file parent holds the shutdown (§10.8) | Update to v0.4.3 or newer |
+| Modal "Failed to remove temporary directory" at shutdown | v0.4.2 only: the backend and agent outlived the teardown and kept the unpack directory open (§10.8a) | Update to v0.4.3 |
+| `%TEMP%` filling with `_MEIxxxx` directories | Residue of the above; ~90 MB each | v0.4.3 sweeps them at startup |
 
 ---
 

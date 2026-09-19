@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.4.2"
+ITDECK_VERSION = "0.4.3"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -57,16 +57,23 @@ TOPMOST_RELEASE_MS = 4000
 UPDATE_POLL_MS = 1000
 AGENT_STATUS_POLL_MS = 2000
 
-# Windows session-end timing. Both are deliberately small: the PyInstaller
-# parent gives its child a bounded number of milliseconds to exit before it
-# gives up and lets the shutdown stall (see install_session_end_handler).
-#
-# REPLY_GRACE is the pause between the window procedure being told the session
-# is ending and the teardown actually running, so the procedure gets to return
-# TRUE to Windows before the process disappears underneath it. CHILD_GRACE is
-# how long the backend and agent get to die politely after terminate().
-SESSION_END_REPLY_GRACE = 0.15
-SESSION_END_CHILD_GRACE = 0.5
+# How long each of the backend and the agent gets to actually be gone after
+# terminate(), waited for one at a time rather than out of a shared budget.
+# "Gone" is the point of it: until their process handles are signalled they
+# still hold python312.dll open inside the unpacked _MEIxxxx directory, and
+# that is what decides whether the shutdown stalls (see
+# install_session_end_handler). terminate() is TerminateProcess on Windows, so
+# this is normally over in milliseconds; the ceiling exists for the case where
+# it is not. Two children at 1 s each leaves comfortable margin under
+# HungAppTimeout, which is 5 s and is what Windows measures us against.
+SESSION_END_CHILD_GRACE = 1.0
+
+# The pause between the teardown finishing and this process exiting, so the
+# window procedure gets to return TRUE to Windows first rather than vanishing
+# mid-message. This is NOT v0.4.2's mistake repeated: nothing that matters
+# happens after this sleep any more -- the backend and the agent are already
+# gone by the time it starts -- so being killed during it costs nothing.
+SESSION_END_EXIT_DELAY = 0.05
 
 # The frozen exe is built --windowed, so it has NO console: sys.stdout and
 # sys.stderr are None and a bare print() would raise AttributeError. They are
@@ -810,6 +817,49 @@ def hide_console() -> None:
         pass  # convenience only -- never let this block IT-Deck from running
 
 
+def sweep_stale_unpack_dirs() -> None:
+    """Delete _MEIxxxx directories that no longer belong to a running IT-Deck.
+
+    PyInstaller's onefile parent unpacks the whole bundle -- interpreter, Qt-
+    free as this is it is still ~90 MB -- into %TEMP%\\_MEIxxxxx, and deletes
+    it on the way out. Any time it does not get to (it was killed, the machine
+    lost power, or it failed because something still held a file open) the
+    directory is simply left there. They accumulate silently: this was found
+    at 35 of them, 1.26 GB, on a machine that had never been told.
+
+    Deliberately timid, because a directory belonging to a *running* copy must
+    not be touched. It only removes ones older than this process's own start,
+    skips the one this process is running from, and treats every failure as
+    "in use, leave it alone" -- shutil.rmtree cannot delete a file another
+    process has open, so a live copy's directory fails the attempt rather than
+    being half-deleted. Nothing here is allowed to affect startup.
+    """
+    if not is_frozen():
+        return
+    try:
+        import shutil
+        import tempfile
+
+        current = os.path.normcase(str(getattr(sys, "_MEIPASS", "")))
+        cutoff = time.time() - 60
+        removed = 0
+        for entry in Path(tempfile.gettempdir()).glob("_MEI*"):
+            try:
+                if not entry.is_dir() or os.path.normcase(str(entry)) == current:
+                    continue
+                if entry.stat().st_mtime > cutoff:
+                    continue  # too fresh to be sure it is nobody's
+                shutil.rmtree(entry)
+                removed += 1
+            except Exception:
+                continue  # still in use, or not ours to delete
+        if removed:
+            print(f"Cleaned up {removed} leftover unpack director"
+                  f"{'y' if removed == 1 else 'ies'} in TEMP.")
+    except Exception:
+        pass
+
+
 # --- Windows session end (shutdown / restart / logoff) --------------------
 
 # Kept alive for the process lifetime on purpose. ctypes does not own the
@@ -859,21 +909,48 @@ def install_session_end_handler(on_session_end):
     on all night. Sleep and hibernate are unaffected either way: those are
     WM_POWERBROADCAST and never send this message.
 
-    Returns the trigger so other paths can feed the same teardown. It is an
-    Event.set, so every route into it is idempotent and the exit happens
-    exactly once, in one place.
+    **The teardown has to be done before the window procedure returns.** Not
+    after, and not on another thread: Windows terminates a process as soon as
+    its windows have answered, and v0.4.2 learned this the expensive way. It
+    set an Event and let a waiter thread do the work 150 ms later; the process
+    was already gone by then, so the backend and the agent were never stopped,
+    kept python312.dll mapped out of the shared _MEIxxxx directory, and
+    PyInstaller's parent -- unable to delete it -- put up a modal "Failed to
+    remove temporary directory" warning. A modal dialog during shutdown is a
+    shutdown that never finishes, so the PC stayed on exactly as before, just
+    for a different reason. The budget for doing it inline is HungAppTimeout,
+    5 seconds; the teardown is capped well under that.
+
+    Returns a callable that runs the same teardown and then exits, for the
+    info window to hang on Tk's WM_SAVE_YOURSELF. Every route is guarded by
+    one lock and one done-flag, so the work happens exactly once however many
+    of them arrive.
     """
     trigger = threading.Event()
+    teardown_lock = threading.Lock()
+    teardown_done = []
+
+    def run_teardown() -> None:
+        # Synchronous, and called from whichever window procedure was told
+        # first. See the "done before it returns" paragraph above for why it
+        # cannot be deferred to a thread. The lock is not decoration: the
+        # watcher window procedure and Tk's WM_SAVE_YOURSELF run on different
+        # threads and can both arrive, and an Event does not stop two of them
+        # being inside terminate()/wait() at once.
+        with teardown_lock:
+            if teardown_done:
+                return
+            teardown_done.append(True)
+            try:
+                on_session_end()
+            except Exception:
+                pass
 
     def waiter() -> None:
+        # Only the exit. Everything that has to happen before Windows may
+        # terminate this process has already happened in run_teardown().
         trigger.wait()
-        # Let whichever window procedure fired this return its answer to
-        # Windows before the process stops existing underneath it.
-        time.sleep(SESSION_END_REPLY_GRACE)
-        try:
-            on_session_end()
-        except Exception:
-            pass
+        time.sleep(SESSION_END_EXIT_DELAY)
         # os._exit, not sys.exit: this is a daemon thread, there is a tkinter
         # mainloop on another one, and interpreter shutdown here would be one
         # more place to hang -- which is the exact failure being fixed.
@@ -881,8 +958,12 @@ def install_session_end_handler(on_session_end):
 
     threading.Thread(target=waiter, daemon=True).start()
 
+    def request_session_end() -> None:
+        run_teardown()
+        trigger.set()
+
     if os.name != "nt":
-        return trigger.set
+        return request_session_end
 
     def pump() -> None:
         import ctypes
@@ -928,10 +1009,15 @@ def install_session_end_handler(on_session_end):
 
         def window_proc(hwnd, msg, wparam, lparam):
             if msg == WM_QUERYENDSESSION:
+                # Before the reply, not after. Windows terminates a process as
+                # soon as its windows have answered, so a teardown handed to
+                # another thread here is a teardown that never runs.
+                run_teardown()
                 trigger.set()
                 return 1  # yes -- nothing here needs saving, go ahead
             if msg == WM_ENDSESSION:
                 if wparam:
+                    run_teardown()
                     trigger.set()
                 return 0
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -970,7 +1056,7 @@ def install_session_end_handler(on_session_end):
     except Exception:
         pass  # the info window's own hook below still covers the common case
 
-    return trigger.set
+    return request_session_end
 
 
 def _version_tuple(text: str) -> tuple:
@@ -1540,6 +1626,8 @@ def show_info_window(
 
 def run_launcher() -> int:
     ensure_desktop_shortcut()
+    # Before anything else claims disk: see sweep_stale_unpack_dirs().
+    sweep_stale_unpack_dirs()
     data_dir = default_data_dir()
     config = load_or_create_config(data_dir)
     port = int(config["SERVER_PORT"])
@@ -1674,27 +1762,49 @@ def run_launcher() -> int:
 
     def stop_for_session_end() -> None:
         # Runs when Windows is shutting down, restarting or logging off, on
-        # the session watcher's own thread -- not on the supervisor loop
-        # below, which polls once a second and is far too slow to be what
-        # Windows waits on. It therefore does the teardown itself rather than
-        # signalling quit_requested: this is the one case where the loop does
-        # not get to own it. Deliberately brisk, and terminate() rather than
-        # a graceful stop -- every one of these processes is about to be
-        # killed by the shutdown anyway, and the only thing that matters is
-        # that ITDeck.exe stops being the reason the PC is still on.
-        print("Windows is ending the session -- stopping IT-Deck.")
-        for proc in (agent_handle["proc"], backend_proc):
+        # whichever window-procedure thread was told first -- not on the
+        # supervisor loop below, which polls once a second and is far too slow
+        # to be what Windows waits on. It therefore does the teardown itself
+        # rather than signalling quit_requested: this is the one case where
+        # the loop does not get to own it. terminate() rather than a graceful
+        # stop, because every one of these processes is about to be killed by
+        # the shutdown anyway.
+        #
+        # Waiting for them to be *gone* is the part that matters, and it is
+        # not tidiness. The backend and the agent are re-invocations of this
+        # same exe and share its unpacked _MEIxxxx directory -- each has
+        # python312.dll mapped out of it. Until their process handles are
+        # signalled the directory cannot be deleted, and when PyInstaller's
+        # parent fails to delete it, it puts up a modal "Failed to remove
+        # temporary directory" warning. A modal dialog during shutdown is a
+        # shutdown that never finishes, which is precisely the bug v0.4.2
+        # left behind.
+        print("Windows is ending the session -- stopping IT-Deck.", flush=True)
+        children = [agent_handle["proc"], backend_proc]
+        for proc in children:
             try:
                 if proc.poll() is None:
                     proc.terminate()
             except Exception:
                 pass
-        deadline = time.time() + SESSION_END_CHILD_GRACE
-        for proc in (agent_handle["proc"], backend_proc):
+        # One budget each, not one shared between them: computing the second
+        # wait's timeout from a deadline the first had already consumed meant
+        # it got zero and returned immediately without waiting for anything.
+        for proc in children:
             try:
-                proc.wait(timeout=max(0.0, deadline - time.time()))
+                proc.wait(timeout=SESSION_END_CHILD_GRACE)
             except Exception:
                 pass
+        alive = [proc.pid for proc in children if proc.poll() is None]
+        if alive:
+            # Nothing further can be done from here -- terminate() already is
+            # TerminateProcess on Windows, so kill() would be the same call
+            # again -- but say so, because this line in launcher.log is what
+            # explains a temp directory that could not be removed.
+            print(f"Warning: {alive} still running after terminate().", flush=True)
+        else:
+            print("Backend and agent gone -- the unpacked temp directory is "
+                  "free to delete.", flush=True)
         try:
             sys.stdout.flush()
         except Exception:

@@ -7,6 +7,36 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.4.3 — 2026-09-19
+
+### Fixed
+
+- **Windows still would not shut down.** v0.4.2 fixed the first half of this
+  and left the second. IT-Deck now really does close itself, and the PC goes
+  down.
+
+  v0.4.2 answered Windows correctly but did its actual cleanup 150 ms later,
+  on another thread. Windows does not wait that long — it terminates an app as
+  soon as its windows have answered — so that cleanup never ran, and the
+  backend and the agent were left running. Both are re-invocations of
+  `ITDeck.exe` sharing its unpacked temp directory, so PyInstaller's launcher
+  could not delete that directory and put up a modal **"Failed to remove
+  temporary directory"** warning. A modal dialog during shutdown is a shutdown
+  that never finishes — the same PC left on all night, for a different reason.
+
+  The stop now happens before IT-Deck answers Windows, and waits for the
+  backend and the agent to actually be gone rather than only asking them to
+  go. Verified against a test that terminates IT-Deck the instant it answers,
+  exactly as Windows does — the case v0.4.2 passed only because the earlier
+  test was politely waiting for it.
+
+- **Leftover unpack directories are cleaned up on start.** Every shutdown that
+  killed IT-Deck before it could tidy up left ~90 MB in `%TEMP%\_MEIxxxxx`.
+  This machine had 35 of them, 1.26 GB. Directories belonging to a running
+  copy are never touched.
+
+---
+
 ## v0.4.2 — 2026-09-19
 
 ### Fixed
