@@ -30,6 +30,27 @@ def get_workspaces_with_items() -> list[dict]:
     ]
 
 
+def get_referenced_agents() -> list[str]:
+    """Every agent name a tile points at, whether or not it is connected.
+
+    The hub only knows the agents that are *here*; this is how the other half
+    of the question gets answered. A client connecting has to be told which
+    of the agents its tiles depend on are missing, and "missing" is by
+    definition not in hub.agents -- so the list of what to check comes from
+    the item rows instead.
+    """
+    conn = get_connection()
+    try:
+        return [
+            row["target"]
+            for row in conn.execute(
+                "SELECT DISTINCT target FROM item WHERE target IS NOT NULL AND target <> ''"
+            )
+        ]
+    finally:
+        conn.close()
+
+
 def get_item(item_id: int) -> Optional[dict]:
     conn = get_connection()
     try:

@@ -9,6 +9,19 @@ standalone mode is §10, tech debt is §12.
 
 ## v0.4.4 — 2026-09-19
 
+### Added
+
+- **The deck becomes a clock when the PC end goes away.** Close the agent, or
+  IT-Deck itself, and every tile on the deck is a button that cannot do
+  anything — except the clock widget, which runs on the phone and keeps
+  working. It now takes the whole screen for as long as that lasts, with a
+  line saying whether the agent or the connection is what is missing. The
+  tiles come back by themselves the moment the PC does; there is nothing to
+  switch on or off, and a deck without a clock widget is unaffected.
+
+  A deck opened *while* the agent was already down used to look perfectly
+  live until a press timed out. It now knows straight away.
+
 ### Fixed
 
 - **Ending IT-Deck in Task Manager left the backend and the agent running**,

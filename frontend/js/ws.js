@@ -116,6 +116,11 @@ const workspaceUpdateCallbacks = [];
 const commandStateCallbacks = [];
 const settingsUpdateCallbacks = [];
 const authErrorCallbacks = [];
+// Whether this socket is up. Starts "up" rather than "down": the page is
+// loading, the first connect is milliseconds away, and a deck that assumed
+// the worst would flash its offline state on every single load.
+const connectionCallbacks = [];
+let connectionUp = true;
 
 // Consecutive 4001s since the last successful hello. Distinguishes "the
 // very first connection lost a race" (worth one more prompt) from "this
@@ -148,6 +153,7 @@ function connect() {
   socket = new WebSocket(`ws://${location.host}/ws/client`);
 
   socket.addEventListener("open", () => {
+    notifyConnection(true);
     // Connection succeeded, so the next disconnect should start backing off
     // from scratch again instead of continuing to climb.
     backoff = 1000;
@@ -222,6 +228,10 @@ function connect() {
       // tokenPromptDismissed stays set -- otherwise every backoff tick would
       // re-open the dialog and trap them in it.
     }
+    // After the token handling above, because a rejected token is a
+    // different thing to report than "the PC went away" and the branch above
+    // may still be deciding which one this is.
+    notifyConnection(false);
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, MAX_BACKOFF);
   });
@@ -346,6 +356,26 @@ export function onStateChange(callback) {
 
 export function onAgentStatus(callback) {
   agentStatusCallbacks.push(callback);
+}
+
+// Only fires on a *change*, and only after the first one: open/close pairs
+// arrive once per backoff tick while the backend is away, and a subscriber
+// that redraws would otherwise be redrawing the same thing every second.
+function notifyConnection(up) {
+  if (up === connectionUp) {
+    return;
+  }
+  connectionUp = up;
+  for (const callback of connectionCallbacks) {
+    callback(up);
+  }
+}
+
+// The socket to the backend, not the agent behind it: this says the PC's
+// IT-Deck is unreachable (closed, asleep, off the network), where
+// onAgentStatus says IT-Deck is there and the agent is not.
+export function onConnectionChange(callback) {
+  connectionCallbacks.push(callback);
 }
 
 export function onWorkspaceUpdate(callback) {

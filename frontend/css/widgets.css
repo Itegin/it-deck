@@ -182,3 +182,98 @@
     display: none;
   }
 }
+
+/* ── When the PC end is gone: the clock takes the grid ──────────────────── */
+
+/* Set by render.js's updateClockTakeover() when every agent this deck points
+   at is offline, or the socket to IT-Deck is down. Every action tile is inert
+   in that state and the clock is the one tile that still does its job, so it
+   gets the whole deck until the PC comes back. */
+
+#grid.clock-takeover .tile:not(.clock-takeover-tile) {
+  display: none;
+}
+
+/* !important because render.js writes each tile's placement inline
+   (`tile.style.gridColumn`), and an inline declaration outranks any selector
+   here. The alternative -- having the JS overwrite and later restore those
+   two properties -- puts layout back in two places that have to agree. */
+#grid.clock-takeover .tile.clock-takeover-tile {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 / -1 !important;
+}
+
+/* The per-row ceiling exists to stop a sparse deck becoming a wall of slabs
+   (see grid.css). One full-screen clock is exactly the case that wants to be
+   a slab, so on a 1-2 row deck the cap is lifted rather than leaving the
+   clock floating in a centred band. */
+#grid.clock-takeover {
+  max-height: none;
+}
+
+/* The tile is now roughly phone-shaped, so the aspect-ratio query above does
+   not fire and the compact 1x1 layout is what applies -- at ten times the
+   area it was designed for. These raise the ceilings to match: the same
+   `cqmin` proportions, with caps a full-screen clock can actually reach.
+   `cqmin` is the tile's narrow axis, i.e. its width, so the type scales with
+   the phone rather than with how tall the deck happens to be. */
+#grid.clock-takeover .clock-takeover-tile .widget-body {
+  gap: 6cqmin;
+}
+
+/* Sized against the tile's narrow axis and the *number of characters*: at
+   this scale the time is the widest thing on screen, and nowrap means an
+   overshoot clips rather than wraps. Measured on a 375px-wide phone with the
+   bold tabular digits this uses. */
+#grid.clock-takeover .clock-takeover-tile .wc-time {
+  font-size: clamp(40px, 30cqmin, 120px);
+}
+
+#grid.clock-takeover .clock-takeover-tile.wc-seconds .wc-time {
+  font-size: clamp(36px, 19cqmin, 84px);
+}
+
+#grid.clock-takeover .clock-takeover-tile .wc-date {
+  font-size: clamp(14px, 7cqmin, 30px);
+}
+
+/* Room for them at last: the city and today's range are hidden on a 1x1 tile
+   only because they do not fit. */
+#grid.clock-takeover .clock-takeover-tile .wc-place,
+#grid.clock-takeover .clock-takeover-tile .wc-range {
+  display: block;
+  font-size: clamp(12px, 5cqmin, 22px);
+}
+
+#grid.clock-takeover .clock-takeover-tile .wc-now {
+  gap: 4cqmin;
+}
+
+#grid.clock-takeover .clock-takeover-tile .wc-icon {
+  width: clamp(22px, 12cqmin, 56px);
+  height: clamp(22px, 12cqmin, 56px);
+}
+
+#grid.clock-takeover .clock-takeover-tile .wc-temp {
+  font-size: clamp(18px, 11cqmin, 52px);
+}
+
+/* Why the deck turned into a clock. Written by render.js, one line, at the
+   foot of the tile so it never pushes the time off centre: a person glancing
+   at this from across the room wants the time, and only someone who has
+   walked over and wondered where their tiles went needs the sentence. */
+#grid.clock-takeover .deck-offline-note {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 5cqmin;
+  padding: 0 8cqmin;
+  text-align: center;
+  font-size: clamp(11px, 3.6cqmin, 16px);
+  font-weight: 500;
+  line-height: 1.35;
+  /* Same 0.75 the widget's own secondary text uses -- this is a caption on a
+     themed surface, not body copy, and it has to stay legible on Liquid
+     Glass light's pale pane. */
+  opacity: 0.75;
+}

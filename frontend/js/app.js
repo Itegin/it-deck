@@ -1,6 +1,6 @@
 import { fetchWorkspaces } from "./api.js";
-import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setTileCommandState, getTileMeta } from "./render.js";
-import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
+import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
+import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onConnectionChange, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
 import { initTheme, applyTheme, applyMode } from "./theme.js";
 import { showContextMenu } from "./contextmenu.js";
 import { showToast } from "./toast.js";
@@ -147,6 +147,10 @@ onCommandState(({ itemId, phase, message }) => {
 
 onStateChange((data) => updateTileState(data));
 onAgentStatus(({ agent, status }) => setAgentOffline(agent, status === "offline"));
+// Nothing is greyed out here -- with the socket down the deck has no way to
+// know what the agent is doing, and greying tiles would claim it does. The
+// clock takeover is the whole response (see updateClockTakeover).
+onConnectionChange((up) => setConnectionDown(!up));
 // Studio Mode edits arrive as a bare signal, not the changed data itself --
 // refetching and fully re-rendering is simplest and cheap enough here
 // (edits are infrequent), same as init()'s own first load.

@@ -472,6 +472,12 @@ each client filters on the `req_id`s it actually sent):
 {"type": "settings_update", "settings": {"theme": "pastel"}}
 ```
 
+A newly accepted socket is sent the full `state` first, and then one
+`agent_status` frame per agent any tile references — `online` or `offline`,
+computed against `hub.agents`. Without that, a client that connected while an
+agent was already down would only ever have learnt about it from the *next*
+connect or drop, which might never come (see §6, the clock takeover).
+
 `workspace_update` is a bare signal — the client refetches and re-renders.
 `settings_update` carries its payload instead, because there is one word to
 deliver and nothing to re-render.
@@ -655,6 +661,54 @@ Adding one: module in `js/widgets/`, register in `WIDGETS`, add a
 `tile-catalog.js` entry, and a backend provider under `api/widgets.py` if it
 needs data or secrets. (A phone-side recorder won't work over plain http --
 `getUserMedia` needs a secure context.)
+
+### When the PC end is gone: the clock takes the deck
+
+A deck whose agent has been closed is a screen full of buttons that cannot do
+anything. The one tile that still works in that state is the clock widget,
+because it runs entirely on the phone — which is why "the time is still there
+when IT-Deck is off on the PC" was an observation before it was a feature.
+
+`updateClockTakeover()` in `render.js` turns that into the deck's fallback
+state. When it fires, `#grid` gets `.clock-takeover`, one clock widget gets
+`.clock-takeover-tile`, every other tile is `display: none`, and the clock
+spans `1 / -1` in both axes with its type scaled up to match (`widgets.css`).
+A one-line note at the foot of the tile says why. Nothing is stored and
+nothing has to be undone: the tiles come back the moment the deck can reach
+the PC again.
+
+**What counts as gone**, in order:
+
+1. `connectionDown` — the socket to the backend is closed (`onConnectionChange`
+   in `ws.js`, fired on `open`/`close`, de-duplicated so a backoff ladder does
+   not re-render once a second). IT-Deck itself is not there.
+2. Every agent named by an action tile on the *current* deck is offline
+   (`offlineAgents`, fed by `agent_status`). IT-Deck is running; the agent is
+   not.
+
+The socket outranks the agents deliberately: with it down, what the agents are
+doing is unknown, so claiming "agent offline" would be a guess. The note says
+which of the two it is.
+
+A deck with no clock widget never takes over — there would be nothing to show
+— and neither does one with no action tiles, since a deck of pure widgets does
+not depend on an agent in the first place.
+
+**The one protocol change this needed.** `agent_status` had only ever been
+sent when an agent connected or dropped, so a client that loaded *while* an
+agent was already down was never told: it drew live-looking tiles for an agent
+that could not answer, and the takeover would have waited for an event that
+was not coming. `/ws/client` now sends one `agent_status` frame per
+**referenced** agent (`get_referenced_agents()` — `SELECT DISTINCT target FROM
+item`, because "offline" is a statement about an agent that is *not* in
+`hub.agents`) immediately after the initial `state` push. No new frame type,
+so an older client ignores nothing and sees nothing new.
+
+**Sizing.** The time is the widest thing on the screen and `white-space:
+nowrap` means an overshoot clips rather than wraps, so the full-screen size is
+split by character count: `mountClockWeather()` publishes `.wc-seconds` on the
+tile, and `23:04:31` (eight characters) is sized smaller than `23:04` (five).
+Measured on a 375px-wide viewport: 67px against a 351px tile, 256px of text.
 
 ### How Studio writes colours into `params`
 

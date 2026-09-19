@@ -5,7 +5,7 @@ import os
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from app.models import bump_press_count, get_item
+from app.models import bump_press_count, get_item, get_referenced_agents
 from app.pending import track
 from app.state import get_state
 from app.ws.hub import hub
@@ -90,6 +90,24 @@ async def client_ws(ws: WebSocket) -> None:
         # A newly connected client has missed every diff broadcast so far, so it
         # needs the full state once up front before it can rely on diffs alone.
         await ws.send_json({"type": "state", "data": get_state()})
+
+        # Same argument, for the agents. agent_status has only ever been sent
+        # when one connects or drops, so a client that arrives while an agent
+        # is already down was never told -- it drew live-looking tiles for an
+        # agent that could not answer any of them, and only found out when a
+        # press timed out. That is also what decides whether the deck falls
+        # back to its clock (see setAgentOffline in render.js), which has to
+        # be right on the first frame rather than after the next event.
+        #
+        # One frame per *referenced* agent rather than per connected one:
+        # "offline" is a statement about an agent that is not here, so the
+        # names have to come from the tiles, not from the hub.
+        for agent in get_referenced_agents():
+            await ws.send_json({
+                "type": "agent_status",
+                "agent": agent,
+                "status": "online" if agent in hub.agents else "offline",
+            })
 
         while True:
             message = await ws.receive_json()

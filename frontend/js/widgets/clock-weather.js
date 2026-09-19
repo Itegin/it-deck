@@ -60,6 +60,11 @@ export function mountClockWeather(tile, item) {
     params.lat !== undefined && params.lon !== undefined && Number.isFinite(lat) && Number.isFinite(lon);
 
   tile.classList.add("tile-widget", "widget-clock-weather");
+  // "23:03:09" is three characters wider than "23:03", and the time is
+  // sized to fill the tile -- so a size that fits one clips the other.
+  // The count is known only here, so it is published as a class rather
+  // than guessed at in CSS.
+  tile.classList.toggle("wc-seconds", showSeconds);
   // render.js appended an icon and a label for every tile. This widget draws
   // its own content, but the label stays as the accessible name. It is
   // visually hidden rather than removed, so a screen reader still hears

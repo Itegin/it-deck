@@ -326,6 +326,12 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   for (const [tile, item] of widgets) {
     mountWidget(tile, item);
   }
+
+  // Last, and it has to be here rather than only on the events that change
+  // it: a re-render rebuilds every tile, so an agent that went away five
+  // minutes ago has to be re-applied to the tiles that have just replaced
+  // the ones it greyed out.
+  updateClockTakeover();
 }
 
 // One arrow press. 5 rather than 1 because the range is 0-100 and this is a
@@ -526,6 +532,11 @@ export function renderWorkspaceSelector(workspaces, onSelect) {
 
   destroyWidgets();
   grid.innerHTML = "";
+  // The picker has no clock and no action tiles, so this only ever clears the
+  // takeover -- but leaving the class behind would hide every deck in the
+  // list while the agent is away, which is precisely when someone might be
+  // switching decks to look for one that still does something.
+  updateClockTakeover();
 
   workspaces.forEach((workspace, index) => {
     // Every selector tile is actionable, and this screen was already wired on
@@ -663,7 +674,100 @@ export function getTileMeta(itemId) {
   };
 }
 
+// Which agents the backend has told us are away, and whether the socket to
+// the backend is itself down. Module state rather than something read back
+// out of the DOM, because every re-render throws that DOM away while both of
+// these facts stay true.
+const offlineAgents = new Set();
+let connectionDown = false;
+
+// The deck's last useful function when the PC end has gone: a clock.
+//
+// When nothing on the deck can reach the machine any more -- the agent is
+// closed, or IT-Deck itself is -- every action tile is a button that cannot
+// do anything, and the clock widget is the one tile that still works, because
+// it runs entirely on the phone. So it takes the whole grid and the dead
+// tiles get out of its way, which turns a deck full of inert buttons into
+// something worth leaving on the nightstand.
+//
+// Reversible and automatic in both directions: the tiles come back the moment
+// the agent or the connection does, with no state kept anywhere and nothing
+// for the user to undo. A deck with no clock widget never takes over -- there
+// would be nothing to show.
+function updateClockTakeover() {
+  const grid = document.getElementById("grid");
+  if (!grid) {
+    return;
+  }
+  const clock = grid.querySelector(".tile.widget-clock-weather");
+
+  // Read off the tiles actually on screen rather than a saved workspace: this
+  // runs after every render, and "which agents does this deck depend on" is a
+  // property of what is currently drawn. A deck of pure widgets has no
+  // targets and therefore never counts as agent-down.
+  const targets = new Set(
+    [...grid.querySelectorAll('.tile[data-kind="action"]')].map((tile) => tile.dataset.target)
+  );
+  const everyAgentAway = targets.size > 0 && [...targets].every((t) => offlineAgents.has(t));
+
+  // The socket outranks the agents: with the socket down, what the agents
+  // were doing is simply unknown, and saying "agent offline" would be a
+  // guess. Connection first, agents second, and the note below says which.
+  const reason = connectionDown ? "connection" : everyAgentAway ? "agent" : null;
+  const takeover = Boolean(clock) && reason !== null;
+
+  grid.classList.toggle("clock-takeover", takeover);
+
+  // Which clock, marked on the tile itself: a deck is allowed more than one
+  // clock widget, and "the tile that fills the screen" has to be exactly one
+  // of them. Without this the CSS would span every match on top of the
+  // others.
+  for (const tile of grid.querySelectorAll(".clock-takeover-tile")) {
+    if (tile !== clock || !takeover) {
+      tile.classList.remove("clock-takeover-tile");
+    }
+  }
+
+  const existing = grid.querySelector(".deck-offline-note");
+  if (!takeover) {
+    if (existing) {
+      existing.remove();
+    }
+    return;
+  }
+  clock.classList.add("clock-takeover-tile");
+
+  const note = existing || document.createElement("div");
+  note.className = "deck-offline-note";
+  // Polite, not assertive: this is ambient context for a screen that has
+  // just become a clock, not an answer to anything the user did.
+  note.setAttribute("role", "status");
+  note.textContent =
+    reason === "connection"
+      ? "No connection to IT-Deck — the deck comes back on its own"
+      : "The agent isn't running — the deck comes back on its own";
+  // Inside the tile, not the grid: everything else in the grid is hidden in
+  // this state, and the note belongs to the one tile still on screen.
+  if (note.parentElement !== clock) {
+    clock.appendChild(note);
+  }
+}
+
+// The socket to the backend went down or came back. Separate from
+// setAgentOffline because it is a different failure with a different
+// message: the agent being away means IT-Deck is running and half-deaf,
+// this means the PC end is not there at all.
+export function setConnectionDown(isDown) {
+  connectionDown = isDown;
+  updateClockTakeover();
+}
+
 export function setAgentOffline(agent, isOffline) {
+  if (isOffline) {
+    offlineAgents.add(agent);
+  } else {
+    offlineAgents.delete(agent);
+  }
   // Scoped to the agent named in the agent_status message: with more than
   // one agent connected, one disconnecting must not grey out the other's
   // tiles. data-target is set from item.target when the tile is rendered.
@@ -681,12 +785,16 @@ export function setAgentOffline(agent, isOffline) {
     }
     tile.classList.toggle("tile-offline", isOffline);
   }
+  updateClockTakeover();
 }
 
 export function renderError(message) {
   const grid = document.getElementById("grid");
   destroyWidgets();
   grid.innerHTML = "";
+  // The clock this deck may have been showing has just been wiped with
+  // everything else, so the takeover has nothing left to be about.
+  updateClockTakeover();
   const errorEl = document.createElement("div");
   errorEl.className = "error-message";
   // This replaces the entire deck and is never focused, so without a live
