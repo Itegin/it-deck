@@ -31,9 +31,10 @@ Python on that machine.
 
 1. **Download `ITDeck.exe`** from the
    [latest release](https://github.com/Itegin/it-deck/releases/latest) and
-   run it. This window opens:
+   run it. The first time, a short tour walks you through setup; after that
+   this window stays open:
 
-   <img src="docs/screenshots/window.png" alt="The IT-Deck window: step 1 is a QR code and link for the phone, step 2 opens Studio, step 3 explains Minimize and Quit and offers to remove IT-Deck from the PC" width="518">
+   <img src="docs/screenshots/window.png" alt="The IT-Deck window: step 1 is a QR code and link for the phone, step 2 opens Studio, step 3 explains Minimize and Quit and offers to remove IT-Deck from the PC; Tutorial replays the first-run tour" width="518">
 
 2. **Point your phone's camera at the QR code**, on the same Wi-Fi. That is
    the only required step — the token is in the link, and the phone keeps it.
@@ -71,7 +72,7 @@ standalone\build.ps1
 
 Needs **Python 3.7–3.12** on the machine that *builds* it (`comtypes`, used
 for audio control, has no 3.13/3.14 support). The result is
-`standalone\dist\ITDeck.exe`, ~26 MB, which needs nothing installed to run.
+`standalone\dist\ITDeck.exe`, ~29 MB, which needs nothing installed to run.
 
 </details>
 
@@ -93,11 +94,12 @@ A fresh install seeds eight, all wired to something real:
 | **Audio Switch** | Swaps between two output devices, naming the current one |
 | **Screenshot** | Captures the primary monitor to the **PC's** clipboard |
 | **VPN** | Launches your VPN client, lit while it runs — **needs a path first** |
-| **Close Agent** | Stops the agent; quit and relaunch IT-Deck to bring it back |
+| **Close Agent** | Stops the agent; **Start the agent** in the IT-Deck window brings it back |
 
-Studio can add two more: **Clock & weather** (the phone's own time and date
+Studio adds more: **Clock & weather** (the phone's own time and date
 plus the weather for a city you pick — Open-Meteo, no API key) and **Program
-on/off**, which starts a program or closes it if it is already running.
+on/off**, which starts a program or closes it if it is already running, plus
+the quick-launch tiles below.
 
 **Quick launch.** **Open a website** opens any address in the PC's browser
 (one-tap presets for Telegram Web, Discord, YouTube, ChatGPT and more), and
@@ -109,8 +111,7 @@ symbol, a logo, a few letters or the site's own icon.
 When the PC end goes away — the agent closed, or IT-Deck itself — every tile
 becomes a button that can't do anything, so the clock widget takes the whole
 screen as a seven-segment clock and keeps showing the time until the PC comes
-back. The deck restores
-itself; there is nothing to switch.
+back. The deck restores itself; there is nothing to switch.
 
 The look is two settings: the **theme** (Flat, Pastel, Glossy, Liquid Glass),
 cycled from the pill in the deck's header, and the **background** (auto, light
@@ -121,7 +122,9 @@ or dark), set in Studio. Both sync to every connected phone.
 `/studio.html` on the PC — the **Open Studio** button in the window. A live
 preview of the deck on the left, an editor on the right: you pick what a tile
 does from cards instead of typing command names and JSON, audio devices come
-from the list the agent reports, and **Compact layout** closes the gaps.
+from the list the agent reports, programs come from **Choose from installed
+programs** (Start Menu and Microsoft Store apps), **Where** puts a button in
+the grid or the quick-launch bar, and **Compact layout** closes the gaps.
 English or Russian, following the browser. The phone never edits the catalog.
 **Guide** in the top bar is a short illustrated how-to, and it opens by itself
 the first time.
@@ -183,7 +186,8 @@ that one on the phone.
 | The phone asks for a token | Its stored one no longer matches. Open the freshly printed `?token=…` link once |
 | IT-Deck says the port is already in use | Another copy is already running. Quit it from its window, or end `ITDeck.exe` in Task Manager |
 | The VPN tile does nothing | It most likely has no path yet (see above). If it has one, check whether that program runs as administrator |
-| A tile that needs the PC does nothing, or the deck turns into a clock | The agent is down. It restarts itself; `logs\agent.log` says why, `launcher.log` records the restarts |
+| A tile that needs the PC does nothing, or the deck turns into a clock | The agent is down. After a crash it restarts itself; after **Close Agent**, press **Start the agent** in the window. `logs\agent.log` says why, `launcher.log` records the restarts |
+| A change doesn't show on the phone | Pull down to reload, or close and reopen the Home Screen icon |
 | Nothing starts at all | `%LOCALAPPDATA%\IT-Deck\logs\backend.log` |
 
 ## Documentation
@@ -193,9 +197,10 @@ that one on the phone.
 | this file | What IT-Deck is, how to install and run it |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
 | [`docs/IT-Deck_Tech_Reference.md`](docs/IT-Deck_Tech_Reference.md) | The full reference — architecture, schema, API, protocol, tiles, themes, the agent, **standalone mode (§10)** and known tech debt |
+| [`tests/`](tests) | Backend API, agent and frontend tests — run on every push by GitHub Actions |
 | [`docs/legacy-server.md`](docs/legacy-server.md) | The pre-v0.3.0 setup: backend in Docker on a separate server, plus the Ansible playbook |
 | [`CLAUDE.md`](CLAUDE.md) | Working notes for Claude Code sessions: the rules and the things that are easy to break |
 
 ## Status
 
-v0.4.6 — personal project, active development, API may change.
+v0.5.1 — personal project, active development, API may change.

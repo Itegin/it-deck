@@ -1236,9 +1236,14 @@ Three separate statements, all true:
   deliberately decoupled from the GHCR/tag pipeline above — `deploy.sh`
   builds locally rather than waiting on or pulling a CI-built image (see
   §9's deploy.sh section).
-- **Tests in CI: none.** Nothing is run against the code at any point. The only
-  test-shaped file in the repo is `agents/windows/test_mic.py`, a manual probe.
-  `check.sh` and `deploy.sh`'s md5 step are the entire verification story.
+- **Tests in CI: since v0.5.0.** `.github/workflows/ci.yml` runs on every push
+  to `main` and every pull request, on `windows-latest` (the agent's modules
+  import pywin32/pycaw): `pytest tests` -- the backend API through
+  `TestClient` (placement and the quick-launch bar, auth on the agent queries,
+  cache and MIME headers) and the agent's pure checks (`validate_url`, the LAN
+  guard) -- then `node --check` on every frontend module and
+  `node --test tests/frontend.test.mjs` (URL cleaning, presets vs logos, EN/RU
+  key symmetry). `agents/windows/test_mic.py` is still a manual probe.
 
 > **On "Stage 11".** The repo attests to Stage 1 (`ansible/site.yml`'s header:
 > the manual base setup the playbook reproduces), Stage 9 (commit `05bbff1` —
@@ -2048,7 +2053,8 @@ Ordered roughly by how likely each is to bite.
     old code with no error until a handler bug that "should have been fixed"
     surfaces live. The restart is a GUI action on the Windows PC that Claude
     Code cannot perform.
-10. **No CD and no tests in CI** — see §9.
+10. **No CD** — see §9. Tests do run in CI since v0.5.0, but only the pure and
+    API layers: nothing exercises audio, launching, or the Tk window.
 11. **The deploy-ordering hazard** (frontend before backend ⇒ a new theme 422s
     and silently reverts) is structural, not a bug to fix: it follows directly
     from the image/bind-mount split. See §7.

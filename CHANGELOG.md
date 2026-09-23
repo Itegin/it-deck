@@ -7,7 +7,7 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
-## Unreleased
+## v0.5.1 — 2026-09-24
 
 ### Fixed
 
@@ -19,7 +19,9 @@ standalone mode is §10, tech debt is §12.
 
 ### Docs
 
-- New README screenshots: the quick-launch bar, v0.5.0's Studio and window.
+- New README screenshots: the quick-launch bar in every theme, Studio with the
+  bar, and the current window. README facts brought up to date (Close Agent,
+  exe size, Studio's new controls, troubleshooting, status).
 
 ---
 
