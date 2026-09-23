@@ -10,13 +10,15 @@ actually doing.
 
 | The deck, on your phone | Studio, on the PC |
 | --- | --- |
-| <img src="docs/screenshots/dashboard.png" alt="The IT-Deck deck on a phone: a clock and weather widget, the Mic tile red while muted, Volume at 62 %, Audio Switch showing the current device, VPN lit while it runs" width="300"> | ![Studio: a live preview of the deck next to the step-by-step editor for the VPN tile, with the VPN setup card on top](docs/screenshots/studio.png) |
+| <img src="docs/screenshots/dashboard.png" alt="The IT-Deck deck on a phone: a clock and weather widget, the Mic tile red while muted, Volume at 62 %, Audio Switch showing the current device, VPN lit while it runs, and the quick-launch bar along the bottom: Telegram, Discord, YouTube, Chrome, Claude" width="300"> | ![Studio: a live preview of the deck next to the editor for a Website tile, with one-tap presets for popular sites](docs/screenshots/studio.png) |
 
 The tiles report real state, not just clicks: above, the microphone is
 **muted** (red), volume sits at **62 %**, Audio Switch names the **current
-output device**, and **VPN is lit** because the client is running. **Studio**
-(right) is where the deck is built — click a tile in the live preview to edit
-it, `+` to add one, drag to move.
+output device**, and **VPN is lit** because the client is running. Along the
+bottom is the **quick-launch bar** — sites and programs one tap away (it moves
+to the left side when the phone is sideways). **Studio** (right) is where the
+deck is built — click a tile in the live preview to edit it, `+` to add one,
+drag to move.
 
 Four themes, each on a dark or light background:
 

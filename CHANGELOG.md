@@ -7,6 +7,22 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- **Tiles lost their state after a redraw.** A Studio edit re-renders the
+  deck on the phone, and the backend only sends state when it *changes* — so
+  a muted mic showed as live, VPN unlit, until something happened to change.
+  The deck now remembers the last reported state and re-applies it after
+  every redraw.
+
+### Docs
+
+- New README screenshots: the quick-launch bar, v0.5.0's Studio and window.
+
+---
+
 ## v0.5.0 — 2026-09-24
 
 ### Added

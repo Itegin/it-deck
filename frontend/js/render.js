@@ -411,6 +411,9 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
     applyTileInk(tile);
   }
 
+  // Fresh tiles know nothing; give them the state already reported.
+  updateTileState({ ...knownState });
+
   // Also after the append: a widget lays itself out with container queries,
   // and those need a tile that is in the document and has a size.
   for (const [tile, item] of widgets) {
@@ -532,7 +535,16 @@ function attachSliderHandlers(tile, item, onSliderChange) {
   });
 }
 
+// The last value seen for every state key. The backend sends the full state
+// once when the socket connects and only *changes* after that, so anything
+// that redraws the tiles -- the first render racing that initial push, or a
+// Studio edit re-rendering the deck -- would otherwise come back with every
+// tile unlit until its value happened to change again (a muted mic showing
+// as live). renderWorkspace re-applies this after drawing.
+const knownState = {};
+
 export function updateTileState(stateData) {
+  Object.assign(knownState, stateData);
   for (const [key, value] of Object.entries(stateData)) {
     const tiles = document.querySelectorAll(`.tile[data-state-key="${CSS.escape(key)}"]`);
 
