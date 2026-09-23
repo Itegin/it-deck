@@ -42,6 +42,7 @@
           <span data-i18n="bar.background">Deck background</span>
           <select id="mode-select"></select>
         </label>
+        <button type="button" id="guide-btn" class="btn" data-i18n="bar.guide">Guide</button>
         <button type="button" id="compact-btn" class="btn" data-i18n="bar.compact">Compact layout</button>
         <a href="/index.html" class="btn btn-ghost" data-i18n="bar.dashboard">Dashboard</a>
       </div>
@@ -61,11 +62,19 @@
         <p class="panel-hint" data-i18n="preview.hint">Click a tile to edit it. Click + to add a tile there. Drag a tile onto an empty cell to move it.</p>
         <div class="phone">
           <div id="preview-grid" class="preview-grid" role="group" aria-labelledby="preview-title"></div>
+          <!-- The quick-launch bar, drawn under the grid as on an upright phone. -->
+          <div id="preview-dock" class="preview-dock" role="group" data-i18n-aria="dock.title"></div>
         </div>
       </section>
 
       <section id="inspector" class="inspector glass" aria-labelledby="inspector-title"></section>
     </div>
+
+    <footer class="studio-footer">
+      <span data-i18n="footer.by">IT-Deck by Itegin</span>
+      <a href="https://github.com/Itegin" target="_blank" rel="noopener noreferrer" data-i18n="footer.github">GitHub</a>
+      <a href="https://itgnroadmap.duckdns.org:9443/resume" target="_blank" rel="noopener noreferrer" data-i18n="footer.resume">Résumé</a>
+    </footer>
   </div>
 
   <dialog id="token-dialog" class="token-dialog glass" aria-labelledby="token-title">
@@ -82,6 +91,9 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Filled by js/studio-guide.js. -->
+  <dialog id="guide-dialog" class="guide-dialog glass" aria-labelledby="guide-title"></dialog>
 
   <script type="module" src="/js/studio.js"></script>
 </body>

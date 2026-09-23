@@ -19,13 +19,18 @@
 //   sequence and against its element still being on the page, so a slow
 //   reply can't fill in a tile the person has since moved away from.
 
-import { ICONS } from "./render.js";
+import { ICONS, ICON_TEXT, ICON_IMAGE, BRAND_PREFIX, iconText, isIconImage } from "./render.js";
+import { BRAND_ICONS, BRAND_NAMES } from "./brand-icons.js";
 import {
   CATALOG,
   GROUPS,
   COLOR_PARAMS,
   CUSTOM_ID,
+  ICON_PARAMS,
+  WEB_PRESETS,
+  brandForApp,
   cleanPath,
+  cleanUrl,
   detectEntry,
   entryById,
   managedParams,
@@ -53,7 +58,17 @@ const CARD_GLYPHS = {
   custom: `${SVG_OPEN}<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>`,
 };
 
+// Which of the picker's four tabs an item.icon value belongs to.
+function iconMode(icon) {
+  if (icon === ICON_TEXT) return "text";
+  if (icon === ICON_IMAGE) return "image";
+  if (String(icon || "").startsWith(BRAND_PREFIX)) return "brand";
+  return "symbol";
+}
+
 let deviceRequestSeq = 0;
+let appsRequestSeq = 0;
+let iconRequestSeq = 0;
 let citySearchSeq = 0;
 
 // Tiny element builder. Text goes through textContent, never innerHTML. The
@@ -90,7 +105,8 @@ function entryName(entry) {
 }
 
 export function createInspector(root, ctx) {
-  // ctx: { api, getWorkspace, targets, onSaved(item), onDeleted(), onClose() }
+  // ctx: { api, getWorkspace, firstFreeCell, firstFreeDockSlot, targets,
+  //        onSaved(item), onDeleted(), onClose() }
   let state = null;
   let opener = null;
 
@@ -104,7 +120,10 @@ export function createInspector(root, ctx) {
     );
   }
 
-  function open({ item, cell }) {
+  // origin (new tiles only): "cell" -- a grid cell's "+" was clicked, so the
+  // tile belongs there; "dock" -- the bar's "+"; "button" -- "+ New tile",
+  // where a quick-launch tile defaults to the bar.
+  function open({ item, cell, origin = "cell" }) {
     opener = document.activeElement;
     deviceRequestSeq++;
     citySearchSeq++;
@@ -116,7 +135,7 @@ export function createInspector(root, ctx) {
 
     const extra = {};
     for (const [key, value] of Object.entries(params)) {
-      if (entry.id === CUSTOM_ID ? !COLOR_PARAMS.includes(key) : !managed.has(key)) {
+      if (entry.id === CUSTOM_ID ? !COLOR_PARAMS.includes(key) && !ICON_PARAMS.includes(key) : !managed.has(key)) {
         extra[key] = value;
       }
     }
@@ -141,6 +160,7 @@ export function createInspector(root, ctx) {
 
     state = {
       item,
+      origin,
       originalParams: params,
       entry,
       // An item whose params didn't parse opens with the raw text in the
@@ -153,6 +173,8 @@ export function createInspector(root, ctx) {
       draft: {
         label: item ? item.label : entryName(entry),
         icon: item ? item.icon || "" : entry.icon || "",
+        iconText: params.icon_text || "",
+        iconImg: isIconImage(params.icon_img) ? params.icon_img : "",
         color: item ? item.color || "#2a2f38" : "#2a2f38",
         colors,
         kind: item ? item.kind : entry.kind,
@@ -164,6 +186,7 @@ export function createInspector(root, ctx) {
         col: item ? item.col : cell.col,
         width: item ? item.width || 1 : 1,
         height: item ? item.height || 1 : 1,
+        dock: item ? Boolean(item.dock) : false,
         fieldValues,
         devices: { primary: params[PRIMARY_PARAM] || "", secondary: params[SECONDARY_PARAM] || "", loaded: false },
         extraText: item && item.paramsInvalid ? item.paramsRaw : JSON.stringify(extra, null, 2),
@@ -217,11 +240,49 @@ export function createInspector(root, ctx) {
       draft.target = entry.target;
       draft.stateKey = entry.stateKey || "";
     }
+    // Where a new tile goes: the bar when it was asked for there, or when it
+    // is a quick-launch tile added with "+ New tile"; otherwise the grid.
+    // Anything that isn't a 1x1 action can't live in the bar at all.
+    const barAllowed = draft.kind === "action" && !(entry.minWidth > 1);
+    if (!state.item) {
+      const wantBar = state.origin === "dock" || (state.origin === "button" && entry.group === "launch");
+      setDock(barAllowed && wantBar);
+    } else if (draft.dock && !barAllowed) {
+      setDock(false);
+    }
+    if (draft.dock) return;
+
     const wanted = Math.max(entry.minWidth || 1, state.item ? draft.width : entry.defaultWidth || 1);
     // Don't widen past the grid edge. The backend would refuse it anyway,
     // but a form that opens already invalid is a bad first impression.
     const room = workspace ? workspace.grid_cols - draft.col : wanted;
     draft.width = Math.max(1, Math.min(wanted, room));
+  }
+
+  // Moves the draft between the grid and the quick-launch bar, picking a
+  // free spot on the side it lands on. A tile already on that side keeps
+  // its own spot.
+  function setDock(on) {
+    const draft = state.draft;
+    const wasDock = state.item ? Boolean(state.item.dock) : false;
+    if (on) {
+      if (draft.dock) return;
+      const slot = wasDock ? state.item.col : ctx.firstFreeDockSlot();
+      if (slot < 0) return; // bar full: stays in the grid
+      draft.dock = true;
+      draft.width = 1;
+      draft.height = 1;
+      draft.row = 0;
+      draft.col = slot;
+    } else {
+      if (!draft.dock) return;
+      draft.dock = false;
+      const cell = !wasDock && state.item ? { row: state.item.row, col: state.item.col } : ctx.firstFreeCell();
+      if (cell) {
+        draft.row = cell.row;
+        draft.col = cell.col;
+      }
+    }
   }
 
   function switchEntry(entryId) {
@@ -378,6 +439,8 @@ export function createInspector(root, ctx) {
     switch (field.control) {
       case "path":
         return pathField(field, label);
+      case "url":
+        return urlField(field, label);
       case "text":
         return textField(label, values[field.param] || "", (value) => { values[field.param] = value; }, {
           hint: t(`hint.${entry.id}.${field.param}`, null, t(`hint.${field.param}`, null, "")),
@@ -456,6 +519,21 @@ export function createInspector(root, ctx) {
     }
     syncBadge(current);
 
+    const input = h("input", {
+      id,
+      class: "input",
+      value: current,
+      required: field.required,
+      spellcheck: "false",
+      autocomplete: "off",
+      placeholder: t(`placeholder.${entry.id}.path`, null, t("placeholder.path")),
+      "aria-describedby": hintId,
+      onInput: (event) => {
+        draft.fieldValues[field.param] = event.target.value;
+        syncBadge(event.target.value);
+      },
+    });
+
     const hints = [h("p", { class: "field-hint", id: hintId, text: t(`hint.${entry.id}.path`, null, t("hint.path")) })];
     hints.push(h("p", { class: "field-hint", text: t("hint.copyPath") }));
     if (entry.id === "vpn") {
@@ -464,21 +542,119 @@ export function createInspector(root, ctx) {
 
     return h("div", { class: `field${field.highlight ? " field-highlight" : ""}` }, [
       h("label", { class: "field-label", for: id }, [label, badge]),
-      h("input", {
-        id,
-        class: "input",
-        value: current,
-        required: field.required,
-        spellcheck: "false",
-        autocomplete: "off",
-        placeholder: t(`placeholder.${entry.id}.path`, null, t("placeholder.path")),
-        "aria-describedby": hintId,
-        onInput: (event) => {
-          draft.fieldValues[field.param] = event.target.value;
-          syncBadge(event.target.value);
-        },
-      }),
+      field.installed ? installedPicker(input, syncBadge) : null,
+      input,
       ...hints,
+    ]);
+  }
+
+  // "Choose from installed": the Start Menu shortcuts of the PC the agent
+  // runs on (agents/windows/handlers/apps.py). Picking one fills the path,
+  // the launch arguments, and -- if the person hasn't made them their own --
+  // the name and the logo.
+  function installedPicker(pathInput, syncBadge) {
+    const { draft } = state;
+    const message = h("p", { class: "message", role: "status" });
+    const filter = h("input", { class: "input", type: "search", placeholder: t("apps.search"), autocomplete: "off", hidden: true });
+    const list = h("ul", { class: "search-results app-results", hidden: true });
+    let apps = [];
+
+    function showList() {
+      const query = filter.value.trim().toLowerCase();
+      const shown = apps.filter((app) => !query || app.name.toLowerCase().includes(query)).slice(0, 60);
+      list.replaceChildren(
+        ...shown.map((app) => {
+          const brand = brandForApp(app.name);
+          return h("li", {}, [
+            h("button", {
+              type: "button",
+              onClick: () => {
+                draft.fieldValues.path = app.path;
+                pathInput.value = app.path;
+                syncBadge(app.path);
+                if (app.args) draft.fieldValues.args = app.args;
+                else delete draft.fieldValues.args;
+                if (!draft.label.trim() || draft.label === entryName(state.entry)) draft.label = app.name;
+                if (brand && iconMode(draft.icon) === "symbol") draft.icon = brand;
+                render();
+              },
+            }, [
+              brand ? h("span", { class: "app-logo", html: BRAND_ICONS[brand.slice(BRAND_PREFIX.length)] }) : null,
+              app.name,
+            ]),
+          ]);
+        }),
+      );
+      list.hidden = !shown.length;
+      message.textContent = shown.length ? "" : t("apps.none");
+    }
+
+    async function load() {
+      const seq = ++appsRequestSeq;
+      message.textContent = t("apps.loading");
+      message.classList.remove("error");
+      const result = await ctx.api(`/api/agents/${encodeURIComponent(draft.target)}/list_apps`, { method: "POST" });
+      if (seq !== appsRequestSeq || !message.isConnected) return;
+      if (!result.ok || !result.data || result.data.status !== "ok") {
+        const detail = result.ok ? (result.data && result.data.message) || "agent error" : result.detail;
+        message.textContent = t("apps.failed", { detail });
+        message.classList.add("error");
+        return;
+      }
+      apps = result.data.apps || [];
+      filter.hidden = false;
+      filter.focus();
+      showList();
+    }
+
+    filter.addEventListener("input", showList);
+    return h("div", { class: "installed" }, [
+      h("button", { type: "button", class: "btn", text: t("apps.pick"), onClick: load }),
+      filter,
+      message,
+      list,
+    ]);
+  }
+
+  // A Website tile's address, with one-tap presets above it.
+  function urlField(field, label) {
+    const { draft } = state;
+    const id = uid("url");
+    const hintId = uid("hint");
+    const input = h("input", {
+      id,
+      class: "input",
+      type: "url",
+      value: draft.fieldValues[field.param] || "",
+      required: field.required,
+      spellcheck: "false",
+      autocomplete: "off",
+      inputmode: "url",
+      placeholder: "https://web.telegram.org",
+      "aria-describedby": hintId,
+      onInput: (event) => { draft.fieldValues[field.param] = event.target.value; },
+    });
+    const presets = WEB_PRESETS.map((preset) =>
+      h("button", {
+        type: "button",
+        class: "preset-chip",
+        onClick: () => {
+          draft.fieldValues[field.param] = preset.url;
+          draft.label = preset.label;
+          draft.icon = preset.icon;
+          render();
+        },
+      }, [
+        h("span", { class: "app-logo", html: BRAND_ICONS[preset.icon.slice(BRAND_PREFIX.length)] }),
+        preset.label,
+      ]),
+    );
+    return h("div", { class: `field${field.highlight ? " field-highlight" : ""}` }, [
+      h("span", { class: "field-label", text: t("presets.title") }),
+      h("div", { class: "preset-chips" }, presets),
+      h("label", { class: "field-label", for: id, text: label }),
+      input,
+      h("p", { class: "field-hint", id: hintId, text: t("hint.url") }),
     ]);
   }
 
@@ -668,26 +844,7 @@ export function createInspector(root, ctx) {
     ];
 
     if (draft.kind !== "widget") {
-      const pickerId = uid("icons");
-      const choices = [["", null], ...Object.entries(ICONS)].map(([key, svg]) =>
-        h("label", { class: "icon-choice", title: key || t("icon.none") }, [
-          h("input", {
-            type: "radio",
-            name: pickerId,
-            value: key,
-            checked: draft.icon === key || (!key && !ICONS[draft.icon]),
-            "aria-label": key || t("icon.none"),
-            onChange: () => { draft.icon = key; },
-          }),
-          svg ? h("span", { html: svg }) : h("span", { text: "∅" }),
-        ]),
-      );
-      children.push(
-        h("div", { class: "field", role: "radiogroup", "aria-labelledby": `${pickerId}-label` }, [
-          h("span", { class: "field-label", id: `${pickerId}-label`, text: t("field.icon") }),
-          h("div", { class: "icon-picker" }, choices),
-        ]),
-      );
+      children.push(iconField());
     }
 
     children.push(colorField());
@@ -709,6 +866,130 @@ export function createInspector(root, ctx) {
     }
 
     return step(3, t("step.appearance"), children);
+  }
+
+  // Four kinds of icon, one tab each: the stroke glyphs, brand logos, up to
+  // three characters of text, and the site's own icon fetched by the agent.
+  function iconField() {
+    const { draft } = state;
+    const mode = iconMode(draft.icon);
+    const labelId = uid("icons");
+    const modes = ["symbol", "brand", "text", "image"];
+
+    const tabs = h("div", { class: "segmented", role: "group", "aria-labelledby": labelId },
+      modes.map((m) =>
+        h("button", {
+          type: "button",
+          "aria-pressed": String(m === mode),
+          class: m === mode ? "is-active" : "",
+          text: t(`icon.mode.${m}`),
+          onClick: () => {
+            if (m === mode) return;
+            if (m === "symbol") draft.icon = state.entry.icon && ICONS[state.entry.icon] ? state.entry.icon : "";
+            else if (m === "brand") draft.icon = `${BRAND_PREFIX}${Object.keys(BRAND_ICONS)[0]}`;
+            else if (m === "text") draft.icon = ICON_TEXT;
+            else draft.icon = ICON_IMAGE;
+            render();
+          },
+        }),
+      ),
+    );
+
+    const radioGrid = (entries, isChecked) => {
+      const name = uid("icon");
+      return h("div", { class: "icon-picker", role: "radiogroup", "aria-labelledby": labelId },
+        entries.map(([key, svg, title]) =>
+          h("label", { class: "icon-choice", title }, [
+            h("input", {
+              type: "radio",
+              name,
+              value: key,
+              checked: isChecked(key),
+              "aria-label": title,
+              onChange: () => { draft.icon = key; },
+            }),
+            svg ? h("span", { html: svg }) : h("span", { text: "∅" }),
+          ]),
+        ),
+      );
+    };
+
+    let panel;
+    if (mode === "symbol") {
+      panel = radioGrid(
+        [["", null, t("icon.none")], ...Object.entries(ICONS).map(([key, svg]) => [key, svg, key])],
+        (key) => draft.icon === key || (!key && !ICONS[draft.icon]),
+      );
+    } else if (mode === "brand") {
+      panel = radioGrid(
+        Object.entries(BRAND_ICONS).map(([key, svg]) => [`${BRAND_PREFIX}${key}`, svg, BRAND_NAMES[key]]),
+        (key) => draft.icon === key,
+      );
+    } else if (mode === "text") {
+      panel = h("div", { class: "field" }, [
+        h("input", {
+          class: "input icon-text-input",
+          value: draft.iconText,
+          maxlength: "8",
+          autocomplete: "off",
+          "aria-label": t("icon.mode.text"),
+          placeholder: "TG",
+          onInput: (event) => { draft.iconText = event.target.value; },
+        }),
+        h("p", { class: "field-hint", text: t("icon.textHint") }),
+      ]);
+    } else {
+      const preview = h("div", { class: "icon-image-preview" });
+      const message = h("p", { class: "message", role: "status" });
+      const showPreview = () => {
+        preview.replaceChildren(
+          draft.iconImg ? h("img", { alt: "", src: draft.iconImg }) : h("span", { class: "field-hint", text: t("icon.imageNone") }),
+        );
+      };
+      showPreview();
+      const fetchIcon = async () => {
+        const url = cleanUrl(draft.fieldValues.url);
+        if (!/^https?:/.test(url)) {
+          message.textContent = t("icon.needUrl");
+          message.classList.add("error");
+          return;
+        }
+        const seq = ++iconRequestSeq;
+        message.textContent = t("icon.fetching");
+        message.classList.remove("error");
+        const result = await ctx.api(`/api/agents/${encodeURIComponent(draft.target)}/fetch_icon`, { method: "POST", body: { url } });
+        if (seq !== iconRequestSeq || !message.isConnected) return;
+        if (!result.ok || !result.data || result.data.status !== "ok") {
+          const detail = result.ok ? (result.data && result.data.message) || "agent error" : result.detail;
+          message.textContent = t("icon.fetchFailed", { detail });
+          message.classList.add("error");
+          return;
+        }
+        if (!isIconImage(result.data.icon)) {
+          message.textContent = t("icon.fetchFailed", { detail: "bad image" });
+          message.classList.add("error");
+          return;
+        }
+        draft.iconImg = result.data.icon;
+        message.textContent = "";
+        showPreview();
+      };
+      const canFetch = state.entry.fields.some((field) => field.control === "url");
+      panel = h("div", { class: "field" }, [
+        h("div", { class: "icon-image-row" }, [
+          preview,
+          canFetch ? h("button", { type: "button", class: "btn", text: t("icon.fetch"), onClick: fetchIcon }) : null,
+        ]),
+        canFetch ? null : h("p", { class: "field-hint", text: t("icon.imageOnlyWebsite") }),
+        message,
+      ]);
+    }
+
+    return h("div", { class: "field" }, [
+      h("span", { class: "field-label", id: labelId, text: t("field.icon") }),
+      tabs,
+      panel,
+    ]);
   }
 
   function colorField() {
@@ -766,6 +1047,40 @@ export function createInspector(root, ctx) {
 
   function renderPlacementStep() {
     const { draft, entry } = state;
+    const barAllowed = draft.kind === "action" && !(entry.minWidth > 1);
+    const where = barAllowed
+      ? h("div", { class: "field" }, [
+          h("span", { class: "field-label", text: t("dock.where") }),
+          h("div", { class: "segmented", role: "group" }, [
+            ["grid", false],
+            ["dock", true],
+          ].map(([key, value]) =>
+            h("button", {
+              type: "button",
+              "aria-pressed": String(draft.dock === value),
+              class: draft.dock === value ? "is-active" : "",
+              text: t(`dock.where.${key}`),
+              onClick: () => {
+                if (draft.dock === value) return;
+                setDock(value);
+                render();
+                // After render(): it rebuilds the form, message line included.
+                if (value && !draft.dock) setMessage(t("dock.full"));
+              },
+            }),
+          )),
+        ])
+      : null;
+
+    if (draft.dock) {
+      return step(4, t("step.placement"), [
+        where,
+        textField(t("dock.position"), Number(draft.col) + 1, (value) => {
+          draft.col = value === "" ? "" : Number(value) - 1;
+        }, { type: "number", min: "1" }),
+        h("p", { class: "field-hint", text: t("dock.hint") }),
+      ]);
+    }
     // Row and column are shown counting from 1, the way a person counts
     // cells. The API and the database count from 0.
     const num = (label, key, min, offset = 0) =>
@@ -773,6 +1088,7 @@ export function createInspector(root, ctx) {
         draft[key] = value === "" ? "" : Number(value) - offset;
       }, { type: "number", min: String(min) });
     return step(4, t("step.placement"), [
+      where,
       h("div", { class: "field-row" }, [
         num(t("field.width"), "width", entry.minWidth || 1),
         num(t("field.height"), "height", 1),
@@ -844,6 +1160,14 @@ export function createInspector(root, ctx) {
           if (path) params[field.param] = path;
           break;
         }
+        case "url": {
+          const typed = String(value || "").trim();
+          const url = cleanUrl(typed);
+          if (field.required && !typed) return { error: t("error.required", { field: t(`field.${field.param}`) }) };
+          if (typed && !url) return { error: t("error.url") };
+          if (url) params[field.param] = url;
+          break;
+        }
         case "text": {
           const text = String(value || "").trim();
           if (field.required && !text) return { error: t("error.required", { field: t(`field.${field.param}`) }) };
@@ -890,6 +1214,18 @@ export function createInspector(root, ctx) {
       if (draft.colors[key] !== null) params[key] = draft.colors[key];
     }
 
+    // Icon params live only as long as the icon kind that uses them.
+    for (const key of ICON_PARAMS) delete params[key];
+    if (draft.kind !== "widget") {
+      if (draft.icon === ICON_TEXT) {
+        if (!iconText(draft.iconText)) return { error: t("error.iconText") };
+        params.icon_text = iconText(draft.iconText);
+      } else if (draft.icon === ICON_IMAGE) {
+        if (!draft.iconImg) return { error: t("error.iconImage") };
+        params.icon_img = draft.iconImg;
+      }
+    }
+
     for (const key of ["width", "height", "row", "col"]) {
       if (draft[key] === "" || !Number.isInteger(Number(draft[key]))) return { error: t("error.placement") };
     }
@@ -912,6 +1248,7 @@ export function createInspector(root, ctx) {
         target: draft.target,
         params: JSON.stringify(params),
         state_key: draft.stateKey || null,
+        dock: Boolean(draft.dock),
       },
     };
   }

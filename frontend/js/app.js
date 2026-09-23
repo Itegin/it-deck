@@ -4,6 +4,7 @@ import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus
 import { initTheme, applyTheme, applyMode } from "./theme.js";
 import { showContextMenu } from "./contextmenu.js";
 import { showToast } from "./toast.js";
+import { maybeShowOnboarding } from "./onboarding.js";
 
 // Device-local "which workspace does this deck show" choice. Deliberately
 // not part of any server state -- multiple phones can point at different
@@ -70,6 +71,8 @@ function describeCommandFailure(itemId, message) {
 
 function loadWorkspace(workspace) {
   renderWorkspace(workspace, sendExecute, sendSetValue, handleTileLongPress);
+  // First deck this device has ever shown: the tour, once.
+  maybeShowOnboarding();
 }
 
 function showSelector(workspaces) {

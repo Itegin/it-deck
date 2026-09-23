@@ -7,14 +7,15 @@
 //     real handler, or the tile answers "unknown command";
 //   - WIDGETS in js/widgets/index.js: every widget `type` here must be mounted;
 //   - ICONS in js/render.js: every `icon` here must exist, or the tile renders
-//     label-only (CLAUDE.md records this happening twice);
+//     label-only (CLAUDE.md records this happening twice); a "brand:<key>"
+//     icon (WEB_PRESETS, APP_BRANDS) must exist in js/brand-icons.js;
 //   - db.py's seeds: a seeded tile should be recognised as its entry below,
 //     not fall through to "custom".
 //
 // Names and descriptions live in js/studio-i18n.js as `type.<id>.name` and
 // `type.<id>.desc`, and field labels as `field.<param>`.
 //
-// Field `control` values: path | text | select | toggle | devices | city.
+// Field `control` values: path | url | text | select | toggle | devices | city.
 // `section: "appearance"` puts a field under Appearance instead of Setup.
 // `advanced: true` puts it under the collapsed "More settings".
 
@@ -25,7 +26,7 @@ const ACTIVE_STYLE_FIELD = {
   options: ["normal", "alert"],
 };
 
-export const GROUPS = ["actions", "sound", "widgets", "other"];
+export const GROUPS = ["launch", "actions", "sound", "widgets", "other"];
 
 export const CATALOG = [
   {
@@ -44,8 +45,19 @@ export const CATALOG = [
     ],
   },
   {
+    id: "website",
+    group: "launch",
+    kind: "action",
+    type: "open_url",
+    target: "windows",
+    stateKey: null,
+    icon: "globe",
+    fixedParams: {},
+    fields: [{ param: "url", control: "url", required: true, highlight: true }],
+  },
+  {
     id: "app",
-    group: "actions",
+    group: "launch",
     kind: "action",
     type: "launch_app",
     target: "windows",
@@ -53,7 +65,8 @@ export const CATALOG = [
     icon: "terminal",
     fixedParams: {},
     fields: [
-      { param: "path", control: "path", required: true, highlight: true },
+      { param: "path", control: "path", required: true, highlight: true, installed: true },
+      { param: "args", control: "text", advanced: true },
       { param: "fallback_path", control: "text", advanced: true },
       { param: "process_name", control: "text", advanced: true },
     ],
@@ -193,6 +206,8 @@ export function detectEntry(item) {
   switch (item.type) {
     case "launch_app":
       return entryById(item.state_key === "vpn.running" ? "vpn" : "app");
+    case "open_url":
+      return entryById("website");
     case "audio_mute_toggle":
       if (params.device === "microphone") return entryById("mic");
       if (params.device === "speaker") return entryById("speaker_mute");
@@ -216,9 +231,11 @@ export function detectEntry(item) {
 // the "More settings" JSON box shows everything else.
 export const COLOR_PARAMS = ["active_color", "alert_color", "false_color"];
 export const DEVICE_PARAMS = ["output_device_primary", "output_device_secondary"];
+// Written by the icon picker (see tileIconFor in js/render.js), on any tile.
+export const ICON_PARAMS = ["icon_text", "icon_img"];
 
 export function managedParams(entry) {
-  const keys = new Set([...COLOR_PARAMS, ...Object.keys(entry.fixedParams)]);
+  const keys = new Set([...COLOR_PARAMS, ...ICON_PARAMS, ...Object.keys(entry.fixedParams)]);
   for (const field of entry.fields) {
     if (field.control === "devices") {
       DEVICE_PARAMS.forEach((key) => keys.add(key));
@@ -242,4 +259,75 @@ export function vpnNeedsPath(item) {
 // the quotes are stripped rather than rejected.
 export function cleanPath(value) {
   return String(value || "").trim().replace(/^"(.*)"$/, "$1").trim();
+}
+
+// One-tap starting points for a Website tile: fills in the address, the name
+// and the logo. Only a convenience -- every value stays editable, and the
+// saved tile is an ordinary open_url with no memory of which preset it came
+// from, so detectEntry never has to tell presets apart.
+export const WEB_PRESETS = [
+  { label: "Telegram", url: "https://web.telegram.org/a/", icon: "brand:telegram" },
+  { label: "Discord", url: "https://discord.com/app", icon: "brand:discord" },
+  { label: "WhatsApp", url: "https://web.whatsapp.com/", icon: "brand:whatsapp" },
+  { label: "YouTube", url: "https://www.youtube.com/", icon: "brand:youtube" },
+  { label: "ChatGPT", url: "https://chatgpt.com/", icon: "brand:chatgpt" },
+  { label: "Claude", url: "https://claude.ai/", icon: "brand:claude" },
+  { label: "Gmail", url: "https://mail.google.com/", icon: "brand:gmail" },
+  { label: "Google", url: "https://www.google.com/", icon: "brand:google" },
+  { label: "GitHub", url: "https://github.com/", icon: "brand:github" },
+  { label: "Twitch", url: "https://www.twitch.tv/", icon: "brand:twitch" },
+  { label: "Spotify", url: "https://open.spotify.com/", icon: "brand:spotify" },
+  { label: "Netflix", url: "https://www.netflix.com/", icon: "brand:netflix" },
+  { label: "Reddit", url: "https://www.reddit.com/", icon: "brand:reddit" },
+  { label: "X", url: "https://x.com/", icon: "brand:x" },
+  { label: "Notion", url: "https://www.notion.so/", icon: "brand:notion" },
+];
+
+// An installed program picked from the agent's list gets its logo when its
+// name says which one it is. Checked in order; first match wins.
+const APP_BRANDS = [
+  ["chrome", "chrome"],
+  ["firefox", "firefox"],
+  ["opera", "opera"],
+  ["brave", "brave"],
+  ["telegram", "telegram"],
+  ["discord", "discord"],
+  ["whatsapp", "whatsapp"],
+  ["steam", "steam"],
+  ["spotify", "spotify"],
+  ["obs", "obs"],
+  ["notion", "notion"],
+  ["github", "github"],
+  ["chatgpt", "chatgpt"],
+  ["claude", "claude"],
+  ["twitch", "twitch"],
+];
+
+export function brandForApp(name) {
+  const text = String(name || "").toLowerCase();
+  const hit = APP_BRANDS.find(([needle]) => text.includes(needle));
+  return hit ? `brand:${hit[1]}` : null;
+}
+
+// The same schemes agents/windows/handlers/process.py's OPEN_URL_SCHEMES
+// accepts, so Studio refuses what the agent would refuse, before saving.
+const URL_SCHEMES = ["http:", "https:", "discord:", "tg:", "steam:", "spotify:", "zoommtg:", "slack:", "ms-settings:"];
+
+// "youtube.com" is what people type; the agent needs a scheme. Adds https://
+// to anything that has no scheme of its own, and returns "" for an address
+// the agent would refuse.
+export function cleanUrl(value) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  // "localhost:8080" would otherwise parse as scheme "localhost:".
+  if (/^[^\s/:]+:\d+(\/|$)/.test(text)) text = `http://${text}`;
+  else if (!/^[a-z][a-z0-9+.-]*:/i.test(text)) text = `https://${text}`;
+  try {
+    const url = new URL(text);
+    if (!URL_SCHEMES.includes(url.protocol)) return "";
+    if ((url.protocol === "http:" || url.protocol === "https:") && !url.hostname) return "";
+    return text;
+  } catch {
+    return "";
+  }
 }

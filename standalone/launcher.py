@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.4.6"
+ITDECK_VERSION = "0.5.0"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -705,6 +705,22 @@ _STRINGS = {
         "title": "IT-Deck",
         "running": "IT-Deck is running",
         "agent_down": "the agent is not running -- tiles that control this PC won't work",
+        "start_agent": "Start the agent",
+        "agent_starting": "Starting…",
+        "tour_again": "Tutorial",
+        "tour_skip": "Skip",
+        "tour_back": "Back",
+        "tour_next": "Next",
+        "tour_done": "Show me the QR code",
+        "tour_step": "Step {n} of {total}",
+        "tour1_title": "Welcome to IT-Deck",
+        "tour1_body": "Your phone becomes a control panel for this PC: launch programs and websites, mute the mic, switch the audio output, take screenshots. Setting it up takes about a minute.",
+        "tour2_title": "Connect the phone",
+        "tour2_body": "Put the phone on the same Wi-Fi as this PC. On the next screen, point its camera at the QR code and open the link. That's the only step you have to do.",
+        "tour3_title": "Put it on the Home Screen",
+        "tour3_body": "In Safari tap Share, then “Add to Home Screen” -- the deck then opens full screen, like an app. The first time the icon opens it asks for a token: type {token}.",
+        "tour4_title": "Make it yours in Studio",
+        "tour4_body": "Studio is the editor on this PC: add tiles, pick logos, fill the quick-launch bar with your sites and programs. It has a built-in guide. Open it any time with “Open Studio” in step 2.",
         "step1_title": "Open the deck on your phone",
         "step1_body": "Point your phone's camera at the code. The phone has to be on the same Wi-Fi as this PC.",
         "step1_body_no_qr": "Open this address on your phone. It has to be on the same Wi-Fi as this PC.",
@@ -757,6 +773,22 @@ _STRINGS = {
         "title": "IT-Deck",
         "running": "IT-Deck работает",
         "agent_down": "агент не запущен — плитки, которые управляют этим ПК, не сработают",
+        "start_agent": "Запустить агент",
+        "agent_starting": "Запускаю…",
+        "tour_again": "Обучение",
+        "tour_skip": "Пропустить",
+        "tour_back": "Назад",
+        "tour_next": "Далее",
+        "tour_done": "Показать QR-код",
+        "tour_step": "Шаг {n} из {total}",
+        "tour1_title": "Добро пожаловать в IT-Deck",
+        "tour1_body": "Телефон станет пультом для этого ПК: запускать программы и сайты, выключать микрофон, переключать звук, делать скриншоты. Настройка займёт около минуты.",
+        "tour2_title": "Подключи телефон",
+        "tour2_body": "Подключи телефон к той же Wi-Fi, что и этот ПК. На следующем экране наведи камеру на QR-код и открой ссылку. Это единственный обязательный шаг.",
+        "tour3_title": "Добавь на экран «Домой»",
+        "tour3_body": "В Safari нажми «Поделиться», затем «На экран „Домой“» — дека будет открываться на весь экран, как приложение. При первом запуске иконка спросит токен: введи {token}.",
+        "tour4_title": "Настрой под себя в Studio",
+        "tour4_body": "Studio — редактор на этом ПК: добавляй плитки, выбирай логотипы, собери панель быстрого запуска из своих сайтов и программ. Внутри есть гайд. Открывается кнопкой «Открыть Studio» в шаге 2.",
         "step1_title": "Открой деку на телефоне",
         "step1_body": "Наведи камеру телефона на код. Телефон должен быть в той же сети Wi-Fi, что и этот компьютер.",
         "step1_body_no_qr": "Открой этот адрес на телефоне. Он должен быть в той же сети Wi-Fi, что и этот компьютер.",
@@ -1720,6 +1752,9 @@ def show_info_window(
     agent_alive=None,
     on_session_end=None,
     on_uninstall=None,
+    on_start_agent=None,
+    first_run: bool = False,
+    client_token: str = "admin",
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1965,6 +2000,8 @@ def show_info_window(
         status_dot.pack(side="left", padx=(0, 6))
         label(header, s["running"], bold=True, size=13).pack(side="left")
         label(header, f"v{ITDECK_VERSION}", muted=True, size=9).pack(side="right")
+        tour_button = ttk.Button(header, text=s["tour_again"], style="Mini.TButton")
+        tour_button.pack(side="right", padx=(0, 10))
 
         # A dot that is always green is decoration pretending to be status.
         # The launcher knows whether the agent process is alive -- it
@@ -1972,7 +2009,25 @@ def show_info_window(
         # what it means for the user. Without this, an agent that died (or one
         # that lost the singleton mutex five times and gave up) leaves the
         # window showing three confident steps and a healthy green dot.
-        agent_warning = label(root, s["agent_down"], muted=True, size=8, wrap=460)
+        # The Close Agent tile stops the agent on purpose, and the supervisor
+        # rightly leaves it stopped -- so this row is also the way back: one
+        # button that asks run_launcher()'s loop to start it again. Without it
+        # the only way back was quitting IT-Deck and relaunching.
+        agent_warning = tk.Frame(root, bg=g["bg"])
+        label(agent_warning, s["agent_down"], muted=True, size=8, wrap=330).pack(side="left", anchor="w")
+        start_agent_button = None
+        if on_start_agent is not None:
+            def start_agent() -> None:
+                start_agent_button.configure(text=s["agent_starting"], state="disabled")
+                on_start_agent()
+                # If it didn't come up (another agent holds the mutex, say),
+                # the button must not stay greyed out forever.
+                root.after(10000, lambda: start_agent_button.configure(text=s["start_agent"], state="normal"))
+
+            start_agent_button = ttk.Button(
+                agent_warning, text=s["start_agent"], style="Mini.TButton", command=start_agent
+            )
+            start_agent_button.pack(side="right", padx=(8, 0))
 
         def poll_agent() -> None:
             try:
@@ -1980,6 +2035,8 @@ def show_info_window(
             except Exception:
                 alive = True  # never let a broken probe raise an alarm
             status_dot.configure(fg=g["ok"] if alive else g["warn"])
+            if alive and start_agent_button is not None:
+                start_agent_button.configure(text=s["start_agent"], state="normal")
             if alive:
                 if agent_warning.winfo_ismapped():
                     # Shrink back too, not just hide: fit_window() is the only
@@ -1989,7 +2046,7 @@ def show_info_window(
                     agent_warning.pack_forget()
                     fit_window()
             elif not agent_warning.winfo_ismapped():
-                agent_warning.pack(anchor="w", padx=PAD, pady=(0, 6), after=header)
+                agent_warning.pack(fill="x", padx=PAD, pady=(0, 6), after=header)
                 fit_window()
             root.after(AGENT_STATUS_POLL_MS, poll_agent)
 
@@ -2314,6 +2371,77 @@ def show_info_window(
         # correctly styled but cropped mid-text.
         _apply_windows11_chrome(root)
 
+        # --- first-run tour --------------------------------------------------
+        # Four short pages laid *over* the finished window with place(), not a
+        # second window: the window keeps the size its real content gave it,
+        # nothing here can close it, and when the tour ends the steps are
+        # simply uncovered. Shown by itself on the very first launch (no
+        # config.env existed), and from the header's Tutorial button after.
+        tour_pages = [
+            ("tour1_title", "tour1_body"),
+            ("tour2_title", "tour2_body"),
+            ("tour3_title", "tour3_body"),
+            ("tour4_title", "tour4_body"),
+        ]
+
+        def show_tour() -> None:
+            overlay = tk.Frame(root, bg=g["bg"])
+            overlay.place(x=0, y=0, relwidth=1, relheight=1)
+            box = tk.Frame(overlay, bg=g["surface"])
+            box.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
+            counter = label(box, "", muted=True, size=9)
+            counter.pack(anchor="w", padx=20, pady=(18, 4))
+            title = label(box, "", bold=True, size=15, wrap=380)
+            title.pack(anchor="w", padx=20)
+            body = label(box, "", size=10, wrap=380)
+            body.pack(anchor="w", padx=20, pady=(8, 16))
+            nav = tk.Frame(box, bg=g["surface"])
+            nav.pack(fill="x", padx=20, pady=(0, 18))
+            state = {"page": 0}
+
+            def close_tour() -> None:
+                root.unbind("<Escape>")
+                overlay.destroy()
+
+            skip = ttk.Button(nav, text=s["tour_skip"], style="Mini.TButton", command=close_tour)
+            skip.pack(side="left")
+            next_button = ttk.Button(nav, style="Accent.TButton")
+            next_button.pack(side="right")
+            back_button = ttk.Button(nav, text=s["tour_back"], style="Glass.TButton")
+
+            def render_page() -> None:
+                page = state["page"]
+                key_title, key_body = tour_pages[page]
+                counter.configure(text=s["tour_step"].format(n=page + 1, total=len(tour_pages)))
+                title.configure(text=s[key_title])
+                body.configure(text=s[key_body].format(token=client_token))
+                last = page == len(tour_pages) - 1
+                next_button.configure(text=s["tour_done"] if last else s["tour_next"])
+                if page > 0:
+                    back_button.pack(side="right", padx=(0, 8), before=next_button)
+                else:
+                    back_button.pack_forget()
+                next_button.focus_set()
+
+            def go(delta: int) -> None:
+                page = state["page"] + delta
+                if page >= len(tour_pages):
+                    close_tour()
+                    return
+                state["page"] = max(0, page)
+                render_page()
+
+            next_button.configure(command=lambda: go(1))
+            back_button.configure(command=lambda: go(-1))
+            # On root: focus sits on the Next button, so an overlay binding
+            # would never see the key.
+            root.bind("<Escape>", lambda _event: close_tour())
+            render_page()
+
+        tour_button.configure(command=show_tour)
+        if first_run:
+            show_tour()
+
         root.mainloop()
 
     try:
@@ -2330,6 +2458,9 @@ def run_launcher() -> int:
     # Before anything else claims disk: see sweep_stale_unpack_dirs().
     sweep_stale_unpack_dirs()
     data_dir = default_data_dir()
+    # Before load_or_create_config() writes it: no config.env yet means this
+    # is the first launch on this PC, which is when the window shows its tour.
+    first_run = not (data_dir / CONFIG_FILENAME).exists()
     config = load_or_create_config(data_dir)
     port = int(config["SERVER_PORT"])
     agent_token = config["AGENT_TOKEN"]
@@ -2552,6 +2683,10 @@ def run_launcher() -> int:
 
     session_end_trigger = install_session_end_handler(stop_for_session_end)
 
+    # Set by the window's "Start the agent" button (Tk thread); the supervisor
+    # loop below owns every spawn, so it is the one that acts on it.
+    agent_start_requested = threading.Event()
+
     show_info_window(
         dashboard_url,
         studio_url,
@@ -2563,6 +2698,9 @@ def run_launcher() -> int:
         lambda: agent_handle["proc"].poll() is None,
         session_end_trigger,
         uninstall_itdeck,
+        on_start_agent=agent_start_requested.set,
+        first_run=first_run,
+        client_token=client_token,
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()
@@ -2589,6 +2727,17 @@ def run_launcher() -> int:
             if backend_proc.poll() is not None:
                 print("Backend process exited -- stopping.")
                 break
+
+            if agent_start_requested.is_set():
+                agent_start_requested.clear()
+                if agent_proc.poll() is not None:
+                    # A person asked for it: start now, with a clean slate --
+                    # this is not a crash and must not inherit the backoff or
+                    # the mutex budget of whatever stopped it.
+                    print("Agent start requested from the IT-Deck window.")
+                    agent_restart_due = time.time()
+                    agent_restart_delay = AGENT_RESTART_MIN_DELAY
+                    agent_mutex_retries = 0
 
             agent_status = agent_proc.poll()
             if agent_status is not None and agent_restart_due is None:

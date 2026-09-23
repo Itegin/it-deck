@@ -10,6 +10,55 @@
 
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 
+// ── Seven-segment face ─────────────────────────────────────────────────────
+// What the offline takeover shows instead of the text time (css/widgets.css
+// swaps them): the digits of a bedside alarm clock, drawn as SVG so no font
+// has to be downloaded to a phone on a LAN. Unlit segments stay faintly
+// visible, the way they do on the real thing. Module-authored markup only.
+//
+// One digit is 60x100 units; segments are hexagons 10 units thick.
+function hSeg(y) {
+  return `9,${y} 14,${y - 5} 46,${y - 5} 51,${y} 46,${y + 5} 14,${y + 5}`;
+}
+function vSeg(x, y1, y2) {
+  return `${x},${y1} ${x + 5},${y1 + 5} ${x + 5},${y2 - 5} ${x},${y2} ${x - 5},${y2 - 5} ${x - 5},${y1 + 5}`;
+}
+const SEGMENTS = {
+  a: hSeg(8),
+  b: vSeg(52, 10, 49),
+  c: vSeg(52, 51, 90),
+  d: hSeg(92),
+  e: vSeg(8, 51, 90),
+  f: vSeg(8, 10, 49),
+  g: hSeg(50),
+};
+const DIGIT_SEGMENTS = {
+  0: "abcdef", 1: "bc", 2: "abged", 3: "abgcd", 4: "fgbc",
+  5: "afgcd", 6: "afgedc", 7: "abc", 8: "abcdefg", 9: "abcdfg",
+};
+const DIGIT_SVG = {};
+for (const [digit, lit] of Object.entries(DIGIT_SEGMENTS)) {
+  const polys = Object.entries(SEGMENTS)
+    .map(([name, points]) => `<polygon class="${lit.includes(name) ? "on" : "off"}" points="${points}"/>`)
+    .join("");
+  DIGIT_SVG[digit] = `<svg class="seg-digit" viewBox="0 0 60 100" aria-hidden="true" focusable="false"><g transform="skewX(-6) translate(6 0)">${polys}</g></svg>`;
+}
+const COLON_SVG =
+  '<svg class="seg-colon" viewBox="0 0 20 100" aria-hidden="true" focusable="false"><rect class="on" x="5" y="28" width="10" height="10" rx="2"/><rect class="on" x="3" y="62" width="10" height="10" rx="2"/></svg>';
+
+// "23:03", "23:03:09", "11:03 PM": digits and colons become segments, and
+// whatever else the locale adds (AM/PM) stays text beside them.
+function segmentMarkup(text) {
+  let html = "";
+  let rest = "";
+  for (const ch of text) {
+    if (DIGIT_SVG[ch]) html += DIGIT_SVG[ch];
+    else if (ch === ":") html += COLON_SVG;
+    else rest += ch;
+  }
+  return { html, rest: rest.trim() };
+}
+
 // Literal, module-authored SVG only, the same rule as render.js's ICONS.
 // Same 24x24 stroke geometry, so a weather glyph sits beside a tile icon
 // without looking like it came from another set.
@@ -81,6 +130,13 @@ export function mountClockWeather(tile, item) {
 
   const clock = el("div", "wc-clock", body);
   const time = el("div", "wc-time", clock);
+  // Hidden except in the offline takeover. The text time above stays the
+  // accessible one.
+  const segs = el("div", "wc-seg", clock);
+  segs.setAttribute("aria-hidden", "true");
+  const segDigits = el("div", "wc-seg-digits", segs);
+  const segSuffix = el("span", "wc-seg-suffix", segs);
+  let segText = "";
   const date = el("div", "wc-date", clock);
 
   const weather = el("div", "wc-weather", body);
@@ -115,6 +171,12 @@ export function mountClockWeather(tile, item) {
     const current = new Date();
     time.textContent = timeFormat.format(current);
     date.textContent = dateFormat.format(current);
+    if (time.textContent !== segText) {
+      segText = time.textContent;
+      const { html, rest } = segmentMarkup(segText);
+      segDigits.innerHTML = html;
+      segSuffix.textContent = rest;
+    }
     // Aligned to the next boundary rather than a fixed interval. Otherwise a
     // widget mounted at :59 would show the old minute for a full minute, and
     // setInterval drift adds up over a day on a deck that never reloads.

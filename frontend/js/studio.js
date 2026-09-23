@@ -10,12 +10,16 @@ import { MODES, applyMode, setMode } from "./theme.js";
 import { fetchSettings } from "./api.js";
 import { showToast } from "./toast.js";
 import { applyStaticStrings, t } from "./studio-i18n.js";
-import { renderPreview, markSelection } from "./studio-preview.js";
+import { renderPreview, markSelection, DOCK_MAX } from "./studio-preview.js";
 import { createInspector } from "./studio-inspector.js";
 import { cleanPath, detectEntry, vpnNeedsPath } from "./tile-catalog.js";
 import { ICONS } from "./render.js";
+import { initGuide } from "./studio-guide.js";
 
 const grid = document.getElementById("preview-grid");
+const previewDock = document.getElementById("preview-dock");
+// markSelection looks in here, so a selected bar button is found as well.
+const phone = grid.closest(".phone");
 const workspaceSelect = document.getElementById("workspace-select");
 const modeSelect = document.getElementById("mode-select");
 const modeMessage = document.getElementById("mode-message");
@@ -205,23 +209,28 @@ function renderDeck() {
   renderPreview(grid, currentWorkspace(), {
     onSelectItem: (item) => {
       selection = { itemId: item.id };
-      markSelection(grid, selection);
+      markSelection(phone, selection);
       inspector.open({ item });
     },
     onSelectEmpty: (row, col) => {
       selection = { cell: { row, col } };
-      markSelection(grid, selection);
-      inspector.open({ item: null, cell: { row, col } });
+      markSelection(phone, selection);
+      inspector.open({ item: null, cell: { row, col }, origin: "cell" });
+    },
+    onSelectDockEmpty: (position) => {
+      selection = { dockSlot: position };
+      markSelection(phone, selection);
+      inspector.open({ item: null, cell: firstFreeCell(currentWorkspace()) || { row: 0, col: 0 }, origin: "dock" });
     },
     onMove: moveItem,
-  });
-  markSelection(grid, selection);
+  }, previewDock);
+  markSelection(phone, selection);
 }
 
 // Same rectangle test as the backend's _validate_placement, in reading order.
 function firstFreeCell(workspace) {
   const taken = new Set();
-  for (const item of workspace.items) {
+  for (const item of workspace.items.filter((candidate) => !candidate.dock)) {
     for (let r = item.row; r < item.row + (item.height || 1); r++) {
       for (let c = item.col; c < item.col + (item.width || 1); c++) {
         taken.add(`${r},${c}`);
@@ -236,8 +245,29 @@ function firstFreeCell(workspace) {
   return null;
 }
 
-async function moveItem(item, row, col) {
-  const result = await api(`/api/items/${item.id}`, { method: "PUT", body: { row, col } });
+// The next free place in the quick-launch bar, or -1 when it is full.
+function firstFreeDockSlot(workspace) {
+  const used = new Set(workspace.items.filter((item) => item.dock).map((item) => item.col));
+  for (let pos = 0; pos < DOCK_MAX; pos++) {
+    if (!used.has(pos)) return pos;
+  }
+  return -1;
+}
+
+// `to` is { row, col, dock }: a grid cell, or a place in the bar.
+async function moveItem(item, to) {
+  // The bar only takes 1x1 actions; a 2-wide slider or a widget dropped on
+  // its "+" is refused here with a reason, not by the API with a code.
+  if (to.dock && (item.kind !== "action" || (item.width || 1) > 1 || (item.height || 1) > 1)) {
+    showToast(t("dock.notAllowed", { label: item.label }));
+    return;
+  }
+  const body = { row: to.row, col: to.col, dock: to.dock };
+  if (to.dock) {
+    body.width = 1;
+    body.height = 1;
+  }
+  const result = await api(`/api/items/${item.id}`, { method: "PUT", body });
   if (!result.ok) {
     // Usually an overlap: a 2-wide tile dropped where its second cell is taken.
     showToast(t("error.move", { label: item.label, detail: result.detail }));
@@ -255,12 +285,14 @@ async function moveItem(item, row, col) {
 const inspector = createInspector(document.getElementById("inspector"), {
   api,
   getWorkspace: currentWorkspace,
+  firstFreeCell: () => firstFreeCell(currentWorkspace()),
+  firstFreeDockSlot: () => firstFreeDockSlot(currentWorkspace()),
   targets: () => ["windows", "backend", ...allItems().map((item) => item.target)],
   onSaved: async (saved) => {
     selection = { itemId: saved.id };
     await loadItems();
     showToast(t("toast.saved", { label: saved.label }));
-    const tile = grid.querySelector(`[data-item-id="${saved.id}"]`);
+    const tile = phone.querySelector(`[data-item-id="${saved.id}"]`);
     if (tile) tile.focus();
   },
   onDeleted: async (item) => {
@@ -271,7 +303,7 @@ const inspector = createInspector(document.getElementById("inspector"), {
   },
   onClose: () => {
     selection = null;
-    markSelection(grid, null);
+    markSelection(phone, null);
   },
 });
 
@@ -284,8 +316,8 @@ document.getElementById("new-item-btn").addEventListener("click", () => {
     return;
   }
   selection = { cell };
-  markSelection(grid, selection);
-  inspector.open({ item: null, cell });
+  markSelection(phone, selection);
+  inspector.open({ item: null, cell, origin: "button" });
 });
 
 workspaceSelect.addEventListener("change", () => {
@@ -490,6 +522,7 @@ modeSelect.addEventListener("change", async () => {
 });
 
 applyStaticStrings();
+initGuide(document.getElementById("guide-dialog"), document.getElementById("guide-btn"));
 loadItems();
 // Independent of loadItems: a settings read must not take the deck down with
 // it, or the other way round.

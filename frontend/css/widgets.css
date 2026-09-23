@@ -277,3 +277,97 @@
      Glass light's pale pane. */
   opacity: 0.75;
 }
+
+
+/* ── Offline face (v0.5.0) ────────────────────────────────────────────────
+   The takeover is no longer a big tile: the clock loses the tile's card --
+   background, border, shadow, glass -- in every theme and sits straight on
+   the page, and the time is drawn as seven-segment digits (clock-weather.js
+   builds them). The id in the selector is what outranks each theme's
+   [data-theme] .tile surface without !important. */
+#grid.clock-takeover .tile.clock-takeover-tile {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--color-text);
+}
+
+.wc-seg {
+  display: none;
+}
+
+#grid.clock-takeover .clock-takeover-tile .wc-time {
+  display: none;
+}
+
+#grid.clock-takeover .clock-takeover-tile .wc-seg {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2cqmin;
+}
+
+.wc-seg-digits {
+  display: flex;
+  align-items: center;
+  gap: 2.4cqmin;
+  /* One digit is 60 wide by 100 tall; five glyphs (HH:MM) at this height
+     fill about 85% of a portrait phone's width. */
+  height: clamp(64px, 30cqmin, 200px);
+}
+
+.wc-seconds .wc-seg-digits {
+  height: clamp(48px, 19cqmin, 150px);
+}
+
+.wc-seg-digits svg {
+  height: 100%;
+  width: auto;
+  overflow: visible;
+}
+
+.wc-seg .on {
+  fill: currentColor;
+}
+
+/* Unlit segments: present, barely -- the ghost "8" of a real LCD. */
+.wc-seg .off {
+  fill: currentColor;
+  opacity: 0.07;
+}
+
+.wc-seg-suffix {
+  font-size: clamp(14px, 6cqmin, 28px);
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.wc-seg-suffix:empty {
+  display: none;
+}
+
+/* The colon blinks once a second, like the clock it imitates -- unless
+   motion is reduced. Steps, not a fade: an LCD has no in-between. */
+#grid.clock-takeover .wc-seg .seg-colon {
+  animation: wc-colon 2s steps(1, end) infinite;
+}
+
+@keyframes wc-colon {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #grid.clock-takeover .wc-seg .seg-colon {
+    animation: none;
+  }
+}
+
+/* Date and weather under the digits read as captions, not as a second card. */
+#grid.clock-takeover .clock-takeover-tile .wc-date {
+  letter-spacing: 0.02em;
+  opacity: 0.7;
+}

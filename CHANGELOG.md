@@ -7,6 +7,53 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.0 — 2026-09-24
+
+### Added
+
+- **A quick-launch bar.** Up to seven square buttons that sit outside the
+  grid: along the bottom when the phone is upright, down the left side when it
+  is sideways. Any 1×1 action can go there. Websites and programs added with
+  **+ New tile** go there by default, and **Where** in Studio's step 4 moves a
+  button between the bar and the grid. An empty bar takes no room, so an
+  existing deck looks exactly as it did.
+- **Website tiles.** They open any address in the PC's default browser, with
+  one-tap presets: Telegram Web, Discord, WhatsApp, YouTube, ChatGPT, Gmail,
+  GitHub and more. The browser keeps running after IT-Deck closes, the same
+  as any program the deck starts.
+- **Choose from installed programs.** Studio asks the PC for its Start Menu
+  programs, so a program tile no longer needs a path typed in by hand. Picking
+  one fills in the path, any launch arguments, the name and, for well-known
+  apps, the logo. Microsoft Store apps (Claude, WhatsApp and the like) are in
+  the list too; Force Stop refuses those rather than hitting Explorer, which
+  is what starts them.
+- **Four kinds of icon:** the built-in symbols, 21 one-colour logos (Chrome, Claude,
+  Telegram, Discord, Steam, Spotify, OBS and others), up to three characters
+  of text or an emoji, or the site's own icon, fetched by the PC.
+- **A tour on first launch,** in the IT-Deck window on the PC and on the phone
+  the first time it shows the deck. The PC one can be opened again with
+  **Tutorial**.
+- **A guide inside Studio:** seven short sections with pictures, in English
+  and Russian. It opens by itself on the first visit and from **Guide** after
+  that.
+- **A Start the agent button** in the IT-Deck window. Before this, the Close
+  Agent tile stopped the agent and the only way back was quitting and
+  relaunching IT-Deck.
+
+### Changed
+
+- **The offline clock is a proper clock face.** When the PC end goes away,
+  the clock drops its tile frame and shows seven-segment digits, like a
+  bedside alarm clock.
+- Program tiles accept `%APPDATA%`-style paths and launch arguments.
+- **Updates reach the phone.** The deck's files are served with
+  `Cache-Control: no-cache`, so a phone or Studio no longer runs a cached old
+  script against a new page after IT-Deck is updated.
+- **Tests run on GitHub Actions** for every push: the backend API, the
+  agent's address checks and the frontend's pure logic (`tests/`).
+
+---
+
 ## v0.4.6 — 2026-09-19
 
 ### Fixed

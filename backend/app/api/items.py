@@ -29,6 +29,7 @@ class ItemCreate(BaseModel):
     target: str = "windows"
     params: str = "{}"
     state_key: str | None = None
+    dock: bool = False
 
 
 class ItemUpdate(BaseModel):
@@ -45,6 +46,13 @@ class ItemUpdate(BaseModel):
     target: str | None = None
     params: str | None = None
     state_key: str | None = None
+    dock: bool | None = None
+
+
+# How many buttons the quick-launch bar holds. The bar never scrolls (no
+# scroll chain on the deck -- see css/grid.css), so past this the squares
+# would shrink below a comfortable finger target on a 375pt-wide phone.
+DOCK_MAX = 7
 
 
 def _check_agent_token(x_agent_token: str | None) -> None:
@@ -81,6 +89,8 @@ def _validate_placement(
     width: int,
     height: int,
     item_id: int | None = None,
+    dock: bool = False,
+    kind: str | None = None,
 ) -> None:
     # The deck places every tile *explicitly*: render.js writes
     # `grid-row: row+1 / span height` and `grid-column: col+1 / span width`
@@ -95,6 +105,10 @@ def _validate_placement(
     # would ever show it. Checked here rather than in the frontend because
     # this is the one place items are actually written -- the same reasoning
     # _validate_params_json above already states.
+    if dock:
+        _validate_dock_placement(conn, workspace_id, row, col, width, height, item_id, kind)
+        return
+
     if width < 1 or height < 1:
         raise HTTPException(status_code=400, detail="width and height must be at least 1")
     if row < 0 or col < 0:
@@ -123,8 +137,10 @@ def _validate_placement(
             ),
         )
 
+    # Grid tiles only: a quick-launch bar item keeps row 0 and a position in
+    # `col` that says nothing about the grid.
     existing = conn.execute(
-        "SELECT id, label, row, col, width, height FROM item WHERE workspace_id = ?",
+        "SELECT id, label, row, col, width, height FROM item WHERE workspace_id = ? AND dock = 0",
         (workspace_id,),
     ).fetchall()
 
@@ -151,6 +167,39 @@ def _validate_placement(
             )
 
 
+def _validate_dock_placement(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    row: int,
+    col: int,
+    width: int,
+    height: int,
+    item_id: int | None,
+    kind: str | None,
+) -> None:
+    # The bar is a strip of square buttons, so: an action, 1x1, row 0, and
+    # `col` is a slot 0..DOCK_MAX-1 that no other bar item holds.
+    if kind != "action":
+        raise HTTPException(status_code=400, detail="only action tiles can go in the quick-launch bar")
+    if width != 1 or height != 1 or row != 0:
+        raise HTTPException(status_code=400, detail="a quick-launch bar item is 1x1 at row 0")
+    if not 0 <= col < DOCK_MAX:
+        raise HTTPException(status_code=400, detail=f"the quick-launch bar has {DOCK_MAX} places (0-{DOCK_MAX - 1})")
+    if conn.execute(
+        "SELECT 1 FROM workspace WHERE id = ?", (workspace_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=400, detail=f"workspace {workspace_id} does not exist")
+    other = conn.execute(
+        "SELECT label FROM item WHERE workspace_id = ? AND dock = 1 AND col = ? AND id IS NOT ?",
+        (workspace_id, col, item_id),
+    ).fetchone()
+    if other is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"place {col + 1} of the quick-launch bar is taken by '{other['label']}'",
+        )
+
+
 @router.get("/api/items/{item_id}")
 def get_item_endpoint(item_id: int, x_agent_token: str | None = Header(None)) -> dict:
     _check_agent_token(x_agent_token)
@@ -168,19 +217,20 @@ async def create_item(item: ItemCreate, x_agent_token: str | None = Header(None)
     conn = get_connection()
     try:
         _validate_placement(
-            conn, item.workspace_id, item.row, item.col, item.width, item.height
+            conn, item.workspace_id, item.row, item.col, item.width, item.height,
+            dock=item.dock, kind=item.kind,
         )
         try:
             cur = conn.execute(
                 """
                 INSERT INTO item
-                    (workspace_id, row, col, width, height, label, icon, color, kind, type, target, params, state_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (workspace_id, row, col, width, height, label, icon, color, kind, type, target, params, state_key, dock)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.workspace_id, item.row, item.col, item.width, item.height,
                     item.label, item.icon, item.color, item.kind, item.type,
-                    item.target, item.params, item.state_key,
+                    item.target, item.params, item.state_key, int(item.dock),
                 ),
             )
         except sqlite3.IntegrityError as e:
@@ -226,8 +276,9 @@ async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None 
         # that moves an item one column over sends `col` and nothing else, so
         # the other three sides of the rectangle have to come from the row as
         # it currently stands or the check would be against a phantom 0x0.
-        placement = {key: existing[key] for key in ("workspace_id", "row", "col", "width", "height")}
+        placement = {key: existing[key] for key in ("workspace_id", "row", "col", "width", "height", "dock", "kind")}
         placement.update({key: fields[key] for key in placement if key in fields})
+        placement["dock"] = bool(placement["dock"])
         _validate_placement(conn, item_id=item_id, **placement)
 
         try:

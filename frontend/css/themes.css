@@ -279,6 +279,28 @@
   position: relative;
 }
 
+/* Same plate for the other icon kinds: the mark sits inside the badge at the
+   glyph's own proportion, text a touch smaller so three letters still fit. */
+[data-theme="pastel"] .tile .icon-image img,
+[data-theme="pastel"] .tile .icon-text span {
+  position: relative;
+}
+
+[data-theme="pastel"] .tile .icon-image img {
+  width: 60%;
+  height: 60%;
+}
+
+[data-theme="pastel"] .tile .icon-brand svg {
+  width: 50%;
+  height: 50%;
+  margin: 0;
+}
+
+[data-theme="pastel"] .tile .icon-text {
+  font-size: clamp(13px, 11cqmin, 20px);
+}
+
 [data-theme="pastel"] .tile .label {
   color: var(--color-text);
 }
@@ -658,4 +680,12 @@
 [data-theme="liquid-glass"][data-mode="light"] #workspace-header .header-btn {
   background-color: rgba(255, 255, 255, 0.72);
   background-image: var(--glass-veil);
+}
+
+/* Pastel's badge inside a quick-launch key: the key is small, so the badge
+   takes most of it rather than grid.css's bare-glyph 52%. */
+[data-theme="pastel"] #dock .dock-tile .icon,
+[data-theme="pastel"] .preview-dock .tile .icon {
+  width: 74%;
+  height: 74%;
 }

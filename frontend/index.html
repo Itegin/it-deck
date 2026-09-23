@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="/css/themes.css">
   <link rel="stylesheet" href="/css/contextmenu.css">
   <link rel="stylesheet" href="/css/toast.css">
+  <link rel="stylesheet" href="/css/onboarding.css">
   <!-- The only inline script in the project, and it earns that: the theme
        lives on the server, so the module that fetches it cannot possibly know
        the answer before the first paint. Without this, every load of a
@@ -86,7 +87,13 @@
       </button>
     </div>
   </header>
-  <div id="grid"></div>
+  <!-- The deck: the grid plus the quick-launch bar. js/render.js fills both;
+       css/grid.css puts the bar under the grid in portrait and down the left
+       in landscape. -->
+  <main id="deck">
+    <div id="grid"></div>
+    <nav id="dock" aria-label="Quick launch" hidden></nav>
+  </main>
 
   <script type="module" src="/js/app.js"></script>
 </body>

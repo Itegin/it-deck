@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 import os
 
 # Without force=True, uvicorn's own dictConfig (which sets
@@ -112,4 +113,26 @@ app.include_router(widgets_router)
 # passes an absolute path instead, since a desktop shortcut/frozen exe has
 # no fixed cwd to resolve "frontend" against.
 FRONTEND_DIR = os.environ.get("ITDECK_FRONTEND_DIR", "frontend")
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+# StaticFiles takes a file's type from Python's mimetypes, which on Windows
+# reads the registry -- and a stock Windows has no entry for .webp, so the
+# guide's pictures went out as text/plain and the browser refused them.
+# Registered here so the answer no longer depends on the machine.
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+class RevalidatedStaticFiles(StaticFiles):
+    """The frontend, served with Cache-Control: no-cache.
+
+    Without it browsers apply heuristic caching to files with a
+    Last-Modified date, and after an update a phone (or Studio) kept running
+    the old app.js / grid.css against the new index.html -- a mismatch that
+    can collapse the deck to nothing. no-cache still lets the browser keep a
+    copy; it just has to ask first, and the ETag makes that a 304.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", RevalidatedStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

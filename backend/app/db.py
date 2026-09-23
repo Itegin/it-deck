@@ -72,6 +72,15 @@ def init_db() -> None:
             );
             """
         )
+        # The quick-launch bar (v0.5.0). A schema step, not a value fixup: it
+        # is keyed on the column being absent, so it runs exactly once per
+        # database and can never undo a Studio edit. A dock item is a 1x1
+        # action outside the grid; its `col` is its position in the bar and
+        # its `row` is always 0. Every existing row gets 0 -- in the grid --
+        # so an upgraded deck looks exactly as it did.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(item)")}
+        if "dock" not in columns:
+            conn.execute("ALTER TABLE item ADD COLUMN dock INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
@@ -435,7 +444,7 @@ def fixup_close_agent_item() -> None:
         cols, rows = grid["grid_cols"], grid["grid_rows"]
         taken = {
             (r["row"], r["col"])
-            for r in conn.execute("SELECT row, col FROM item WHERE workspace_id = 1")
+            for r in conn.execute("SELECT row, col FROM item WHERE workspace_id = 1 AND dock = 0")
         }
         # Scanned from the last occupied row, not from (0,0). The first free
         # cell overall is the top-left corner, and putting a "stop everything"

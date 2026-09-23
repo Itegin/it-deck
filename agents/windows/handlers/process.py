@@ -2,6 +2,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psutil
 
@@ -106,7 +107,7 @@ class ElevationRequired(Exception):
     """
 
 
-def _spawn_detached(path: str) -> None:
+def _spawn_detached(path: str, args: str = "") -> None:
     """CreateProcess the target with no console and its own process group.
 
     The isolation this buys is a hard requirement, not an optimisation:
@@ -129,13 +130,18 @@ def _spawn_detached(path: str) -> None:
     the whole detached launch over an optional flag would be the wrong trade.
     """
     flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    # `args` is appended as a raw Windows command line, not split: that is
+    # how a person copies it out of a shortcut's Target field (Discord's is
+    # `Update.exe --processStart Discord.exe`), and it is what the program
+    # parses anyway. Only the path itself is quoted for them.
+    command = subprocess.list2cmdline([path]) + (f" {args}" if args else "")
     try:
-        subprocess.Popen([path], creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
+        subprocess.Popen(command, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
     except OSError:
-        subprocess.Popen([path], creationflags=flags, close_fds=True)
+        subprocess.Popen(command, creationflags=flags, close_fds=True)
 
 
-def start_process(path: str) -> None:
+def start_process(path: str, args: str = "") -> None:
     """Launch `path`, detached, without blowing the command's time budget.
 
     Two failure modes this shape exists for, both observed:
@@ -165,7 +171,7 @@ def start_process(path: str) -> None:
 
     def launch() -> None:
         try:
-            _spawn_detached(path)
+            _spawn_detached(path, args)
         except Exception as spawn_exc:
             if getattr(spawn_exc, "winerror", None) == ERROR_ELEVATION_REQUIRED:
                 needs_elevation.append(True)
@@ -173,7 +179,10 @@ def start_process(path: str) -> None:
                 # Still attempted even when elevation is the known cause: it
                 # is what puts the UAC prompt on screen, so a person who *is*
                 # at the PC can simply confirm it and have the app start.
-                os.startfile(path)
+                if args:
+                    os.startfile(path, arguments=args)
+                else:
+                    os.startfile(path)
             except Exception as exc:
                 failure.append(exc)
 
@@ -294,8 +303,12 @@ def handle_launch_app(params: dict) -> dict:
         # close it) and a slow launch cannot blow the 5s command budget.
         # ShellExecute is still reached via start_process()'s fallback, so
         # UAC-elevated exes, .lnk shortcuts and documents launch as before.
+        # %APPDATA% / %LOCALAPPDATA% expanded here so Studio's presets can name
+        # per-user installs (Telegram, Discord) without knowing the username.
+        path = os.path.expandvars(params["path"])
+        args = (params.get("args") or "").strip()
         try:
-            start_process(params["path"])
+            start_process(path, args)
         except ElevationRequired:
             # Not a fallback case: the target was found and Windows is asking
             # a human to approve it. Trying fallback_path here would launch
@@ -310,7 +323,7 @@ def handle_launch_app(params: dict) -> dict:
             fallback = params.get("fallback_path")
             if not fallback:
                 raise
-            start_process(fallback)
+            start_process(os.path.expandvars(fallback))
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -326,7 +339,18 @@ def handle_force_stop(params: dict, item_type: str | None = None) -> dict:
         # via Studio Mode.
         if process_name is None:
             if item_type == "launch_app" and params.get("path"):
-                process_name = os.path.basename(params["path"])
+                process_name = os.path.basename(os.path.expandvars(params["path"]))
+                if process_name.lower() == "explorer.exe":
+                    # A Store app is started through Explorer, so the derived
+                    # name would be the Windows shell itself -- killing it
+                    # takes the taskbar and desktop down. Refused instead.
+                    return {
+                        "status": "error",
+                        "message": (
+                            "This tile opens a Microsoft Store app, which can't be force-stopped from here. "
+                            "Set its process name (e.g. Claude.exe) under More settings in Studio to allow it."
+                        ),
+                    }
             elif item_type == "process_toggle":
                 # Same resolution handle_process_toggle uses, via the same
                 # helper -- this call site had the identical bare
@@ -381,6 +405,70 @@ def handle_process_toggle(params: dict) -> dict:
                 start_process(vpn_path)
             except ElevationRequired:
                 return {"status": "error", "message": _ELEVATION_MESSAGE}
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# Schemes open_url will hand to Windows. http/https are the point of the
+# tile; the rest are the registered protocols the app presets in Studio use
+# to start a desktop client without knowing where it is installed. Anything
+# else -- file:, ms-msdt:, search-ms:, a bare path -- is refused: a URL
+# handler that runs whatever ShellExecute accepts is launch_app without
+# the name on it.
+OPEN_URL_SCHEMES = frozenset({
+    "http", "https",
+    "discord", "tg", "steam", "spotify", "zoommtg", "slack", "ms-settings",
+})
+_MAX_URL_LENGTH = 2048
+
+
+def validate_url(url: str) -> str | None:
+    """Return an error message for a URL open_url must refuse, else None."""
+    if not url:
+        return "This tile has no address set yet -- add one in Studio."
+    # Also nothing the rundll32 command line would need escaping for: with
+    # these gone the URL is one plain token and quoting never matters.
+    if len(url) > _MAX_URL_LENGTH or any(ch.isspace() or ord(ch) < 32 or ch in '"<>^|' for ch in url):
+        return "That address is not a valid URL."
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    if scheme not in OPEN_URL_SCHEMES:
+        return f"Only web addresses (http, https) and app links can be opened, not \"{scheme or url}\"."
+    if scheme in ("http", "https") and not parts.netloc:
+        return "That address is missing the site name."
+    return None
+
+
+def handle_open_url(params: dict) -> dict:
+    """Open a web address in the default browser, or an app link in its app.
+
+    Through rundll32's FileProtocolHandler rather than os.startfile(): that
+    makes the handoff a real child process, so _spawn_detached's breakaway
+    flags apply to it and to the browser it starts -- a browser opened from
+    the deck must outlive IT-Deck exactly like a launch_app target does.
+    rundll32 hands the URL to the registered handler and exits, so an already
+    running browser just gets a new tab. Same time budget as launch_app.
+    """
+    try:
+        url = (params.get("url") or "").strip()
+        error = validate_url(url)
+        if error:
+            return {"status": "error", "message": error}
+        rundll = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "rundll32.exe")
+        failure: list[BaseException] = []
+
+        def launch() -> None:
+            try:
+                _spawn_detached(rundll, "url.dll,FileProtocolHandler " + subprocess.list2cmdline([url]))
+            except Exception as exc:
+                failure.append(exc)
+
+        worker = threading.Thread(target=launch, daemon=True)
+        worker.start()
+        worker.join(timeout=_LAUNCH_BUDGET_SECONDS)
+        if failure:
+            raise failure[0]
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

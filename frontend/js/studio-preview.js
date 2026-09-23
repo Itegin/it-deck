@@ -7,26 +7,51 @@
 // command wiring, no state polling, no slider handlers. Tiles here are
 // buttons that select, nothing more.
 
-import { ICONS } from "./render.js";
+import { tileIconFor } from "./render.js";
 import { mountWidget, destroyWidgets } from "./widgets/index.js";
 import { vpnNeedsPath } from "./tile-catalog.js";
 import { t } from "./studio-i18n.js";
 
 const DRAG_TYPE = "application/x-itdeck-item";
 
-export function renderPreview(grid, workspace, handlers) {
+// Same as the backend's DOCK_MAX (backend/app/api/items.py).
+export const DOCK_MAX = 7;
+
+// A drop target that accepts a dragged tile. Shared by the grid's empty
+// cells and the bar's "+" slot.
+function acceptDrops(node, workspace, onDrop) {
+  node.addEventListener("dragover", (event) => {
+    if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    node.classList.add("is-drop-target");
+  });
+  node.addEventListener("dragleave", () => node.classList.remove("is-drop-target"));
+  node.addEventListener("drop", (event) => {
+    event.preventDefault();
+    node.classList.remove("is-drop-target");
+    const id = Number(event.dataTransfer.getData(DRAG_TYPE));
+    const item = workspace.items.find((candidate) => candidate.id === id);
+    if (item) onDrop(item);
+  });
+}
+
+export function renderPreview(grid, workspace, handlers, dock) {
   // Same rule as the deck: a widget's timers outlive innerHTML = "".
   destroyWidgets();
   grid.replaceChildren();
+  if (dock) dock.replaceChildren();
   if (!workspace) {
     return;
   }
+  const gridItems = workspace.items.filter((item) => !item.dock);
+  const dockItems = workspace.items.filter((item) => item.dock).sort((a, b) => a.col - b.col);
 
   grid.style.setProperty("--cols", workspace.grid_cols);
 
   // Out-of-bounds rows can exist (startup fixups write to SQLite directly and
   // bypass placement validation), so draw whatever is actually there.
-  const rows = workspace.items.reduce(
+  const rows = gridItems.reduce(
     (max, item) => Math.max(max, item.row + (item.height || 1)),
     workspace.grid_rows,
   );
@@ -34,8 +59,8 @@ export function renderPreview(grid, workspace, handlers) {
   const covered = new Set();
   const widgets = [];
 
-  for (const item of workspace.items) {
-    for (let r = item.row; r < item.row + (item.height || 1); r++) {
+  for (const item of [...gridItems, ...dockItems]) {
+    for (let r = item.dock ? Infinity : item.row; r < item.row + (item.height || 1); r++) {
       for (let c = item.col; c < item.col + (item.width || 1); c++) {
         covered.add(`${r},${c}`);
       }
@@ -54,10 +79,8 @@ export function renderPreview(grid, workspace, handlers) {
     tile.setAttribute("aria-label", t("preview.editTile", { label: item.label }));
     tile.draggable = true;
 
-    if (ICONS[item.icon] && item.kind !== "widget") {
-      const icon = document.createElement("div");
-      icon.className = "icon";
-      icon.innerHTML = ICONS[item.icon];
+    const icon = item.kind !== "widget" ? tileIconFor(item) : null;
+    if (icon) {
       tile.appendChild(icon);
     }
     const label = document.createElement("div");
@@ -85,6 +108,12 @@ export function renderPreview(grid, workspace, handlers) {
     });
     tile.addEventListener("dragend", () => tile.classList.remove("is-dragging"));
 
+    if (item.dock && dock) {
+      tile.classList.add("dock-tile");
+      tile.title = item.label;
+      dock.appendChild(tile);
+      continue;
+    }
     grid.appendChild(tile);
     if (item.kind === "widget") {
       widgets.push([tile, item]);
@@ -104,22 +133,33 @@ export function renderPreview(grid, workspace, handlers) {
       cell.textContent = "+";
       cell.setAttribute("aria-label", t("preview.addAt", { row: row + 1, col: col + 1 }));
       cell.addEventListener("click", () => handlers.onSelectEmpty(row, col));
-
-      cell.addEventListener("dragover", (event) => {
-        if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-        cell.classList.add("is-drop-target");
-      });
-      cell.addEventListener("dragleave", () => cell.classList.remove("is-drop-target"));
-      cell.addEventListener("drop", (event) => {
-        event.preventDefault();
-        cell.classList.remove("is-drop-target");
-        const id = Number(event.dataTransfer.getData(DRAG_TYPE));
-        const item = workspace.items.find((candidate) => candidate.id === id);
-        if (item) handlers.onMove(item, row, col);
-      });
+      acceptDrops(cell, workspace, (item) => handlers.onMove(item, { row, col, dock: false }));
       grid.appendChild(cell);
+    }
+  }
+
+  // The quick-launch bar, under the grid as the phone shows it upright: its
+  // buttons, then one "+" for the next free place while there is one.
+  if (dock) {
+    const used = new Set(dockItems.map((item) => item.col));
+    let free = -1;
+    for (let pos = 0; pos < DOCK_MAX; pos++) {
+      if (!used.has(pos)) {
+        free = pos;
+        break;
+      }
+    }
+    if (free >= 0) {
+      const slot = document.createElement("button");
+      slot.type = "button";
+      slot.className = "preview-empty dock-slot";
+      slot.dataset.dockSlot = String(free);
+      slot.textContent = "+";
+      slot.title = t("dock.add");
+      slot.setAttribute("aria-label", t("dock.add"));
+      slot.addEventListener("click", () => handlers.onSelectDockEmpty(free));
+      acceptDrops(slot, workspace, (item) => handlers.onMove(item, { row: 0, col: free, dock: true }));
+      dock.appendChild(slot);
     }
   }
 
@@ -138,6 +178,8 @@ export function markSelection(grid, selection) {
   let target = null;
   if (selection && selection.itemId !== undefined) {
     target = grid.querySelector(`[data-item-id="${CSS.escape(String(selection.itemId))}"]`);
+  } else if (selection && selection.dockSlot !== undefined) {
+    target = grid.querySelector(`[data-dock-slot="${selection.dockSlot}"]`);
   } else if (selection && selection.cell) {
     target = grid.querySelector(`[data-row="${selection.cell.row}"][data-col="${selection.cell.col}"]`);
   }

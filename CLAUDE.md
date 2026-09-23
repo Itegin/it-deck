@@ -28,7 +28,10 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
 - **Startup fixups in `db.py` must be guarded on the value they upgrade from.**
   They run on every start, and a bare `WHERE label=...` reverts Studio edits.
 - **Keep in step:** `tile-catalog.js` ↔ agent `HANDLERS` ↔ `WIDGETS`
-  (`js/widgets/index.js`) ↔ `ICONS` (`render.js`) ↔ db.py seeds. Theme slugs:
+  (`js/widgets/index.js`) ↔ `ICONS` (`render.js`) + `BRAND_ICONS`
+  (`brand-icons.js`, no Russian services) ↔ db.py seeds. The agent's
+  `OPEN_URL_SCHEMES` ↔ the catalog's `URL_SCHEMES`; backend `DOCK_MAX` ↔
+  `studio-preview.js` `DOCK_MAX`. Theme slugs:
   `settings.py`, `theme.js`, `index.html` boot script, `themes.css`.
 - **Widgets** (`kind=widget`): `mount(tile,item)` returns `destroy()`, and
   `render.js`/Studio preview call `destroyWidgets()` before wiping the grid.

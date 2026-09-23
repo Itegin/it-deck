@@ -96,7 +96,7 @@ state snapshot every second.
 | `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`_validate_params_json`) **and** validates grid placement (`_validate_placement`). Every mutation broadcasts `workspace_update`. |
 | `api/workspaces.py` | Token-gated `POST /api/workspaces` and `POST /api/workspaces/{id}/compact`. `_pack_items()` is a pure placement pass, kept DB-free so it can be exercised directly. |
 | `api/screenshot.py` | Token-gated `POST /api/screenshot` — PNG ≤ 10 MB written beside the DB under `data/screenshots/`, named from the server clock. **Retained but called by nothing** (see §12). |
-| `api/agents.py` | Token-gated `POST /api/agents/{agent_name}/list_devices` — request/response proxy that makes a connected agent enumerate audio devices and returns its reply verbatim, 5-second budget. **There is no agent-status endpoint** (agent status travels over the WebSocket only). |
+| `api/agents.py` | Token-gated request/response proxies to a connected agent, one shared `_ask_agent()`: `list_devices` (audio devices), `list_apps` (Start Menu programs) and `fetch_icon` (a site's icon). Replies verbatim, 5-second budget. **There is no agent-status endpoint** (agent status travels over the WebSocket only). |
 | `api/settings.py` | `GET /api/settings`, `PUT /api/settings/theme`. Holds the canonical `THEMES` allowlist. The one write endpoint with no token. |
 
 ### `agents/windows/`
@@ -106,7 +106,8 @@ state snapshot every second.
 | `agent.py` | Connects, sends `hello`, runs the receive loop and the poll loop under one `asyncio.gather`, reconnects with exponential backoff (1 s → 30 s cap). Owns `HANDLERS` and a `Global\ITDeckAgentSingleton` named mutex that stops two agents registering under one name. |
 | `poller.py` | Polls local state every **1 s** and pushes the whole snapshot unconditionally; the backend deduplicates. A transient audio-stack error skips the tick rather than dropping the connection. |
 | `handlers/audio.py` | `audio_mute_toggle`, `audio_volume_set`, `audio_switch`, `list_devices`, plus the read functions the poller uses. Mute/volume go through pycaw's raw device enumerator; enumeration and switching shell out to the bundled `tools/SoundVolumeView.exe`. |
-| `handlers/process.py` | `launch_app` (via `os.startfile`, so a UAC-manifested exe can actually elevate), `process_toggle` (start/stop the configured VPN), `force_stop` (derives a process name from the *original* item's type and params). |
+| `handlers/process.py` | `launch_app` (detached CreateProcess first, `os.startfile` fallback so a UAC-manifested exe can actually elevate; expands `%VAR%` in paths, optional raw `args`), `open_url` (scheme allowlist, handed to `rundll32 url.dll,FileProtocolHandler` through the same detached spawn), `process_toggle` (start/stop the configured VPN), `force_stop` (derives a process name from the *original* item's type and params). |
+| `handlers/apps.py` | Studio queries, not tile actions: `list_apps` (Start Menu `.lnk` → exe path + args, plus Store apps as `%SystemRoot%\explorer.exe shell:AppsFolder\<AppID>`, read by a PowerShell child and cached 60 s) and `fetch_icon` (a site's icon → 64 px PNG data URI; HTTP/HTTPS-only opener, size caps, Google s2 fallback). Both run on the receive-loop thread -- a worker thread let garbage collection release pycaw's COM pointers off-thread and crashed the frozen agent (0xC0000005). DNS goes through a 2 s bounded lookup with GC paused. |
 | `handlers/screenshot.py` | `screenshot` — grabs the primary monitor with `mss`, converts to a CF_DIB (a BMP with its 14-byte file header sliced off) and puts it on the **PC's own clipboard**. |
 | `start_agent.bat` | The launcher. Creates the desktop shortcut and icon on first run; `pause`s only on a non-zero exit, so a window left open means the agent crashed and the text in it is the error. |
 | `install_task.ps1` / `uninstall_task.ps1` | Register/remove an "IT-Deck Agent" logon Scheduled Task, always as the interactive user. Per `CLAUDE.md` the task is **disabled on both PCs** and is not what runs the agent. |
@@ -122,11 +123,15 @@ state snapshot every second.
 | `js/app.js` | Boot: fetch workspaces, resolve which deck to show (`localStorage` → `?workspace=` → selector), render, wire WebSocket callbacks, map tagged failures to actionable messages. Ends with the empty `touchstart` listener iOS needs for `:active`. |
 | `js/api.js` | REST fetches plus per-item `params` JSON parsing. Tags each failure kind (`unreachable`, `status`, `badReply`, `badParams`). |
 | `js/ws.js` | Client WebSocket: connect/reconnect with backoff (1 s → 30 s), `sendExecute`, `sendSetValue`, manual `req_id` generation, and the in-flight bookkeeping that turns raw result frames into per-tile `pending`/`ok`/`error` phases. |
-| `js/render.js` | Every DOM write: grid and tiles, the icon table, the WCAG ink calculation, the volume slider's pointer + keyboard handling, live state → colour/fill/subtitle, command-feedback classes, the workspace selector, the error state. |
+| `js/render.js` | Every DOM write: grid, quick-launch bar and tiles, the icon table and `tileIconFor()` (glyph / brand logo / text / site-icon image), the WCAG ink calculation, the volume slider's pointer + keyboard handling, live state → colour/fill/subtitle, command-feedback classes, the workspace selector, the error state. |
 | `js/studio.js` | Studio controller: loading, the agent token dialog + `api()` helper (drops the token on any 401), workspace/mode pickers, compaction, the VPN setup card. |
 | `js/studio-inspector.js` | Studio's editor panel, generated from the catalog (type cards, setup fields, appearance, size, "More settings" JSON for unmanaged keys). |
 | `js/studio-preview.js` | Studio's deck preview: real `.tile` markup + live widgets, `+` free cells, drag-to-move. |
 | `js/studio-i18n.js` | Studio EN/RU strings by `navigator.language`; keys must exist in both. |
+| `js/studio-guide.js` | Studio's built-in guide dialog (7 sections, pictures in `img/guide/`, EN/RU). Opens itself once (`itdeck:studio-guide-seen`). |
+| `js/brand-icons.js` | One-colour brand logos (Simple Icons, CC0) for `icon = "brand:<key>"`. No Russian services, by the author's decision. |
+| `js/onboarding.js`, `css/onboarding.css` | The phone's first-run tour, once per device (`itdeck:onboarded`), its own small EN/RU table. |
+| `img/guide/` | Guide pictures: shared ones at the top, Studio screenshots per language in `en/` and `ru/`. Bundled into the exe with the rest of `frontend/`. |
 | `js/tile-catalog.js` | What tile types exist and what each needs configured. Must agree with agent `HANDLERS`, `WIDGETS`, `ICONS` and db.py seeds. |
 | `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item) -> destroy`), `clock-weather.js`. |
 | `css/widgets.css`, `css/studio.css` | Widget layout (currentColor only, container queries); Studio's glass panels and forms. |
@@ -135,7 +140,7 @@ state snapshot every second.
 | `js/contextmenu.js` | The long-press dialog (Force Stop / Cancel), `role="dialog" aria-modal="true"`, focus restored on dismiss. |
 | `js/toast.js` | One shared `role="status"` element, 3500 ms, newest message wins. |
 | `css/base.css` | The palette tokens (`--color-*`, `--tile-default-color`, `--color-scrim`), page/body rules, reduced-motion block. Linked by **both** pages. |
-| `css/grid.css` | Dashboard only. Pins `html, body` (kills iOS rubber-band), makes `body` a flex column so `#grid` has real height, sizes explicit **and implicit** tracks. |
+| `css/grid.css` | Dashboard only. Pins `html, body` (kills iOS rubber-band), makes `body` a flex column so `#deck` → `#grid` has real height, sizes explicit **and implicit** tracks, and lays out the quick-launch bar (`#dock`: a row under the grid in portrait, a column on the left in landscape). |
 | `css/button.css` | The tile: the `--tile-state-color` resolution, `--tile-ink`, the sheen, the slider fill, and the four external-condition modifiers. |
 | `css/themes.css` | The three themes that need blocks — Flat is the base stylesheets untouched and has none. Linked from `index.html` only. |
 | `css/contextmenu.css`, `css/toast.css` | The two overlays. |
@@ -191,11 +196,16 @@ No `CHECK` constraint backs `grid_cols`, so `compact_workspace` clamps it with
 | `state_key` | TEXT | Names the polled state value that colours the tile |
 | `press_count` | INTEGER NOT NULL DEFAULT 0 | Bumped by `execute`, never by `set_value` |
 | `last_pressed` | TEXT | `datetime('now')` |
+| `dock` | INTEGER NOT NULL DEFAULT 0 | 1 = in the quick-launch bar, not the grid. Then `col` is the place in the bar (0–6, `DOCK_MAX` = 7), `row` is 0 and the tile is a 1×1 action. Added by `init_db()` with `ALTER TABLE` when `PRAGMA table_info` lacks it — a schema step keyed on the column's absence, not a value fixup |
 
 **Icon keys registered in `render.js`:** `lightbulb`, `music`, `moon`,
 `terminal`, `mic`, `speaker`, `headphones`, `audio-switch`, `camera`,
-`shield`. Icon markup is module-authored SVG only — `item.icon` is used as a
-lookup key and never interpolated into `innerHTML`.
+`shield`, `power`, `globe`. Plus three more kinds (v0.5.0), all through
+`tileIconFor()`: `brand:<key>` (a logo from `js/brand-icons.js`), `text`
+(draws `params.icon_text`, up to 3 characters, via `textContent`) and `image`
+(draws `params.icon_img`, a `data:image/png;base64,` URI ≤ 24 000 chars, via
+`<img src>`). Icon markup is module-authored SVG only — `item.icon` is used as
+a lookup key and never interpolated into `innerHTML`.
 
 **`params` keys recognised somewhere in the codebase today:**
 
@@ -210,6 +220,9 @@ lookup key and never interpolated into `innerHTML`.
 | `false_color` | `render.js` | Inline `--tile-state-color` on the false side of a boolean |
 | `output_device_primary` / `output_device_secondary` | `handle_audio_switch` | SoundVolumeView Command-Line Friendly IDs; both present ⇒ A/B toggle |
 | `process_name` | `handle_force_stop` | Explicit override for the derived name |
+| `args` | `handle_launch_app` | Raw command-line arguments appended after the quoted path (Discord's `--processStart Discord.exe`) |
+| `url` | `handle_open_url` | The address an `open_url` tile opens; http/https or an allowlisted app scheme |
+| `icon_text`, `icon_img` | `render.js` `tileIconFor()` | The text or site icon for `icon = "text"` / `"image"`; Studio writes only the one the chosen icon kind uses |
 | `city`, `lat`, `lon`, `show_seconds` | `widgets/clock-weather.js` | Clock & weather widget: display name, coordinates (no weather without both), seconds tick |
 
 Nothing validates *which* keys a given `type` understands. `params` is checked
@@ -297,13 +310,15 @@ Every endpoint in `backend/app/` and `backend/app/api/**`.
 | `PUT /api/settings/theme` | **none** | `{"theme": "<slug>"}` | `{"theme": "<slug>"}`; `422` if not in the allowlist. Broadcasts `settings_update` |
 | `PUT /api/settings/mode` | **none** | `{"mode": "auto"\|"light"\|"dark"}` | `{"mode": "<value>"}`; `422` otherwise. Broadcasts `settings_update`. Written by Studio's "Deck background" picker; unauthenticated for the same reason the theme is (§7) |
 | `GET /api/items/{id}` | `X-Agent-Token` | — | The item row, or `404` |
-| `POST /api/items` | `X-Agent-Token` | `ItemCreate` (`workspace_id`, `row`, `col`, `width`=1, `height`=1, `label`, `icon?`, `color`=`#2a2f38`, `kind`, `type`, `target`=`windows`, `params`=`"{}"`, `state_key?`) | The created row. `400` on bad params JSON, bad placement, or FK failure. Broadcasts `workspace_update` |
+| `POST /api/items` | `X-Agent-Token` | `ItemCreate` (`workspace_id`, `row`, `col`, `width`=1, `height`=1, `label`, `icon?`, `color`=`#2a2f38`, `kind`, `type`, `target`=`windows`, `params`=`"{}"`, `state_key?`, `dock`=false) | The created row. `400` on bad params JSON, bad placement, or FK failure. Broadcasts `workspace_update` |
 | `PUT /api/items/{id}` | `X-Agent-Token` | `ItemUpdate` — every field optional, `exclude_unset` so *omitted* ≠ *explicit null* | The updated row. Placement is re-checked against the **merged** rectangle, not just the submitted fields. `400` if nothing to update. Broadcasts `workspace_update` |
 | `DELETE /api/items/{id}` | `X-Agent-Token` | — | `{"status": "ok"}`, or `404`. Broadcasts `workspace_update` |
 | `POST /api/workspaces` | `X-Agent-Token` | `{"name", "grid_cols"=3, "grid_rows"=5}` | The created workspace; `position` is assigned server-side. Broadcasts `workspace_update` |
 | `POST /api/workspaces/{id}/compact` | `X-Agent-Token` | — | The full re-packed item list. `404` if the workspace is missing. Broadcasts `workspace_update` |
 | `POST /api/screenshot` | `X-Agent-Token` | `multipart/form-data`, `file` — must declare `image/png`, ≤ 10 MB | `{"status":"ok","filename":"YYYYmmdd_HHMMSS.png"}`; `400` wrong type, `413` too large. Filename comes from the **server clock**, never from `file.filename` |
 | `POST /api/agents/{agent_name}/list_devices` | `X-Agent-Token` | — | The agent's reply **verbatim**: `{"status":"ok","devices":[{name,id,direction,is_default,is_active}]}`. `404` agent offline, `504` no reply in 5 s |
+| `POST /api/agents/{agent_name}/list_apps` | `X-Agent-Token` | — | Verbatim: `{"status":"ok","apps":[{name,path,args}]}` — Start Menu shortcuts that point at an existing `.exe`. Same `404`/`504` |
+| `POST /api/agents/{agent_name}/fetch_icon` | `X-Agent-Token` | `{"url": "<http(s) address>"}` (≤ 2048) | Verbatim: `{"status":"ok","icon":"data:image/png;base64,…"}` (64 px). The **agent** makes the outbound requests, never the backend. Same `404`/`504` |
 | `GET /api/widgets/weather?lat&lon` | **none** | — | `{temp, code, is_day, min, max, updated_at, stale}` normalized from Open-Meteo. Coordinates snapped to 0.01° *before* the upstream URL is built; 10 min fresh cache, stale served ≤6 h on failure, else `502`; ≤64 cache entries. Unauthenticated because the phone calls it (it holds only `CLIENT_TOKEN`) |
 | `GET /api/widgets/geocode?q&lang` | `X-Agent-Token` | — | Up to 8 `{name, admin1, country, lat, lon}`; `502` if the geocoder is unreachable (Studio then offers manual coordinates) |
 | `/` and everything else | none | — | Static frontend, `html=True` |
@@ -704,7 +719,17 @@ item`, because "offline" is a statement about an agent that is *not* in
 `hub.agents`) immediately after the initial `state` push. No new frame type,
 so an older client ignores nothing and sees nothing new.
 
-**Sizing.** The time is the widest thing on the screen and `white-space:
+**The face (v0.5.0).** In the takeover the clock tile drops its card in every
+theme (`#grid.clock-takeover .tile.clock-takeover-tile` — the id outranks each
+theme's `[data-theme] .tile` surface) and the text time is swapped for a
+seven-segment SVG face `clock-weather.js` builds from the formatted time
+(unlit segments at 7 % opacity, a colon that blinks unless motion is reduced;
+AM/PM stays text). The text time stays in the DOM as the accessible one. The
+quick-launch bar is hidden for as long as the takeover lasts
+(`body.deck-takeover`), and its tiles count toward "which agents does this
+deck need".
+
+**Sizing (text face, still used on an ordinary tile).** The time is the widest thing on the screen and `white-space:
 nowrap` means an overshoot clips rather than wraps, so the full-screen size is
 split by character count: `mountClockWeather()` publishes `.wc-seconds` on the
 tile, and `23:04:31` (eight characters) is sized smaller than `23:04` (five).
@@ -1028,9 +1053,16 @@ If either raises, `gather` propagates to `main()`'s reconnect loop, which tears
 down and retries with exponential backoff (1 s, doubling, capped at 30 s; reset
 to 1 s whenever a connection succeeded).
 
-`HANDLERS` today: `launch_app`, `audio_mute_toggle`, `audio_volume_set`,
-`audio_switch`, `list_devices`, `screenshot`, `process_toggle`, `force_stop`,
-`agent_shutdown`.
+`HANDLERS` today: `launch_app`, `open_url`, `audio_mute_toggle`,
+`audio_volume_set`, `audio_switch`, `list_devices`, `list_apps`, `fetch_icon`,
+`screenshot`, `process_toggle`, `force_stop`, `agent_shutdown`.
+
+`open_url` refuses any scheme outside `OPEN_URL_SCHEMES` (http, https and the
+app links the Studio presets use: discord, tg, steam, spotify, zoommtg, slack,
+ms-settings) with a message, so `file:`, `ms-msdt:` and friends never reach
+ShellExecute. It launches through `_spawn_detached(rundll32, "url.dll,
+FileProtocolHandler <url>")` rather than `os.startfile` so the breakaway flags
+of §10.4a apply: a browser opened from the deck outlives IT-Deck.
 
 `force_stop` is the one handler called with two arguments — it receives
 `item_type` alongside `params`, because it derives a process name from the
@@ -1323,7 +1355,7 @@ just goes half-dead. The launcher therefore supervises the agent itself.
 
 | Agent exit code | Means | Supervisor | `start_agent.bat` (legacy) |
 | --- | --- | --- | --- |
-| `0` | `agent_shutdown` tile pressed (`os._exit(0)`) | leave it stopped | closes the window |
+| `0` | `agent_shutdown` tile pressed (`os._exit(0)`) | leave it stopped — until **Start the agent** in the window (v0.5.0) sets `agent_start_requested`, which the loop turns into an immediate spawn with a reset backoff and mutex budget | closes the window |
 | `3` | `EXIT_ALREADY_RUNNING` — another agent holds the singleton mutex | leave it stopped | **pauses**, keeping the message readable |
 | anything else | crash | respawn with backoff | pauses |
 
@@ -1469,6 +1501,13 @@ steps**, not a list of facts:
    reveal button with a sentence saying what it is for.
 3. **When you're done here** -- what Minimize and Quit actually do, and where
    the logs are.
+
+Since v0.5.0 the window also has a **first-run tour**: four pages laid over
+the finished window with `place()` (no second window — nothing in it can
+destroy the info window), shown by itself when `config.env` did not exist at
+launch, and from the header's **Tutorial** button afterwards. The
+"agent is not running" line carries a **Start the agent** button, so the Close
+Agent tile is no longer a one-way door.
 
 The shape is the fix for a real report: two bare URLs, a 32-character token
 and a path told a new user on a second PC nothing, least of all that the VPN

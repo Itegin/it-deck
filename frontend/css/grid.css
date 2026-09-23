@@ -125,3 +125,101 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* ── The deck and the quick-launch bar ──────────────────────────────────────
+   #deck takes over the flex slot #grid used to have under the header, and
+   passes it on: flex: 1 and min-height: 0 at every level, or the 0px row
+   collapse described above comes straight back.
+
+   The bar (#dock) holds up to seven 1x1 buttons (backend DOCK_MAX). It never
+   scrolls -- same rule as the grid -- so the squares shrink with the screen
+   instead. Portrait: a row under the grid. Landscape: a column on the left.
+   No env(safe-area-inset-*) here: body already pads by the notch and the
+   home indicator (base.css), and adding them again left ~100px of empty
+   space beside the bar on a real iPhone held sideways. With no bar items it is hidden and the deck
+   is exactly what it was before the bar existed. */
+#deck {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#dock {
+  /* --dock-count is written by render.js: a short bar gets full-size keys,
+     and only a full one shrinks toward the 44px touch minimum. */
+  --dock-size: clamp(44px, calc((100vw - 24px - (var(--dock-count, 7) - 1) * 10px) / var(--dock-count, 7)), 64px);
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 12px 12px;
+  flex: none;
+}
+
+#dock[hidden],
+body.deck-takeover #dock {
+  display: none;
+}
+
+#dock .dock-tile {
+  flex: none;
+  width: var(--dock-size);
+  height: var(--dock-size);
+  padding: 0;
+  border-radius: 16px;
+}
+
+/* Icon only in the bar; the label is the tile's aria-label. A tile with no
+   icon keeps its label, shrunk, so it is never a blank square. */
+#dock .dock-tile:has(.icon) .label {
+  display: none;
+}
+
+#dock .dock-tile .icon {
+  width: 52%;
+  height: 52%;
+  margin: 0;
+}
+
+#dock .dock-tile .label {
+  font-size: 11px;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  padding: 0 4px;
+}
+
+/* The grid's own bottom padding is enough gap above the bar. */
+body.has-dock:not(.deck-takeover) #grid {
+  padding-bottom: 10px;
+}
+
+@media (orientation: landscape) {
+  #deck {
+    flex-direction: row;
+  }
+
+  #dock {
+    --dock-size: clamp(44px, calc((100vh - 110px - (var(--dock-count, 7) - 1) * 10px) / var(--dock-count, 7)), 64px);
+    order: -1;
+    flex-direction: column;
+    justify-content: center;
+    padding: 12px 0 12px 12px;
+  }
+
+  /* In a row the grid fills the height directly: auto block margins on a
+     flex item in the cross axis would size it to its content, which with
+     container-type: size tiles is nothing. */
+  #deck > #grid {
+    flex: 1;
+    min-width: 0;
+    margin-block: 0;
+    max-height: none;
+  }
+
+  body.has-dock:not(.deck-takeover) #grid {
+    padding-bottom: var(--grid-pad);
+    padding-left: 10px;
+  }
+}

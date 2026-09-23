@@ -1,5 +1,6 @@
 import { attachLongPress } from "./longpress.js";
 import { mountWidget, destroyWidgets } from "./widgets/index.js";
+import { BRAND_ICONS } from "./brand-icons.js";
 
 const SLIDER_THROTTLE_MS = 100;
 
@@ -49,7 +50,69 @@ export const ICONS = {
   // seeds icon='power' and there was no such key, so the Close Agent tile
   // rendered label-only next to eight tiles that all carry a glyph.
   power: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`,
+  // The Website tile's default: any site, no brand implied.
+  globe: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>`,
 };
+
+// item.icon values beyond a plain ICONS key. Studio writes exactly these.
+export const ICON_TEXT = "text";
+export const ICON_IMAGE = "image";
+export const BRAND_PREFIX = "brand:";
+
+// A site icon as the agent's fetch_icon returns it: a small PNG data URI.
+// Anything else in params.icon_img is ignored -- it only ever reaches an
+// <img src>, never markup, but a deck does not render what Studio would not
+// have written.
+const ICON_IMG_PATTERN = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+const ICON_IMG_MAX = 24000;
+
+// Exported so Studio's preview accepts exactly what the deck will draw.
+export function isIconImage(value) {
+  return typeof value === "string" && value.length <= ICON_IMG_MAX && ICON_IMG_PATTERN.test(value);
+}
+
+// Up to three user-perceived characters, so "TG" or a flag emoji both fit.
+export function iconText(value) {
+  return Array.from(String(value || "").trim()).slice(0, 3).join("");
+}
+
+// The .icon element for a tile, or null when it has none. Shared with
+// Studio's preview so both draw the same four kinds of icon:
+//   - an ICONS key (stroke glyphs above)
+//   - "brand:<key>" -> BRAND_ICONS (filled logos, js/brand-icons.js)
+//   - "text"  -> params.icon_text, as text
+//   - "image" -> params.icon_img, a site icon, as an <img>
+// Only module-authored SVG goes through innerHTML; user values go through
+// textContent and img.src.
+export function tileIconFor(item) {
+  const key = item.icon || "";
+  const params = item.params || {};
+  const icon = document.createElement("div");
+  icon.className = "icon";
+  if (ICONS[key]) {
+    icon.innerHTML = ICONS[key];
+  } else if (key.startsWith(BRAND_PREFIX) && BRAND_ICONS[key.slice(BRAND_PREFIX.length)]) {
+    icon.classList.add("icon-brand");
+    icon.innerHTML = BRAND_ICONS[key.slice(BRAND_PREFIX.length)];
+  } else if (key === ICON_TEXT && iconText(params.icon_text)) {
+    icon.classList.add("icon-text");
+    const text = document.createElement("span");
+    text.textContent = iconText(params.icon_text);
+    icon.appendChild(text);
+  } else if (
+    key === ICON_IMAGE &&
+    isIconImage(params.icon_img)
+  ) {
+    icon.classList.add("icon-image");
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = params.icon_img;
+    icon.appendChild(img);
+  } else {
+    return null;
+  }
+  return icon;
+}
 
 // The two inks a tile's content can be drawn in: base.css's --color-text, and
 // --color-surface reused as a dark ink. Literals for the same reason the
@@ -133,8 +196,25 @@ function setHeaderWorkspace(name) {
   document.getElementById("workspace-name").textContent = name ? `IT-Deck ${name}` : "IT-Deck";
 }
 
+// The quick-launch bar: 1x1 action tiles outside the grid (item.dock), in
+// the order of their `col`. css/grid.css puts it under the grid in portrait
+// and down the left side in landscape. Emptied and hidden by every screen
+// that isn't a deck, so a picker or an error never shows stale buttons.
+function resetDock(show) {
+  const dock = document.getElementById("dock");
+  if (!dock) {
+    return null;
+  }
+  dock.innerHTML = "";
+  dock.hidden = !show;
+  document.body.classList.toggle("has-dock", Boolean(show));
+  return dock;
+}
+
 export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLongPress) {
   const grid = document.getElementById("grid");
+  const gridItems = workspace.items.filter((item) => !item.dock);
+  const dockItems = workspace.items.filter((item) => item.dock).sort((a, b) => a.col - b.col);
 
   setHeaderWorkspace(workspace.name);
 
@@ -157,7 +237,7 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // such an item now lands in an explicit 1fr track instead of an implicit
   // auto one. grid.css keeps its grid-auto-rows guard regardless; this path is
   // not the only thing that could ever create an implicit track.
-  const occupiedRows = workspace.items.reduce(
+  const occupiedRows = gridItems.reduce(
     // `|| 1` because item.height is nullable in the schema (DEFAULT 1, no NOT
     // NULL); one null row would otherwise make the whole count NaN and empty
     // the track template.
@@ -172,12 +252,16 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // but not its timers. See js/widgets/index.js.
   destroyWidgets();
   grid.innerHTML = "";
+  const dock = resetDock(dockItems.length > 0);
+  if (dock) {
+    dock.style.setProperty("--dock-count", Math.max(dockItems.length, 1));
+  }
 
   const widgets = [];
 
   const appended = [];
 
-  for (const item of workspace.items) {
+  for (const item of [...gridItems, ...dockItems]) {
     const isSlider = item.kind === "action" && item.width >= 2 && item.type === "audio_volume_set";
     // A real <button> for anything you can actually press, so focusability,
     // the button role and Enter/Space activation come from the browser rather
@@ -219,8 +303,16 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
       delete tile.dataset.falseColor;
     }
 
-    tile.style.gridColumn = `${item.col + 1} / span ${item.width}`;
-    tile.style.gridRow = `${item.row + 1} / span ${item.height}`;
+    if (item.dock) {
+      tile.classList.add("dock-tile");
+      // The bar shows the icon alone (css/grid.css), so the name has to be
+      // stated for screen readers and as a hover hint.
+      tile.setAttribute("aria-label", item.label);
+      tile.title = item.label;
+    } else {
+      tile.style.gridColumn = `${item.col + 1} / span ${item.width}`;
+      tile.style.gridRow = `${item.row + 1} / span ${item.height}`;
+    }
     tile.style.setProperty("--tile-color", item.color);
     // Per-item active/alert theming -- optional params keys. Written only when
     // the item actually carries one, which is the fix, not a tidy-up: this used
@@ -260,10 +352,8 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
       setSliderValue(tile, 0);
     }
 
-    if (ICONS[item.icon]) {
-      const icon = document.createElement("div");
-      icon.className = "icon";
-      icon.innerHTML = ICONS[item.icon];
+    const icon = tileIconFor(item);
+    if (icon) {
       tile.appendChild(icon);
     }
 
@@ -305,7 +395,7 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
       });
     }
 
-    grid.appendChild(tile);
+    (item.dock && dock ? dock : grid).appendChild(tile);
     appended.push(tile);
     if (item.kind === "widget") {
       widgets.push([tile, item]);
@@ -532,6 +622,7 @@ export function renderWorkspaceSelector(workspaces, onSelect) {
 
   destroyWidgets();
   grid.innerHTML = "";
+  resetDock(false);
   // The picker has no clock and no action tiles, so this only ever clears the
   // takeover -- but leaving the class behind would hide every deck in the
   // list while the agent is away, which is precisely when someone might be
@@ -705,8 +796,9 @@ function updateClockTakeover() {
   // runs after every render, and "which agents does this deck depend on" is a
   // property of what is currently drawn. A deck of pure widgets has no
   // targets and therefore never counts as agent-down.
+  // The quick-launch bar counts too: its buttons need the agent just as much.
   const targets = new Set(
-    [...grid.querySelectorAll('.tile[data-kind="action"]')].map((tile) => tile.dataset.target)
+    [...document.querySelectorAll('#grid .tile[data-kind="action"], #dock .tile')].map((tile) => tile.dataset.target)
   );
   const everyAgentAway = targets.size > 0 && [...targets].every((t) => offlineAgents.has(t));
 
@@ -717,6 +809,8 @@ function updateClockTakeover() {
   const takeover = Boolean(clock) && reason !== null;
 
   grid.classList.toggle("clock-takeover", takeover);
+  // The bar's buttons can't do anything either while the clock has the screen.
+  document.body.classList.toggle("deck-takeover", takeover);
 
   // Which clock, marked on the tile itself: a deck is allowed more than one
   // clock widget, and "the tile that fills the screen" has to be exactly one
@@ -792,6 +886,7 @@ export function renderError(message) {
   const grid = document.getElementById("grid");
   destroyWidgets();
   grid.innerHTML = "";
+  resetDock(false);
   // The clock this deck may have been showing has just been wiped with
   // everything else, so the takeover has nothing left to be about.
   updateClockTakeover();

@@ -97,9 +97,17 @@ Studio can add two more: **Clock & weather** (the phone's own time and date
 plus the weather for a city you pick — Open-Meteo, no API key) and **Program
 on/off**, which starts a program or closes it if it is already running.
 
+**Quick launch.** **Open a website** opens any address in the PC's browser
+(one-tap presets for Telegram Web, Discord, YouTube, ChatGPT and more), and
+**Open an app** picks a program straight from the PC's Start Menu. They go to
+the **quick-launch bar**: up to seven square buttons along the bottom of an
+upright phone, or down the left side of a sideways one. Icons can be a
+symbol, a logo, a few letters or the site's own icon.
+
 When the PC end goes away — the agent closed, or IT-Deck itself — every tile
 becomes a button that can't do anything, so the clock widget takes the whole
-screen and keeps showing the time until the PC comes back. The deck restores
+screen as a seven-segment clock and keeps showing the time until the PC comes
+back. The deck restores
 itself; there is nothing to switch.
 
 The look is two settings: the **theme** (Flat, Pastel, Glossy, Liquid Glass),
@@ -113,6 +121,8 @@ preview of the deck on the left, an editor on the right: you pick what a tile
 does from cards instead of typing command names and JSON, audio devices come
 from the list the agent reports, and **Compact layout** closes the gaps.
 English or Russian, following the browser. The phone never edits the catalog.
+**Guide** in the top bar is a short illustrated how-to, and it opens by itself
+the first time.
 
 ### Configuring the VPN tile
 

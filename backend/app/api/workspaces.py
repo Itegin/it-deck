@@ -90,7 +90,8 @@ async def compact_workspace(workspace_id: int, x_agent_token: str | None = Heade
         # without it sqlite's order between them is unspecified and repeat
         # calls could shuffle them.
         item_rows = conn.execute(
-            "SELECT * FROM item WHERE workspace_id = ? ORDER BY row, col, id",
+            # Grid tiles only: the quick-launch bar has no gaps to close.
+            "SELECT * FROM item WHERE workspace_id = ? AND dock = 0 ORDER BY row, col, id",
             (workspace_id,),
         ).fetchall()
 
