@@ -46,5 +46,11 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "searchfit-seo@synced": false,
+    "product-management@synced": false,
+    "searchfit-seo@inline": false,
+    "product-management@inline": false
   }
 }
