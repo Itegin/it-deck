@@ -436,7 +436,19 @@ validates `status`:
 The unknown-command reply omits `item_id` — one of several paths that do,
 which is why the client correlates on `req_id` and never on `item_id`.
 
-**Agent → backend**, polled state, sent every tick regardless of change:
+**Backend → agent**, whether anyone is watching the deck:
+
+```json
+{"type": "watchers", "active": false}
+```
+
+Sent to each agent as it connects, and to all agents when the first
+`/ws/client` socket arrives or the last one leaves (`ConnectionHub.sync_watchers`).
+The agent reads state only while `active` is true. Commands are unaffected.
+An older agent ignores the frame, and an agent that never receives it keeps
+polling.
+
+**Agent → backend**, polled state, sent every tick (while watched) regardless of change:
 
 ```json
 {"type": "state", "data": {"mic.muted": false, "speaker.volume": 34,

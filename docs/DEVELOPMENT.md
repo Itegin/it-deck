@@ -384,6 +384,20 @@ IT-Deck. `os.startfile` is the fallback, for UAC elevation.
 **State readers** (`poller.READERS`) are read one by one. A failing key is
 skipped and logged once, not every second.
 
+- **They pause while no Dashboard is connected** (the `watchers` frame,
+  §7). A PC nobody is looking at does no polling at all.
+- **The VPN check** (`handlers/process.py` `ProcessWatch`):
+  - it remembers the PID once the VPN is found, and checks that PID
+    directly;
+  - while the VPN isn't running, it walks the process list every 3 s
+    instead of every second;
+  - a launch from the deck triggers an immediate look.
+
+**Priority.** The agent's own thread runs below normal, so a game in the
+foreground always wins the CPU. Only the thread is lowered, not the
+process: Windows passes a below-normal *process* class on to the programs
+it starts, and a game launched from a tile must run at normal priority.
+
 **Shutdown.**
 - The `agent_shutdown` command replies `ok`, waits 0.2 s, then `os._exit(0)`.
   Exit code 0 is not respawned.
@@ -410,6 +424,7 @@ not close the socket.
 ← {"cmd": "launch_app", "item_type": "launch_app", "params": {"path": "wt.exe"}, "req_id": "1725800000000-k3n9x", "item_id": 7}
 ← {"cmd": "audio_volume_set", "params": {"device": "speaker", "value": 42}, "req_id": "…", "item_id": 5}
 ← {"cmd": "list_apps", "params": {}, "req_id": "api-1725800000000-a1b2c3d4"}
+← {"type": "watchers", "active": false}   // no Dashboard connected: pause state reads
 → {"type": "result", "req_id": "1725800000000-k3n9x", "item_id": 7, "status": "ok"}
 → {"type": "result", "req_id": "…", "item_id": 7, "status": "error", "message": "…"}
 → {"type": "state", "data": {"mic.muted": false, "speaker.volume": 34, "vpn.running": false}}
@@ -421,6 +436,15 @@ not close the socket.
   agents on one name, only the newer one receives commands, and both write
   state into the same keys.
 - A result's extra keys ride along (`devices`, `apps`, `icon`).
+- `watchers` tells the agent whether any Dashboard is connected.
+  - When it is sent: to each agent as it connects, and again whenever the
+    first phone (or PC browser) arrives or the last one leaves.
+  - What the agent does: it reads audio and VPN state only while
+    `active` is true, and reads at once when a viewer arrives.
+  - What keeps working: commands, including Studio's queries, because they
+    never pause.
+  - Compatibility, both ways: an older agent ignores the frame, and a newer
+    agent keeps polling against a backend that never sends it.
 
 ### `/ws/client` (the phone)
 
@@ -556,7 +580,9 @@ for f in $(find frontend/js -name '*.js'); do node --check "$f"; done
   running agent keeps executing old code.
 - **Commit**: use small, focused commits. The version lives in
   `standalone/launcher.py` `ITDECK_VERSION` and is bumped in the same commit
-  as a `v*.*.*` tag. The tag makes CI attach `ITDeck.exe`.
+  as a `v*.*.*` tag. A tag only builds the exe (kept as a CI artifact);
+  publishing a release is a manual workflow run (CONTRIBUTING.md,
+  "Releasing").
 
 ---
 
@@ -681,6 +707,9 @@ inside the container.
 | SQLite in WAL + `synchronous=NORMAL` | readers never block the writer; no fsync per press |
 | The `/api/workspaces` read does 2 queries, no N+1 | the whole catalog in one round trip |
 | Per-frame logs at DEBUG, 5 MB log rotation, Docker log caps | logs stay useful and bounded |
+| State reads pause while no Dashboard is connected (`watchers`) | an idle IT-Deck costs next to nothing |
+| Backend process and agent thread below normal priority | games keep their frame rate when the CPU is contended |
+| VPN state from a remembered PID, rescanned every 3 s when absent | no process-list walk every second |
 | Static files with `no-cache` + ETag | an update applies on reload at 304 cost |
 
 ---

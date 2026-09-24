@@ -196,11 +196,14 @@ that one on the phone.
 | --- | --- |
 | this file | What IT-Deck is, how to install and run it |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | **For developers:** set up in three commands, the checks to run, the rules that are easy to break, how a release is made |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | How it works and how to extend it: architecture diagrams, the WebSocket protocol, debugging, step-by-step recipes |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Why it is built this way — the decisions, including the ones kept for compatibility |
 | [`docs/IT-Deck_Tech_Reference.md`](docs/IT-Deck_Tech_Reference.md) | The full reference — architecture, schema, API, protocol, tiles, themes, the agent, **standalone mode (§10)** and known tech debt |
-| [`tests/`](tests) | Backend API, agent and frontend tests — run on every push by GitHub Actions |
+| [`tests/`](tests) | Backend, WebSocket, database, agent and frontend tests — run on Linux and Windows for every pull request |
 | [`docs/legacy-server.md`](docs/legacy-server.md) | The pre-v0.3.0 setup: backend in Docker on a separate server, plus the Ansible playbook |
 | [`CLAUDE.md`](CLAUDE.md) | Working notes for Claude Code sessions: the rules and the things that are easy to break |
 
 ## Status
 
-v0.5.1 — personal project, active development, API may change.
+v0.5.2 — personal project, active development, API may change.

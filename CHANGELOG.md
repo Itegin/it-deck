@@ -9,10 +9,16 @@ standalone mode is §10, tech debt is §12.
 
 ## Unreleased
 
-A full audit of backend, agent, frontend, launcher and infrastructure. No
-feature was removed and nothing changes for a deck that was already working;
-the fixes are for the situations below. Details: `docs/ARCHITECTURE.md` and
-the Tech Reference §3, §5, §12.
+---
+
+## v0.5.2 — 2026-09-24
+
+Internal milestone; published together with later work as v0.5.6.
+
+A full audit of the backend, agent, frontend, launcher and infrastructure. No
+feature was removed. Nothing changes for a deck that was already working; the
+fixes are for the situations below. Details are in `docs/ARCHITECTURE.md` and
+the Tech Reference §3, §5 and §12.
 
 ### Bug fixes
 
@@ -58,6 +64,12 @@ the Tech Reference §3, §5, §12.
 
 ### Performance
 
+- **IT-Deck stays out of a game's way.**
+  - While no phone or PC browser has the deck open, the agent stops reading
+    audio and VPN state. It starts again the moment one connects.
+  - The backend and the agent's working thread run at below-normal priority.
+    Programs launched from a tile still start at normal priority.
+- The VPN tile's state no longer walks the process list every second.
 - `backend.log` no longer gets a line every second from the agent's state
   updates (tens of MB a day). The launcher rolls each log to `.1` past 5 MB.
 - The SQLite `synchronous=NORMAL` setting now applies to every connection,
@@ -73,6 +85,13 @@ the Tech Reference §3, §5, §12.
 
 ### Infrastructure
 
+- **A pushed version tag no longer publishes anything.**
+  - It builds the exe and keeps it as a workflow artifact, and builds the
+    Docker image without pushing it.
+  - Releases are published by running the workflow by hand.
+    `scripts/check_release.py` refuses a release whose version isn't bumped.
+- CI gains a fast Linux job: ruff, pytest and the frontend checks.
+  `pyproject.toml` holds the ruff and pytest settings.
 - Docker: a `HEALTHCHECK`, a `.dockerignore`, and log rotation in
   `docker-compose.yml`. Successful health probes are not logged.
 - `check.sh` updated for the quieter log.
@@ -83,11 +102,13 @@ the Tech Reference §3, §5, §12.
 
 - New: the WebSocket endpoints (including the reconnect race), the startup
   fixups on scratch databases, agent dispatch, input validation, and a check
-  that the theme lists agree everywhere they are copied. 31 → 54 Python
+  that the theme lists agree everywhere they are copied. 31 → 59 Python
   tests, 5 → 6 frontend tests.
 
 ### Documentation
 
+- New `CONTRIBUTING.md` (setup, checks, rules, releasing), linked from both
+  READMEs.
 - New `docs/DEVELOPMENT.md` (quick start, architecture, protocol, debugging,
   extension recipes) and `docs/ARCHITECTURE.md` (decision records).
 

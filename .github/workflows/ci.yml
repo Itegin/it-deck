@@ -1,9 +1,12 @@
 name: Tests
 
-# Every push to main and every pull request: the backend API, the agent's
-# pure checks and the frontend's pure logic. Windows, because the agent's
-# modules import pywin32/pycaw at the top and only install there -- the same
-# reason release.yml builds on windows-latest.
+# Every push to main and every pull request, two jobs:
+#
+# - lint-and-test (Linux): ruff, the full pytest suite and the frontend
+#   checks. Fast feedback; every test module imports without Windows (the
+#   agent's Windows-only imports live in agent.py and inside functions).
+# - test (Windows): the same suite against the real pinned agent
+#   dependencies (pywin32, pycaw, comtypes), the environment the exe ships.
 on:
   push:
     branches: [main]
@@ -13,6 +16,42 @@ permissions:
   contents: read
 
 jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The backend's pins plus the two agent libraries its pure tests
+      # import, at agents/windows/requirements.txt's versions (keep in step);
+      # pywin32/pycaw don't install on Linux and aren't needed here.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt Pillow==12.3.0 psutil==7.2.2
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Python tests
+        run: python -m pytest -q
+
+      - name: Every frontend module parses
+        run: find frontend/js -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Frontend tests
+        run: node --test tests/frontend.test.mjs
+
   test:
     runs-on: windows-latest
     steps:

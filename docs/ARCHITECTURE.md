@@ -225,3 +225,29 @@ One install produced tens of megabytes a day.
 
 **Consequences.** `check.sh` now counts `State changed` lines instead of raw
 frames. An idle PC can legitimately show none.
+
+## ADR-14 Read state only while someone is watching; stay below the foreground
+
+**Context.**
+- The agent read audio and VPN state every second forever, even with no
+  phone connected.
+- The backend and agent ran at normal priority beside games.
+- The ask was that IT-Deck never cost a game frames.
+
+**Decision.**
+- The backend tells each agent whether any Dashboard is connected, with a
+  `{"type": "watchers", "active": bool}` frame. It sends one on each
+  agent's connect and on the first-viewer and last-viewer transitions. The
+  agent's poller waits while `active` is false.
+- The backend process starts at `BELOW_NORMAL_PRIORITY_CLASS`.
+- The agent lowers only its **thread**. Child processes inherit a
+  below-normal process class, and programs launched from a tile must not.
+- The VPN check remembers the process's PID instead of walking every
+  process each second.
+
+**Consequences.**
+- An unwatched IT-Deck is idle apart from socket keepalives.
+- When the phone connects, the backend's snapshot may be stale for one
+  tick; the agent's immediate read replaces it within milliseconds.
+- The frame is optional in both directions, so mixed versions keep
+  working.
