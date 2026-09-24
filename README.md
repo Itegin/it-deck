@@ -10,12 +10,13 @@ actually doing.
 
 | The deck, on your phone | Studio, on the PC |
 | --- | --- |
-| <img src="docs/screenshots/dashboard.png" alt="The IT-Deck deck on a phone: a clock and weather widget, the Mic tile red while muted, Volume at 62 %, Audio Switch showing the current device, VPN lit while it runs, and the quick-launch bar along the bottom: Telegram, Discord, YouTube, Chrome, Claude" width="300"> | ![Studio: a live preview of the deck next to the editor for a Website tile, with one-tap presets for popular sites](docs/screenshots/studio.png) |
+| <img src="docs/screenshots/dashboard.png" alt="The IT-Deck deck on a phone: two dots for two decks, a clock and weather widget, the Mic tile red while muted, Volume at 62 %, Audio Switch showing the current device, VPN lit while it runs, a PC-load widget with CPU, RAM and network speed, a VALORANT tile, and the quick-launch bar along the bottom: Telegram, Discord, YouTube, Steam, Claude" width="300"> | ![Studio: a live preview of the deck next to the editor for an app tile, VALORANT, with logos of popular apps, games and launchers; the top bar has Decks, Access and What's new](docs/screenshots/studio.png) |
 
 The tiles report real state, not just clicks: above, the microphone is
 **muted** (red), volume sits at **62 %**, Audio Switch names the **current
-output device**, and **VPN is lit** because the client is running. Along the
-bottom is the **quick-launch bar** — sites and programs one tap away (it moves
+output device**, **VPN is lit** because the client is running, and the
+**PC-load widget** shows CPU, memory and network speed. The dots at the top
+are **decks**: swipe to the next one. Along the bottom is the **quick-launch bar** — sites and programs one tap away (it moves
 to the left side when the phone is sideways). **Studio** (right) is where the
 deck is built — click a tile in the live preview to edit it, `+` to add one,
 drag to move.
@@ -34,7 +35,7 @@ Python on that machine.
    run it. The first time, a short tour walks you through setup; after that
    this window stays open:
 
-   <img src="docs/screenshots/window.png" alt="The IT-Deck window, in Studio's dark glass style: a header saying IT-Deck is running, step 1 with a QR code, the link, Copy link and New phone PIN, step 2 opening Studio, step 3 explaining Minimize and Quit with Start IT-Deck with Windows; Tutorial replays the first-run tour" width="518">
+   <img src="docs/screenshots/window.png" alt="The IT-Deck window, in Studio's dark glass style: a header saying IT-Deck is running, step 1 with a QR code, the link, Copy link and New phone PIN, step 2 opening Studio, step 3 explaining Minimize and Quit with Start IT-Deck with Windows; Tutorial replays the first-run tour" width="535">
 
 2. **Point your phone's camera at the QR code**, on the same Wi-Fi. That is
    the only required step — the token is in the link, and the phone keeps it.
