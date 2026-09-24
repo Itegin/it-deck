@@ -390,6 +390,29 @@ const APP_BRANDS = [
   ["chatgpt", "chatgpt"],
   ["claude", "claude"],
   ["twitch", "twitch"],
+  // Games and launchers, by the names their Start menu shortcuts carry.
+  // Never a bare short needle ("ea" is inside "steam" and "realtek").
+  ["valorant", "valorant"],
+  ["league of legends", "leagueoflegends"],
+  ["riot client", "riotgames"],
+  ["counter-strike", "counterstrike"],
+  ["dota 2", "dota2"],
+  ["pubg", "pubg"],
+  ["fortnite", "fortnite"],
+  ["roblox", "roblox"],
+  ["genshin", "mihoyo"],
+  ["honkai", "mihoyo"],
+  ["zenless", "mihoyo"],
+  ["hoyoplay", "mihoyo"],
+  ["rockstar", "rockstargames"],
+  ["grand theft auto", "rockstargames"],
+  ["faceit", "faceit"],
+  ["epic games", "epicgames"],
+  ["battle.net", "battlenet"],
+  ["ea app", "ea"],
+  ["ubisoft", "ubisoft"],
+  ["gog galaxy", "gog"],
+  ["playstation", "playstation"],
 ];
 
 export function brandForApp(name) {

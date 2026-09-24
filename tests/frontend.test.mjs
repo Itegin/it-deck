@@ -113,3 +113,25 @@ test("every catalog tile has a handler, an icon and its strings (CLAUDE.md: keep
     }
   }
 });
+
+test("game logos: launchers and games map to their marks", () => {
+  assert.equal(brandForApp("VALORANT"), "brand:valorant");
+  assert.equal(brandForApp("Counter-Strike 2"), "brand:counterstrike");
+  assert.equal(brandForApp("Genshin Impact"), "brand:mihoyo");
+  assert.equal(brandForApp("EA app"), "brand:ea");
+  assert.equal(brandForApp("Battle.net"), "brand:battlenet");
+  // A bare "ea" would have caught these.
+  assert.equal(brandForApp("Realtek Audio Console"), null);
+  assert.equal(brandForApp("Steam"), "brand:steam");
+});
+
+test("every logo is one 24-unit path, and every app mapping has a logo", () => {
+  for (const [key, markup] of Object.entries(BRAND_ICONS)) {
+    assert.match(markup, /^<svg viewBox="0 0 24 24" fill="currentColor"[^>]*><path d="[^"<>]+"\/><\/svg>$/, key);
+  }
+  const source = readFileSync(new URL("../frontend/js/tile-catalog.js", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("const APP_BRANDS"), source.indexOf("export function brandForApp"));
+  for (const [, key] of block.matchAll(/\["[^"]+", "([^"]+)"\]/g)) {
+    assert.ok(BRAND_ICONS[key], `APP_BRANDS points at missing logo ${key}`);
+  }
+});
