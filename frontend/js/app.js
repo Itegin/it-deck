@@ -1,15 +1,78 @@
 import { fetchWorkspaces } from "./api.js";
-import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
+import { renderWorkspace, renderWorkspaceSelector, renderError, renderDeckDots, markDeckEntrance, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
 import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onConnectionChange, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
 import { initTheme, applyTheme, applyMode } from "./theme.js";
-import { showContextMenu } from "./contextmenu.js";
+import { showContextMenu, showTextSheet } from "./contextmenu.js";
 import { showToast } from "./toast.js";
 import { maybeShowOnboarding } from "./onboarding.js";
+import { attachDeckSwipe } from "./swipe.js";
 
 // Device-local "which workspace does this deck show" choice. Deliberately
 // not part of any server state -- multiple phones can point at different
 // workspaces from the same backend.
 const STORAGE_KEY = "itdeck:workspaceId";
+
+// localStorage throws, rather than returning null, when site data is blocked
+// or in some private modes. The saved deck is a convenience: without it the
+// deck still draws, it just asks (or picks the only one) again.
+function readSavedWorkspace() {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveWorkspace(id) {
+  try {
+    if (id === null) {
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, String(id));
+    }
+  } catch (e) {
+    // Not saved; this visit still shows the chosen deck.
+  }
+}
+
+// The rows of the deck on screen, by id, for the tap handler below: it needs
+// a tile's type and params, and render.js hands it only the id.
+let itemsById = new Map();
+
+// Types whose "Run?" row is red: the ones a mis-tap can't take back.
+const DESTRUCTIVE_TYPES = new Set(["power", "process_toggle", "agent_shutdown"]);
+
+// Same cap as the agent's (agents/windows/handlers/clipboard.py).
+const CLIPBOARD_MAX_CHARS = 100000;
+
+// A tap: most tiles just run, but two kinds ask first.
+function handleTileTap(itemId) {
+  const item = itemsById.get(itemId);
+  if (!item) {
+    sendExecute(itemId);
+    return;
+  }
+  if (item.type === "clipboard_set") {
+    showTextSheet(item, {
+      placeholder: "Text to put on the PC's clipboard",
+      sendLabel: "Send to PC",
+      cancelLabel: "Cancel",
+      maxLength: CLIPBOARD_MAX_CHARS,
+      onSubmit: (text) => sendSetValue(itemId, text, { track: true }),
+    });
+    return;
+  }
+  // "Ask before running" (Studio): Run / Cancel first. Power, a program
+  // on/off and Close Agent have it on by default -- tech debt #21.
+  if (item.params && item.params.confirm) {
+    showContextMenu(item, [
+      { label: "Run", destructive: DESTRUCTIVE_TYPES.has(item.type), action: () => sendExecute(itemId) },
+      { label: "Cancel", action: () => {} },
+    ]);
+    return;
+  }
+  sendExecute(itemId);
+}
 
 function handleTileLongPress(item) {
   showContextMenu(item, [
@@ -69,29 +132,73 @@ function describeCommandFailure(itemId, message) {
   }
 }
 
+// The decks from the last fetch, in order, and which one is on screen: what
+// a swipe moves through.
+let deckList = [];
+let currentDeckId = null;
+
 function loadWorkspace(workspace) {
-  renderWorkspace(workspace, sendExecute, sendSetValue, handleTileLongPress);
+  itemsById = new Map(workspace.items.map((item) => [item.id, item]));
+  currentDeckId = workspace.id;
+  renderWorkspace(workspace, handleTileTap, sendSetValue, handleTileLongPress);
+  renderDeckDots(deckList, workspace.id, (target, index) => showDeck(target, index));
   // First deck this device has ever shown: the tour, once.
   maybeShowOnboarding();
 }
 
+// Moves to another deck and remembers it, as picking it from the list does.
+// No wrap-around: at the last deck a swipe further does nothing, which is
+// what the dots already say.
+function showDeck(target, index) {
+  const from = deckList.findIndex((w) => w.id === currentDeckId);
+  if (!target || target.id === currentDeckId) {
+    return;
+  }
+  saveWorkspace(target.id);
+  loadWorkspace(target);
+  markDeckEntrance(index > from ? 1 : -1);
+}
+
+function switchDeck(step) {
+  // Only from a deck: on the picker or an error screen there is no "next".
+  if (currentDeckId === null) {
+    return;
+  }
+  const index = deckList.findIndex((w) => w.id === currentDeckId) + step;
+  if (index >= 0 && index < deckList.length) {
+    showDeck(deckList[index], index);
+  }
+}
+
 function showSelector(workspaces) {
+  currentDeckId = null;
   renderWorkspaceSelector(workspaces, (workspace) => {
-    localStorage.setItem(STORAGE_KEY, String(workspace.id));
+    saveWorkspace(workspace.id);
     loadWorkspace(workspace);
   });
 }
 
+// Which init() is the latest. Two Studio saves in quick succession start two
+// fetches, and they can answer out of order; only the newest may draw, or the
+// deck would settle on the older catalog.
+let initSeq = 0;
+
 async function init() {
+  const seq = ++initSeq;
   try {
     const workspaces = await fetchWorkspaces();
+    if (seq !== initSeq) {
+      return;
+    }
+    deckList = workspaces;
 
     if (!workspaces.length) {
+      currentDeckId = null;
       renderError("The backend has no workspaces yet, so there's nothing to show.");
       return;
     }
 
-    const savedId = localStorage.getItem(STORAGE_KEY);
+    const savedId = readSavedWorkspace();
     let workspace = workspaces.find((w) => String(w.id) === savedId);
 
     if (!workspace) {
@@ -101,7 +208,7 @@ async function init() {
       const requestedId = new URLSearchParams(window.location.search).get("workspace");
       workspace = workspaces.find((w) => String(w.id) === requestedId);
       if (workspace) {
-        localStorage.setItem(STORAGE_KEY, String(workspace.id));
+        saveWorkspace(workspace.id);
       }
     }
 
@@ -120,15 +227,20 @@ async function init() {
       showSelector(workspaces);
     }
   } catch (err) {
-    renderError(describeLoadFailure(err));
+    if (seq === initSeq) {
+      currentDeckId = null;
+      renderError(describeLoadFailure(err));
+    }
   }
 }
 
 init();
 
+attachDeckSwipe(document.getElementById("deck"), switchDeck);
+
 document.getElementById("switch-workspace-link").addEventListener("click", (event) => {
   event.preventDefault();
-  localStorage.removeItem(STORAGE_KEY);
+  saveWorkspace(null);
   const url = new URL(window.location.href);
   url.searchParams.delete("workspace");
   history.replaceState({}, "", url);

@@ -1,11 +1,11 @@
 import json
 import logging
-import os
 import sqlite3
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from app.auth import check_agent_token
 from app.db import get_connection
 from app.models import get_item
 from app.ws.hub import hub
@@ -54,34 +54,31 @@ class ItemUpdate(BaseModel):
 # would shrink below a comfortable finger target on a 375pt-wide phone.
 DOCK_MAX = 7
 
-
-def _check_agent_token(x_agent_token: str | None) -> None:
-    # Same shared-secret gate as backend/app/api/screenshot.py, applied to
-    # every endpoint here: this surface controls what commands the agent
-    # will execute, which is more sensitive than a screenshot upload, not
-    # less. One helper, not four copies of the check, so a future fix
-    # only has to happen in one place.
-    expected_token = os.environ.get("AGENT_TOKEN")
-    # "not expected_token" guards against AGENT_TOKEN being unset entirely:
-    # without it, a missing env var (None) would equal a missing header
-    # (None) and silently let an unauthenticated request through.
-    if not expected_token or x_agent_token != expected_token:
-        raise HTTPException(status_code=401, detail="missing or invalid X-Agent-Token")
+# The ItemUpdate fields a PUT may explicitly set to null.
+NULLABLE_FIELDS = frozenset({"icon", "color", "state_key"})
 
 
-def _validate_params_json(params: str) -> None:
+
+def validate_params_json(params: str) -> None:
     # A malformed params string would crash every future handler that
     # tries to json.loads() it (backend _handle_execute, frontend
     # fetchWorkspaces) -- reject it here, at the one place items are
     # actually written, rather than let it become a landmine for whoever
     # reads this row next.
+    #
+    # An object specifically, not just any JSON: every reader spreads or
+    # indexes it by key ({**params, "value": ...} in ws/client.py,
+    # item.params.url in the deck), and "[1]" or "3" parse fine and then
+    # break each of those.
     try:
-        json.loads(params)
+        parsed = json.loads(params)
     except (json.JSONDecodeError, TypeError):
         raise HTTPException(status_code=400, detail="params must be a valid JSON string")
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="params must be a JSON object")
 
 
-def _validate_placement(
+def validate_placement(
     conn: sqlite3.Connection,
     workspace_id: int,
     row: int,
@@ -104,7 +101,7 @@ def _validate_placement(
     # Nothing checked this before, so Studio could write it and only the deck
     # would ever show it. Checked here rather than in the frontend because
     # this is the one place items are actually written -- the same reasoning
-    # _validate_params_json above already states.
+    # validate_params_json above already states.
     if dock:
         _validate_dock_placement(conn, workspace_id, row, col, width, height, item_id, kind)
         return
@@ -202,7 +199,7 @@ def _validate_dock_placement(
 
 @router.get("/api/items/{item_id}")
 def get_item_endpoint(item_id: int, x_agent_token: str | None = Header(None)) -> dict:
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
     item = get_item(item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -211,12 +208,12 @@ def get_item_endpoint(item_id: int, x_agent_token: str | None = Header(None)) ->
 
 @router.post("/api/items")
 async def create_item(item: ItemCreate, x_agent_token: str | None = Header(None)) -> dict:
-    _check_agent_token(x_agent_token)
-    _validate_params_json(item.params)
+    check_agent_token(x_agent_token)
+    validate_params_json(item.params)
 
     conn = get_connection()
     try:
-        _validate_placement(
+        validate_placement(
             conn, item.workspace_id, item.row, item.col, item.width, item.height,
             dock=item.dock, kind=item.kind,
         )
@@ -249,7 +246,7 @@ async def create_item(item: ItemCreate, x_agent_token: str | None = Header(None)
 
 @router.put("/api/items/{item_id}")
 async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None = Header(None)) -> dict:
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
     existing = get_item(item_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -258,8 +255,14 @@ async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None 
     # distinguishes "field omitted" from "field explicitly set to null"
     # (e.g. clearing icon or state_key), which a plain None-check can't.
     fields = item.model_dump(exclude_unset=True)
+    # Only icon, color and state_key may be cleared. Every other column is
+    # NOT NULL or feeds the placement arithmetic below, where an explicit
+    # null used to surface as a 500 (None < 1) instead of a 400.
+    nulled = sorted(key for key, value in fields.items() if value is None and key not in NULLABLE_FIELDS)
+    if nulled:
+        raise HTTPException(status_code=400, detail=f"these fields can't be null: {', '.join(nulled)}")
     if "params" in fields:
-        _validate_params_json(fields["params"])
+        validate_params_json(fields["params"])
 
     if not fields:
         raise HTTPException(status_code=400, detail="no fields to update")
@@ -279,7 +282,7 @@ async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None 
         placement = {key: existing[key] for key in ("workspace_id", "row", "col", "width", "height", "dock", "kind")}
         placement.update({key: fields[key] for key in placement if key in fields})
         placement["dock"] = bool(placement["dock"])
-        _validate_placement(conn, item_id=item_id, **placement)
+        validate_placement(conn, item_id=item_id, **placement)
 
         try:
             conn.execute(f"UPDATE item SET {set_clause} WHERE id = ?", values)
@@ -296,7 +299,7 @@ async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None 
 
 @router.delete("/api/items/{item_id}")
 async def delete_item(item_id: int, x_agent_token: str | None = Header(None)) -> dict:
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
     if get_item(item_id) is None:
         raise HTTPException(status_code=404, detail="item not found")
 

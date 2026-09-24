@@ -371,3 +371,74 @@
   letter-spacing: 0.02em;
   opacity: 0.7;
 }
+
+/* ── PC load ────────────────────────────────────────────────────────────── */
+/* Two meters and a line of network speed. The bar is currentColor on a
+   faint track of the same colour: the theme decides the colour, the fill
+   carries the number. */
+
+.widget-pc-stats .widget-body {
+  align-items: stretch;
+  gap: 5cqmin;
+}
+
+.widget-pc-stats .ps-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4cqmin;
+  font-size: 13px;
+  font-size: clamp(11px, 11cqmin, 20px);
+  font-weight: 600;
+}
+
+.widget-pc-stats .ps-name {
+  opacity: 0.75;
+}
+
+.widget-pc-stats .ps-track {
+  position: relative;
+  height: 6px;
+  height: clamp(4px, 5cqmin, 10px);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* The track is the fill's own colour, faint -- on a pseudo-element, because
+   opacity on .ps-track itself would dim the fill inside it too. */
+.widget-pc-stats .ps-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0.25;
+}
+
+.widget-pc-stats .ps-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: currentColor;
+  transition: width 400ms ease;
+}
+
+.widget-pc-stats .ps-value {
+  min-width: 3.2em;
+  text-align: right;
+}
+
+.widget-pc-stats .ps-net {
+  display: flex;
+  justify-content: space-between;
+  gap: 4cqmin;
+  font-size: 12px;
+  font-size: clamp(10px, 9cqmin, 16px);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget-pc-stats .ps-fill {
+    transition: none;
+  }
+}

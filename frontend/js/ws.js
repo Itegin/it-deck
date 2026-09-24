@@ -101,6 +101,10 @@ function acquireToken() {
 
 let socket = null;
 let backoff = 1000;
+// The pending reconnect, if the socket is down and waiting out its backoff.
+// Kept so reconnectNow() can cut the wait short -- and so it can tell "down
+// and waiting" (act) from "up, or already connecting" (leave alone).
+let reconnectTimer = null;
 
 // readyState === OPEN is no longer sufficient to mean "this socket may carry
 // commands": between open and the server's verdict on the hello frame there is
@@ -150,9 +154,17 @@ function connect() {
     clientToken = acquireToken();
   }
   authenticated = false;
-  socket = new WebSocket(`ws://${location.host}/ws/client`);
+  // wss on an https page: through the TLS reverse proxy the Ansible playbook
+  // installs, a plain ws:// from an https:// page is blocked as mixed content
+  // and the deck never connects.
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  // Every handler below closes over this local, not the module-level
+  // `socket`: an event that arrives late on an old socket must never act on
+  // the one that replaced it.
+  const ws = new WebSocket(`${scheme}//${location.host}/ws/client`);
+  socket = ws;
 
-  socket.addEventListener("open", () => {
+  ws.addEventListener("open", () => {
     notifyConnection(true);
     // Connection succeeded, so the next disconnect should start backing off
     // from scratch again instead of continuing to climb.
@@ -161,15 +173,24 @@ function connect() {
     // after HELLO_TIMEOUT without it. Sent from inside the open handler rather
     // than once at startup so every reconnect down the backoff ladder
     // re-authenticates on its own, with no extra bookkeeping.
-    socket.send(JSON.stringify({ type: "hello", token: clientToken }));
+    ws.send(JSON.stringify({ type: "hello", token: clientToken }));
   });
 
-  socket.addEventListener("message", (event) => {
+  ws.addEventListener("message", (event) => {
     // The server sends nothing before the hello is accepted, so the arrival of
     // any frame is itself the proof. No extra ack message needed.
     authenticated = true;
     authFailureCount = 0;
-    const message = JSON.parse(event.data);
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch (err) {
+      console.warn("[IT-Deck] ignoring a frame that is not JSON");
+      return;
+    }
+    if (!message || typeof message !== "object") {
+      return;
+    }
     if (message.type === "result") {
       settleRequest(message.req_id, message.status, message.message);
     } else if (message.type === "state") {
@@ -194,7 +215,7 @@ function connect() {
     }
   });
 
-  socket.addEventListener("close", (event) => {
+  ws.addEventListener("close", (event) => {
     // 4001 is the server's "your hello was rejected" (ws/client.py's
     // CLOSE_UNAUTHORIZED). Dropping the stored token on that code is what stops
     // a wrong secret from retrying itself forever: without it the reconnect
@@ -232,16 +253,43 @@ function connect() {
     // different thing to report than "the PC went away" and the branch above
     // may still be deciding which one this is.
     notifyConnection(false);
-    setTimeout(connect, backoff);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, backoff);
     backoff = Math.min(backoff * 2, MAX_BACKOFF);
   });
 
-  socket.addEventListener("error", () => {
-    socket.close();
+  ws.addEventListener("error", () => {
+    ws.close();
   });
 }
 
+// Skip the rest of the backoff and connect now. Only acts while a reconnect
+// is pending, so it can never open a second socket beside a live or
+// connecting one.
+function reconnectNow() {
+  if (reconnectTimer === null) {
+    return;
+  }
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  backoff = 1000;
+  connect();
+}
+
 connect();
+
+// A phone that was locked or in a pocket while the PC restarted has usually
+// climbed the backoff ladder to its 30s cap, and would sit on the offline
+// clock for up to that long after being picked up. Coming back into view, or
+// back onto the network, is exactly when to try again straight away.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    reconnectNow();
+  }
+});
+window.addEventListener("online", reconnectNow);
 
 // crypto.randomUUID() requires a secure context (HTTPS or localhost) and
 // this app is accessed over plain http://<lan-ip>:8000 from the phone, so
@@ -328,18 +376,25 @@ export function sendExecute(itemId, { overrideType } = {}) {
   trackRequest(reqId, itemId);
 }
 
-export function sendSetValue(itemId, value) {
+// A value for a tile: a slider's position (dozens per drag, fire-and-forget),
+// or with { track: true } a one-off like the Send-text tile's text, which gets
+// the same pending / ok / error feedback as a tap.
+export function sendSetValue(itemId, value, { track = false } = {}) {
   if (!socket || socket.readyState !== WebSocket.OPEN || !authenticated) {
     return;
   }
+  const reqId = generateReqId();
   socket.send(
     JSON.stringify({
       cmd: "set_value",
       item_id: itemId,
       value,
-      req_id: generateReqId(),
+      req_id: reqId,
     })
   );
+  if (track) {
+    trackRequest(reqId, itemId);
+  }
 }
 
 // Resolved per-item command feedback: {itemId, phase: "pending"|"ok"|"error",

@@ -1,0 +1,13 @@
+# Tool configuration only -- IT-Deck is not an installable package. The
+# backend, agent and launcher each keep their own requirements.txt, because
+# they ship separately (Docker image, exe) and pin different things.
+
+[tool.ruff]
+# The oldest interpreter any part runs on: a legacy agent may run on any
+# Python comtypes supports, and the code uses `X | None` annotations.
+target-version = "py310"
+# Claude Code tooling, not application code.
+extend-exclude = [".claude", ".agents"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

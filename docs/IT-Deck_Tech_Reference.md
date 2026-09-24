@@ -84,16 +84,20 @@ state snapshot every second.
 | File | Responsibility |
 | --- | --- |
 | `main.py` | Logging setup (`force=True`, or uvicorn's own dictConfig silences app loggers), `load_dotenv()`, the startup migration sequence, `/health`, `GET /api/workspaces`, both WebSocket routes, router registration, and the catch-all `StaticFiles` mount **last**. |
-| `config.py` | `SERVER_PORT` read from the environment. **Imported by nothing** — see §12. |
+| `config.py` | `SERVER_PORT` read from the environment. Imported only by `standalone/launcher.py` (`run_backend`); Docker's port is hardcoded in the Dockerfile — see §12. |
+| `auth.py` | The two shared-secret checks: `token_ok(env_var, presented)` (constant-time, fails closed on an unset variable) and `check_agent_token()` for routes. Every route and both WebSocket handshakes use it. |
 | `db.py` | `DB_PATH = /app/data/controlhub.db`, connection factory (`PRAGMA foreign_keys = ON` per connection), schema for `workspace` / `item` / `setting`, `seed_if_empty()`, and **seven** idempotent `fixup_*` migrations. |
 | `models.py` | `Item` / `Workspace` pydantic models and the query helpers `get_workspaces_with_items()`, `get_item()`, `bump_press_count()`. |
 | `state.py` | In-memory current-state snapshot plus diffing. `update_state()` returns only keys whose values actually changed; `get_state()` returns a copy. Not persisted — rebuilt from the agent's next poll tick. |
 | `pending.py` | Per-`req_id` timeout timers. `track(req_id, seconds, on_timeout)` schedules a synthetic failure; `resolve(req_id)` cancels it. Broadcast-only — it never hands a value back to one caller. |
 | `agent_requests.py` | The request/response half, deliberately separate from `pending.py`: an HTTP handler parks on an `asyncio.Future` keyed by `req_id` and gets the agent's actual reply dict back. |
+| `config_file.py` | `config_path()` (from `ITDECK_CONFIG_FILE`, standalone only) and `update_config()`, the line-preserving atomic writer for `config.env`. |
+| `api/access.py` | `GET/PUT /api/access`: read the phone token, change either token at runtime (see `docs/ARCHITECTURE.md` ADR-15). |
+| `ws/protocol.py` | What both sockets share: `receive_object()` (a frame → dict or `None`, never fatal), `accept_hello()` (5 s timeout, token check, close codes `4001`/`4008`). |
 | `ws/hub.py` | `ConnectionHub` module-level singleton: a `set` of client sockets, a `dict` of one socket per agent name, `broadcast_to_clients()`, `send_to_agent()`. |
 | `ws/agent.py` | `/ws/agent` — hello/token check *before* hub registration, result fan-out (cancel timer → resolve future → broadcast), state ingestion with agent-name namespacing. |
 | `ws/client.py` | `/ws/client` — initial full-state push, then `execute` / `set_value` dispatch, each with a 5-second timeout started only after the command actually reached an agent. |
-| `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`_validate_params_json`) **and** validates grid placement (`_validate_placement`). Every mutation broadcasts `workspace_update`. |
+| `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`validate_params_json`) **and** validates grid placement (`validate_placement`). Every mutation broadcasts `workspace_update`. |
 | `api/workspaces.py` | Token-gated `POST /api/workspaces` and `POST /api/workspaces/{id}/compact`. `_pack_items()` is a pure placement pass, kept DB-free so it can be exercised directly. |
 | `api/screenshot.py` | Token-gated `POST /api/screenshot` — PNG ≤ 10 MB written beside the DB under `data/screenshots/`, named from the server clock. **Retained but called by nothing** (see §12). |
 | `api/agents.py` | Token-gated request/response proxies to a connected agent, one shared `_ask_agent()`: `list_devices` (audio devices), `list_apps` (Start Menu programs) and `fetch_icon` (a site's icon). Replies verbatim, 5-second budget. **There is no agent-status endpoint** (agent status travels over the WebSocket only). |
@@ -103,11 +107,17 @@ state snapshot every second.
 
 | File | Responsibility |
 | --- | --- |
-| `agent.py` | Connects, sends `hello`, runs the receive loop and the poll loop under one `asyncio.gather`, reconnects with exponential backoff (1 s → 30 s cap). Owns `HANDLERS` and a `Global\ITDeckAgentSingleton` named mutex that stops two agents registering under one name. |
-| `poller.py` | Polls local state every **1 s** and pushes the whole snapshot unconditionally; the backend deduplicates. A transient audio-stack error skips the tick rather than dropping the connection. |
+| `agent.py` | Connects, sends `hello`, runs the receive loop and the poll loop together (whichever ends first cancels the other), reconnects with exponential backoff (1 s → 30 s cap, reset after a connection that held 10 s). Owns `HANDLERS` and a `Global\ITDeckAgentSingleton` named mutex that stops two agents registering under one name. |
+| `dispatch.py` | Frame → handler → result frame. Pure (no Windows imports), so it is tested on any OS. A bad frame, bad params or a raising handler becomes an error result, never a dropped connection. |
+| `poller.py` | Polls local state every **1 s** and pushes the snapshot unconditionally; the backend deduplicates. Each key is read on its own (`READERS`), so one failing source drops only its own key, and its error is printed once rather than every tick. |
 | `handlers/audio.py` | `audio_mute_toggle`, `audio_volume_set`, `audio_switch`, `list_devices`, plus the read functions the poller uses. Mute/volume go through pycaw's raw device enumerator; enumeration and switching shell out to the bundled `tools/SoundVolumeView.exe`. |
 | `handlers/process.py` | `launch_app` (detached CreateProcess first, `os.startfile` fallback so a UAC-manifested exe can actually elevate; expands `%VAR%` in paths, optional raw `args`), `open_url` (scheme allowlist, handed to `rundll32 url.dll,FileProtocolHandler` through the same detached spawn), `process_toggle` (start/stop the configured VPN), `force_stop` (derives a process name from the *original* item's type and params). |
 | `handlers/apps.py` | Studio queries, not tile actions: `list_apps` (Start Menu `.lnk` → exe path + args, plus Store apps as `%SystemRoot%\explorer.exe shell:AppsFolder\<AppID>`, read by a PowerShell child and cached 60 s) and `fetch_icon` (a site's icon → 64 px PNG data URI; HTTP/HTTPS-only opener, size caps, Google s2 fallback). Both run on the receive-loop thread -- a worker thread let garbage collection release pycaw's COM pointers off-thread and crashed the frozen agent (0xC0000005). DNS goes through a 2 s bounded lookup with GC paused. |
+| `handlers/input.py` | `send_keys` (a chord such as `ctrl+shift+m`) and `media_key`; `parse_keys()` is pure and tested. |
+| `handlers/power.py` | `power`: lock / sleep / restart / shutdown, scheduled 0.5 s after the reply. |
+| `handlers/clipboard.py` | `clipboard_set`: text from `set_value` onto the PC clipboard, capped at 100k characters. |
+| `handlers/system.py` | PC-load readers for the widget: `pc.cpu`, `pc.ram`, `pc.net_down`, `pc.net_up`. |
+| `config_file.py` | `current_token()`: the agent's token re-read from `config.env` on every connect. |
 | `handlers/screenshot.py` | `screenshot` — grabs the primary monitor with `mss`, converts to a CF_DIB (a BMP with its 14-byte file header sliced off) and puts it on the **PC's own clipboard**. |
 | `start_agent.bat` | The launcher. Creates the desktop shortcut and icon on first run; `pause`s only on a non-zero exit, so a window left open means the agent crashed and the text in it is the error. |
 | `install_task.ps1` / `uninstall_task.ps1` | Register/remove an "IT-Deck Agent" logon Scheduled Task, always as the interactive user. Per `CLAUDE.md` the task is **disabled on both PCs** and is not what runs the agent. |
@@ -133,7 +143,11 @@ state snapshot every second.
 | `js/onboarding.js`, `css/onboarding.css` | The phone's first-run tour, once per device (`itdeck:onboarded`), its own small EN/RU table. |
 | `img/guide/` | Guide pictures: shared ones at the top, Studio screenshots per language in `en/` and `ru/`. Bundled into the exe with the rest of `frontend/`. |
 | `js/tile-catalog.js` | What tile types exist and what each needs configured. Must agree with agent `HANDLERS`, `WIDGETS`, `ICONS` and db.py seeds. |
-| `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item) -> destroy`), `clock-weather.js`. |
+| `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item,ctx) -> destroy`, `ctx.onState` for live agent state), `clock-weather.js`, `pc-stats.js`. |
+| `js/swipe.js` | Horizontal swipe on the deck → next/previous deck (touch and pen only). |
+| `js/dom.js` | `el()`, the element builder Studio's dialogs share. |
+| `js/studio-access.js`, `js/studio-whats-new.js`, `js/studio-decks.js` | Studio's Access (tokens), What's new and Decks (export/import/templates) dialogs. |
+| `whats-new.json`, `templates/*.json` | The "What's new" notes (one entry per public version) and the deck templates. |
 | `css/widgets.css`, `css/studio.css` | Widget layout (currentColor only, container queries); Studio's glass panels and forms. |
 | `js/theme.js` | Fetch/PUT the theme, cycle it, apply it to `<html data-theme>`; derives the display label from the slug; re-validates every value against the allowlist before it reaches the DOM. |
 | `js/longpress.js` | 500 ms stationary hold → long press; movement past 10 px cancels. |
@@ -172,8 +186,8 @@ when it is on).
 | `id` | INTEGER PK | |
 | `name` | TEXT NOT NULL | Shown in the Dashboard header as `IT-Deck <name>` |
 | `position` | INTEGER NOT NULL | Sort order; `POST /api/workspaces` assigns `MAX(position)+1` |
-| `grid_cols` | INTEGER NOT NULL DEFAULT 3 | Enforced by `_validate_placement` |
-| `grid_rows` | INTEGER NOT NULL DEFAULT 5 | Enforced by `_validate_placement` |
+| `grid_cols` | INTEGER NOT NULL DEFAULT 3 | Enforced by `validate_placement` |
+| `grid_rows` | INTEGER NOT NULL DEFAULT 5 | Enforced by `validate_placement` |
 
 No `CHECK` constraint backs `grid_cols`, so `compact_workspace` clamps it with
 `max(1, ...)` — a 0 would make the placement scan spin forever.
@@ -250,6 +264,20 @@ row would make switching decks silently change how the app looks.
 `auto` | `light` | `dark` and is the *light/dark axis*, independent of the
 theme — see §7.
 
+### `schema_migration`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `name` | TEXT PRIMARY KEY | e.g. `day4_items`, `vpn_item`, `close_agent_item`, `audio_switch_state_key` |
+| `applied_at` | TEXT NOT NULL | `datetime('now')` when recorded |
+
+Added by the post-v0.5.1 audit. It records which **one-shot** fixups a
+database has already had, so a seeded tile the user deletes or renames stays
+that way (tech debt #24, now fixed). It is additive: older builds ignore it,
+and a database without it gets it from `init_db()`. `_already_applied()` and
+`_mark_applied()` in `db.py` are the whole interface. The mark is committed
+in the same transaction as the fixup's own writes.
+
 ### Seed and fixups
 
 `seed_if_empty()` inserts one workspace (`Home`, 3×5) and three placeholder
@@ -260,15 +288,15 @@ load-bearing:
 
 | # | Function | What it does | Idempotency guard |
 |---|---|---|---|
-| 1 | `fixup_remove_placeholder_tiles` | Deletes `Lights`, `Spotify`, `Sleep PC` — prototype types no handler implements | Plain `DELETE`; nothing to migrate them into |
+| 1 | `fixup_remove_placeholder_tiles` | Deletes `Lights`, `Spotify`, `Sleep PC` — prototype types no handler implements | Label **and** the dead type (`toggle` / `launch` / `run`). It used to be label-only, which deleted any user tile named "Spotify" |
 | 2 | `fixup_legacy_seed` | `Terminal` → `launch_app` + Windows Terminal params | `AND kind = 'action' AND type = 'launch'` for the type; params guarded on every default it has ever shipped |
-| 3 | `fixup_mic_item` | `Camera` → `Mic` / `audio_mute_toggle`, then backfills `params`/`icon` on the label it settles into | Label flip, then guards on the exact old values |
+| 3 | `fixup_mic_item` | `Camera` → `Mic` / `audio_mute_toggle`, then backfills `params`/`icon` on the label it settles into | `type = 'toggle'` on the flip (a user tile named "Camera" used to be converted), then guards on the exact old values |
 | 4 | `fixup_volume_item` | `Volume` → `audio_volume_set`, width 2, moved to (2,0) | `AND kind = 'action' AND type = 'run'` |
-| 5 | `fixup_day4_items` | Inserts `Headphones`, `Audio Switch`, `Screenshot` | Insert-if-label-missing. **Must run after #4** — Headphones takes the cell Volume's move vacates |
-| 6 | `fixup_vpn_item` | Inserts `VPN` at (3,1) | `WHERE NOT EXISTS`; `workspace_id` hardcoded to `1` (unlike #5's dynamic lookup) |
+| 5 | `fixup_day4_items` | Inserts `Headphones`, `Audio Switch`, `Screenshot` | **One-shot** (`schema_migration`), with insert-if-label-missing on that one run. **Must run after #4** — Headphones takes the cell Volume's move vacates |
+| 6 | `fixup_vpn_item` | Inserts `VPN` at (3,1) | **One-shot**, with `WHERE NOT EXISTS`; `workspace_id` hardcoded to `1` (unlike #5's dynamic lookup) |
 | 7 | `fixup_vpn_tile_type` | An unconfigured `process_toggle` VPN tile → `launch_app` | `AND type = 'process_toggle'` and no real params — a configured toggle is a deliberate setup |
-| 8 | `fixup_close_agent_item` | Inserts `Close Agent` in the first free cell below the occupied rows | Insert-if-label-missing; the cell is computed, never hardcoded |
-| 9 | `fixup_audio_switch_state_key` | Sets `Audio Switch`'s `state_key = speaker.device_name` | `AND state_key IS NULL` |
+| 8 | `fixup_close_agent_item` | Inserts `Close Agent` in the first free cell below the occupied rows | **One-shot** once the tile exists; a full grid is not recorded and retries next start. The cell is computed, never hardcoded |
+| 9 | `fixup_audio_switch_state_key` | Sets `Audio Switch`'s `state_key = speaker.device_name` | **One-shot**, `AND state_key IS NULL` (so a deliberately cleared key stays cleared) |
 | 10 | `fixup_toggle_off_colors` | Repaints `Mic` and `VPN` off-state colour to the neutral `#2a2f38` | Guarded on the exact colour being replaced. **Runs after the inserts** — it must see the rows they create |
 | 11 | `fixup_widget_types` | Repairs widget rows whose `type` #2 overwrote | `kind = 'widget' AND type = 'launch_app'`, a combination only that bug could produce. **Runs last** |
 
@@ -291,10 +319,10 @@ no longer an action is a row somebody deliberately turned into something
 else, whatever its other columns say.
 
 The fixups write to SQLite directly and therefore **bypass**
-`_validate_placement`; their placements are hand-verified in their own
-comments. The insert-if-label-missing ones (#5, #6, #8) also mean a seeded
-tile that is *renamed* comes back as a second tile on the next start — see
-§12.
+`validate_placement`; their placements are hand-verified in their own
+comments. The inserts (#5, #6, #8) used to decide by label on every start,
+so a seeded tile that was renamed or deleted came back; they are one-shot now
+(see `schema_migration` above).
 
 ---
 
@@ -338,7 +366,7 @@ Notes that matter:
   *request* failed (agent offline, no reply in time). A handler's own
   `{"status": "error"}` is a successful round-trip reporting a failed
   operation and comes back as a normal `200`.
-- **`_validate_placement`** rejects `width`/`height` < 1, negative `row`/`col`,
+- **`validate_placement`** rejects `width`/`height` < 1, negative `row`/`col`,
   a placement outside the workspace's `grid_cols`×`grid_rows`, and any
   rectangle intersection with another item in the same workspace. The reason is
   concrete: every tile is placed *explicitly*, and CSS Grid stacks
@@ -358,7 +386,10 @@ Notes that matter:
 
 ### `/ws/agent`
 
-First frame must be a hello, or the socket closes with code `4001`:
+First frame must be a hello within 5 s (`4008` otherwise), or the socket
+closes with code `4001`. Both sockets share this handshake and frame reader
+(`app/ws/protocol.py`). A later frame that is not a JSON object is logged and
+skipped, never fatal:
 
 ```json
 {"type": "hello", "agent": "windows", "version": "0.1.0", "token": "<AGENT_TOKEN>"}
@@ -367,7 +398,13 @@ First frame must be a hello, or the socket closes with code `4001`:
 The token is checked **before** hub registration, so a bad token never reaches
 the hub even for an instant. On success the backend broadcasts `agent_status`
 and registers the socket under `hello.agent` (default `"windows"`). One socket
-per agent name — a second registration logs a warning and overwrites the first.
+per agent name: a second registration replaces the first (the old socket is
+left for the server's keepalive to reap, so two PCs on one name can't evict
+each other in a loop).
+Unregistering checks socket identity, so the replaced socket's late cleanup
+can't remove the new one, and `offline` is only broadcast when the current
+socket leaves. Before this, an agent restart told every phone the agent was
+offline while it was connected.
 
 **Backend → agent**, from an `execute`:
 
@@ -410,7 +447,19 @@ validates `status`:
 The unknown-command reply omits `item_id` — one of several paths that do,
 which is why the client correlates on `req_id` and never on `item_id`.
 
-**Agent → backend**, polled state, sent every tick regardless of change:
+**Backend → agent**, whether anyone is watching the deck:
+
+```json
+{"type": "watchers", "active": false}
+```
+
+Sent to each agent as it connects, and to all agents when the first
+`/ws/client` socket arrives or the last one leaves (`ConnectionHub.sync_watchers`).
+The agent reads state only while `active` is true. Commands are unaffected.
+An older agent ignores the frame, and an agent that never receives it keeps
+polling.
+
+**Agent → backend**, polled state, sent every tick (while watched) regardless of change:
 
 ```json
 {"type": "state", "data": {"mic.muted": false, "speaker.volume": 34,
@@ -466,6 +515,15 @@ secret asks again instead of retrying itself forever.
 {"cmd": "set_value", "item_id": 5, "value": 42, "req_id": "..."}
 ```
 
+`override_type` is limited to `ALLOWED_OVERRIDES = {"force_stop"}` in
+`ws/client.py`. Anything else is answered `"command not allowed"`; before,
+a phone could send any agent command against any tile. Any other `cmd` is
+answered, to the asking socket only, with
+`{"type":"result","req_id":…,"status":"error","message":"unknown command: <cmd>"}`
+(it used to be dropped; tech debt #22). A non-integer `item_id` is
+`"item not found"`, and a row whose params are not a JSON object is
+`"tile settings are invalid"`.
+
 `execute` bumps `press_count`/`last_pressed`; `set_value` deliberately does
 not — a single slider drag fires it dozens of times, which would make the
 counter useless for measuring discrete presses.
@@ -473,7 +531,8 @@ counter useless for measuring discrete presses.
 Both check `item["target"] in hub.agents` *before* sending. A single
 persistent socket per agent means absence is a definitive answer, not a race,
 so a missing agent is answered synchronously with `"agent offline"` rather
-than left to time out.
+than left to time out. A send that fails gets the same answer at once, where
+it used to wait out the 5 s timeout.
 
 **Backend → client** — results and state diffs are broadcast to *every*
 connected client verbatim (the backend has no client identity to filter by, so
@@ -1042,16 +1101,20 @@ then hard-reload the phone.
 `agent.py` reads `SERVER_IP`, `AGENT_TOKEN`, `AGENT_NAME` (default `windows`)
 and `SERVER_PORT` (default `"8000"`) from `.env`, connects to
 `ws://<SERVER_IP>:<SERVER_PORT>/ws/agent`, sends the hello, then runs two
-coroutines under one `asyncio.gather` for the life of the connection:
+tasks for the life of the connection:
 
-- **`_receive_loop`** — for each frame, look up `cmd` in `HANDLERS`, call it,
-  send back `{"type":"result","req_id","item_id", **result}`. An unknown `cmd`
-  replies `unknown command: <cmd>` rather than silently dropping.
-- **`poll_loop`** — every second, build the state snapshot and send it.
+- **`dispatch.receive_loop`** — for each frame, look up `cmd` in `HANDLERS`,
+  call it, send back `{"type":"result","req_id","item_id", **result}`. An
+  unknown `cmd`, non-object params, a non-JSON frame or a handler that raises
+  all become an error result (or a skipped frame), never an exception.
+- **`poll_loop`** — every second, read each state key and send the snapshot.
 
-If either raises, `gather` propagates to `main()`'s reconnect loop, which tears
-down and retries with exponential backoff (1 s, doubling, capped at 30 s; reset
-to 1 s whenever a connection succeeded).
+Whichever ends first cancels the other, and the failure (if any) propagates
+to `main()`'s reconnect loop, which retries with exponential backoff (1 s,
+doubling, capped at 30 s). The backoff resets to 1 s after a connection that
+held for 10 s, so a backend restart is followed by a prompt retry, but a
+rejected token, which closes at once, keeps backing off. Before this it only
+reset on a clean close, and a backend restart could cost 30 s.
 
 `HANDLERS` today: `launch_app`, `open_url`, `audio_mute_toggle`,
 `audio_volume_set`, `audio_switch`, `list_devices`, `list_apps`, `fetch_icon`,
@@ -1506,6 +1569,36 @@ steps**, not a list of facts:
    reveal button with a sentence saying what it is for.
 3. **When you're done here** -- what Minimize and Quit actually do, and where
    the logs are.
+
+Since v0.5.6 the window is **dressed as Studio** (ARCHITECTURE ADR-17):
+Studio's dark Liquid Glass tokens in `_STUDIO_TOKENS`, composited by
+`_studio_palette()` and checked against the CSS by a test. The header is a
+panel like Studio's top bar. The steps are rounded panels with the accent
+number badge. The update notice is Studio's setup card (accent ring). Buttons
+are `.btn` / `.btn-primary` / `.btn-danger` with the accent focus ring. The
+rounded shapes are images made by `_rounded_png()` (Pillow, 4x supersampled)
+and stretched by ttk image elements. Every button is made by
+`glass_button(parent, kind, ...)`, which derives its style from `parent` so the
+style background (what shows around the rounded corners) matches what the
+button sits on. Without Pillow the window falls back to flat colours.
+
+The **tour and What's new overlays** (`open_overlay()`) sit on Studio's page
+background, not on flat black. `_ground_png()` paints `--color-bg` with the
+two pools from `themes.css` (`_STUDIO_POOLS`, verbatim, tested) and bakes the
+card into the same image. A ttk card would fill its corners with a flat
+colour, which shows as squares on a gradient. The card itself is nine-sliced
+from a small antialiased tile (`_nine_slice`); a full draw is about 24 ms and
+happens when the overlay opens, then again only after a window resize
+(debounced by 120 ms).
+
+The geometry holds still while the overlay is open:
+- the content is measured once against every page and fixed at the tallest;
+- Back is always packed, disabled on page 1, and sits to the left of the
+  main button;
+- the main button's width is the longer of its two labels.
+
+A page turn only swaps label text. Before this, each click resized the card
+and repacked buttons, and on Windows the relayout showed as a stutter.
 
 Since v0.5.0 the window also has a **first-run tour**: four pages laid over
 the finished window with `place()` (no second window — nothing in it can
@@ -2037,14 +2130,14 @@ Ordered roughly by how likely each is to bite.
    these ratios rather than adding new ones. *Fix shape: re-run
    `applyTileInk` against the scrim-composited colour when `.tile-offline`
    goes on and off.*
-8. **The theme allowlist lives in four places** with no test tying them
-   together, and missing the `index.html` boot copy raises no error at all —
-   it just flashes Flat on every load. The light/dark axis adds a second
-   three-place table (which ground each theme ships with), with the same
-   silent-failure shape. See §7.
-9. **Three placeholder tiles are not wired.** `Lights`, `Spotify`, `Sleep PC`
-   still carry the prototype types `toggle`, `launch`, `run`. Pressing one
-   returns `unknown command: <type>`.
+8. **The theme allowlist lives in four places.** It is now checked:
+   `tests/frontend.test.mjs` fails when `settings.py`, `theme.js`, the
+   `index.html` boot script and `themes.css` disagree on the slugs, or when the
+   two `MODES` lists do. The light/dark *native ground* table (§7) is still
+   unchecked.
+9. ~~**Three placeholder tiles are not wired.**~~ They are removed on
+   startup by `fixup_remove_placeholder_tiles` (§3), which now matches their
+   dead types as well as their labels.
 
 ### Deploy / operations
 
@@ -2058,11 +2151,9 @@ Ordered roughly by how likely each is to bite.
 11. **The deploy-ordering hazard** (frontend before backend ⇒ a new theme 422s
     and silently reverts) is structural, not a bug to fix: it follows directly
     from the image/bind-mount split. See §7.
-12. **Mixed content over the nginx proxy.** `js/ws.js` opens
-    `ws://${location.host}/ws/client` unconditionally. Correct on
-    `http://<ip>:8000`; through the TLS proxy Ansible installs, a plain `ws://`
-    from an `https://` page is blocked as mixed content. Only the direct HTTP
-    path works end to end today.
+12. ~~**Mixed content over the nginx proxy.** `js/ws.js` opened
+    `ws://${location.host}/ws/client` unconditionally.~~ **Fixed:** it uses
+    `wss:` on an https page.
 13. ~~**`ansible/site.yml` runs `docker compose up -d --build`,** but
     `docker-compose.yml` declares only `image:` and no `build:` context, so
     there is nothing for `--build` to build — the image always comes from
@@ -2076,7 +2167,8 @@ Ordered roughly by how likely each is to bite.
 ### Correctness / consistency
 
 14. **`SERVER_PORT` is read from `.env` by the agent only.**
-    `backend/app/config.py` reads it and **nothing imports `config.py`**; the
+    `backend/app/config.py` reads it and only the standalone launcher imports
+    it; the
     container's real port comes from the Dockerfile's hardcoded
     `uvicorn --port 8000` plus `docker-compose.yml`'s hardcoded mapping. That
     sits awkwardly against `CLAUDE.md`'s standing rule "SERVER_PORT must be
@@ -2115,15 +2207,12 @@ Ordered roughly by how likely each is to bite.
     route (§10.5, `_rank_address`). Root cause, confirmed live, was not
     Hyper-V but *this app's own VPN tile*: a running VPN owns the default
     route, so the UDP trick returned the tunnel's `172.16.0.1/30`.
-21. **`process_toggle` has no confirmation.** Correct state (§10.4) removes the
-    trap where the tile misreported "off" and a tap killed a running VPN, but a
-    genuine mis-tap still kills it. There is no undo and no confirm step.
-22. **Unknown `cmd` values on `/ws/client` are silently dropped.** The
-    handler matches `execute` and `set_value` and ignores anything else, so a
-    client that sends a typo (or the wrong shape for Force Stop, which is
-    `execute` plus `override_type`) waits for a result that will never come.
-    The shipped frontend never does this, so it costs users nothing — it cost
-    an hour of debugging exactly once, writing a test client by hand.
+21. ~~**`process_toggle` has no confirmation.**~~ **Fixed:** "Ask before
+    running" (`params.confirm`) shows Run / Cancel on the phone first, and is
+    on by default for new Program on/off, Power and Close agent tiles.
+    Existing tiles are unchanged until the option is ticked in Studio.
+22. ~~**Unknown `cmd` values on `/ws/client` are silently dropped.**~~
+    **Fixed:** answered with an error result to the asking socket (§5).
 23. **A stray white rectangle was reported on the desktop during real use.**
     Two plausible causes were removed in v0.3.1 without either being
     reproduced under observation: the Mica backdrop on the tkinter info window,
@@ -2131,15 +2220,20 @@ Ordered roughly by how likely each is to bite.
     minimized (§10.5). If it recurs, both hypotheses are wrong and the
     diagnosis starts over.
 
-24. **Renaming or deleting a seeded tile brings it back.** `fixup_day4_items`,
-    `fixup_vpn_item` and `fixup_close_agent_item` decide whether to insert by
-    looking for their own label, so a `Screenshot` renamed in Studio is a
-    *missing* `Screenshot` as far as the next startup is concerned, and a
-    second one is inserted — raw, bypassing `_validate_placement`, so it can
-    land on an occupied cell. The real fix is a record of which fixups a DB
-    has already had applied (a `schema_migration` table), so a one-shot insert
-    can be one-shot. The `kind = 'action'` guard added in §3 does not help
-    here: these are inserts, not updates.
+24. ~~**Renaming or deleting a seeded tile brings it back.**~~ **Fixed:** the
+    insert fixups are one-shot via the `schema_migration` table (§3). The same
+    audit fixed two worse relatives: `fixup_remove_placeholder_tiles` deleted
+    any tile labelled "Spotify" (or Lights / Sleep PC) on every start, and
+    `fixup_mic_item` converted any action tile labelled "Camera" into Mic.
+    Both are now guarded on the placeholder's dead type.
+25. **No application heartbeat on the phone socket.** A socket that iOS left
+    silently dead is only replaced when the page becomes visible again, the
+    network comes back, or the OS closes it. See `docs/ARCHITECTURE.md`
+    ADR-12 for why a ping/pong was not simply added (deploy ordering).
+26. **The weather endpoint is unauthenticated and not rate limited.** The
+    snapped cache bounds memory, not upstream traffic: a LAN caller sweeping
+    coordinates can keep threadpool workers busy on Open-Meteo fetches.
+    Accepted for a home LAN.
 
 ---
 
@@ -2148,6 +2242,8 @@ Ordered roughly by how likely each is to bite.
 | File | Holds |
 | --- | --- |
 | `README.md` | What the project is, standalone setup, the tiles, Studio, troubleshooting |
+| `docs/DEVELOPMENT.md` | The practical guide: quick start, architecture diagrams, the WebSocket protocol with examples, config, Docker, testing, debugging, and step-by-step extension recipes |
+| `docs/ARCHITECTURE.md` | Architecture decision records: why each structural choice was made, including the ones kept only for compatibility |
 | `README.ru.md` | The same page in Russian; the two are kept in step |
 | `docs/legacy-server.md` | Setup for the pre-v0.3.0 Docker-on-a-server deployment, and the Ansible playbook (moved out of the README) |
 | `CHANGELOG.md` | What changed in each tagged release, newest first |

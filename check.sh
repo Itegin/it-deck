@@ -35,6 +35,10 @@ LAST=$(docker compose logs --tail 500 backend 2>/dev/null | grep -E "Agent '.*' 
 if echo "$LAST" | grep -q "connected"; then y "Подключён"
 elif echo "$LAST" | grep -q "disconnected"; then n "Отключён — запусти python agent.py на Windows"
 else w "Не подключался с момента старта контейнера"; fi
-CNT=$(docker compose logs --tail 30 backend 2>/dev/null | grep -c "'type': 'state'")
-[ "$CNT" -gt 0 ] && y "Состояния идут ($CNT за последние 30 строк)" || w "Состояний в логе нет"
+# The backend logs a line only when a state value *changes* (mute, volume,
+# device...) -- the per-second tick itself is no longer logged -- so an idle
+# PC can legitimately show none here.
+CNT=$(docker compose logs --tail 500 backend 2>/dev/null | grep -c "State changed")
+[ "$CNT" -gt 0 ] && y "Изменения состояния видны ($CNT за последние 500 строк)" \
+    || w "Изменений состояния в логе нет (нормально, если на ПК ничего не меняли)"
 echo

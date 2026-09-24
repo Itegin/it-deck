@@ -1,12 +1,12 @@
 import asyncio
 import logging
-import os
 import secrets
 import time
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from app.auth import check_agent_token
 from app.agent_requests import create_future, discard_future
 from app.ws.hub import hub
 
@@ -18,17 +18,6 @@ router = APIRouter()
 # sent to an agent resolves within 5s -- ok, error, or timeout.
 AGENT_REQUEST_TIMEOUT = 5.0
 
-
-def _check_agent_token(x_agent_token: str | None) -> None:
-    # Same shared-secret gate as backend/app/api/items.py and workspaces.py:
-    # this route makes a connected agent do work and hands its answer back to
-    # the caller, so it gets the same gate as the rest of the Studio surface.
-    expected_token = os.environ.get("AGENT_TOKEN")
-    # "not expected_token" guards against AGENT_TOKEN being unset entirely:
-    # without it, a missing env var (None) would equal a missing header
-    # (None) and silently let an unauthenticated request through.
-    if not expected_token or x_agent_token != expected_token:
-        raise HTTPException(status_code=401, detail="missing or invalid X-Agent-Token")
 
 
 def _generate_req_id() -> str:
@@ -83,7 +72,7 @@ async def _ask_agent(agent_name: str, cmd: str, params: dict) -> dict:
 
 @router.post("/api/agents/{agent_name}/list_devices")
 async def list_devices(agent_name: str, x_agent_token: str | None = Header(None)) -> dict:
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
     return await _ask_agent(agent_name, "list_devices", {})
 
 
@@ -91,7 +80,7 @@ async def list_devices(agent_name: str, x_agent_token: str | None = Header(None)
 async def list_apps(agent_name: str, x_agent_token: str | None = Header(None)) -> dict:
     # Studio's "choose from installed" list: the Start Menu shortcuts of the
     # PC the agent runs on, so nobody has to type an exe path by hand.
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
     return await _ask_agent(agent_name, "list_apps", {})
 
 
@@ -105,5 +94,5 @@ async def fetch_icon(agent_name: str, body: FetchIconRequest, x_agent_token: str
     # agent is on the PC whose browser the tile opens, it already carries
     # Pillow for screenshots, and the backend (which may be a server on the
     # LAN) never gains an endpoint that makes outbound requests on command.
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
     return await _ask_agent(agent_name, "fetch_icon", {"url": body.url})

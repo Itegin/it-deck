@@ -14,7 +14,10 @@ import { renderPreview, markSelection, DOCK_MAX } from "./studio-preview.js";
 import { createInspector } from "./studio-inspector.js";
 import { cleanPath, detectEntry, vpnNeedsPath } from "./tile-catalog.js";
 import { ICONS } from "./render.js";
-import { initGuide } from "./studio-guide.js";
+import { initGuide, isFirstVisit } from "./studio-guide.js";
+import { initAccess } from "./studio-access.js";
+import { initWhatsNew } from "./studio-whats-new.js";
+import { initDecks } from "./studio-decks.js";
 
 const grid = document.getElementById("preview-grid");
 const previewDock = document.getElementById("preview-dock");
@@ -95,6 +98,17 @@ async function getAgentToken() {
     }
   }
   return agentToken;
+}
+
+// A new token set from the Access dialog: the old one stopped working the
+// moment the backend applied the change.
+function rememberAgentToken(token) {
+  agentToken = token;
+  try {
+    localStorage.setItem(AGENT_TOKEN_STORAGE_KEY, token);
+  } catch (e) {
+    // The in-memory value still serves this page load.
+  }
 }
 
 function forgetAgentToken() {
@@ -189,16 +203,32 @@ function populateWorkspaceSelect() {
   }
 }
 
-async function loadItems() {
+// Only the newest loadItems() may draw: a save followed quickly by a move or a
+// compact starts overlapping fetches that can answer out of order. A call
+// that has been overtaken resolves with the newest load instead of on its
+// own, so a caller that awaits it (to focus the tile it just saved, say)
+// still continues against the deck as finally drawn.
+let loadSeq = 0;
+let latestLoad = Promise.resolve();
+
+function loadItems() {
+  const seq = ++loadSeq;
+  latestLoad = fetchAndDraw(seq);
+  return latestLoad;
+}
+
+async function fetchAndDraw(seq) {
   let raw;
   try {
     const response = await fetch("/api/workspaces");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     raw = await response.json();
   } catch (err) {
+    if (seq !== loadSeq) return latestLoad;
     showToast(t("error.load", { detail: err.message }));
     return;
   }
+  if (seq !== loadSeq) return latestLoad;
   workspaces = raw.map((w) => ({ ...w, items: w.items.map(normalizeItem) }));
   populateWorkspaceSelect();
   renderSetupCard();
@@ -522,7 +552,27 @@ modeSelect.addEventListener("change", async () => {
 });
 
 applyStaticStrings();
+// Read before initGuide(), which marks the first visit as seen.
+const firstVisit = isFirstVisit();
 initGuide(document.getElementById("guide-dialog"), document.getElementById("guide-btn"));
+initWhatsNew(document.getElementById("whats-new-dialog"), document.getElementById("whats-new-btn"), { firstVisit });
+initAccess(document.getElementById("access-dialog"), document.getElementById("access-btn"), {
+  request: api,
+  currentAgentToken: () => agentToken,
+  onAgentToken: rememberAgentToken,
+  showToast,
+});
+initDecks(document.getElementById("decks-dialog"), document.getElementById("decks-btn"), {
+  request: api,
+  currentWorkspace,
+  // Straight to the new deck: it is what the person just asked for.
+  onImported: async (id) => {
+    await loadItems();
+    workspaceSelect.value = String(id);
+    workspaceSelect.dispatchEvent(new Event("change"));
+  },
+  showToast,
+});
 loadItems();
 // Independent of loadItems: a settings read must not take the deck down with
 // it, or the other way round.

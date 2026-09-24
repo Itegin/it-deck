@@ -1,0 +1,6 @@
+# The build context is backend/; only requirements.txt and app/ are copied.
+# Keeping caches out stops a local test run from busting the layer cache.
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

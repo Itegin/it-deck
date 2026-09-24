@@ -1,9 +1,9 @@
 import logging
-import os
 from datetime import datetime
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 
+from app.auth import check_agent_token
 from app.db import DB_PATH
 
 logger = logging.getLogger("controlhub.api")
@@ -30,12 +30,7 @@ async def upload_screenshot(
     # single-user, local-network project per CLAUDE.md's documented scope,
     # closing the "anyone on the LAN can write files to this server's disk"
     # gap without building out something this project doesn't need.
-    expected_token = os.environ.get("AGENT_TOKEN")
-    # "not expected_token" guards against AGENT_TOKEN being unset entirely:
-    # without it, a missing env var (None) would equal a missing header
-    # (None) and silently let an unauthenticated request through.
-    if not expected_token or x_agent_token != expected_token:
-        raise HTTPException(status_code=401, detail="missing or invalid X-Agent-Token")
+    check_agent_token(x_agent_token)
 
     # Client-declared content-type only, not a magic-bytes check -- good
     # enough to reject an obviously-wrong upload from an already-token-

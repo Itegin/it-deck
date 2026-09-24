@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import socket
 import sqlite3
 import subprocess
@@ -34,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it was -- no version in the UI, nothing to compare against for an
 # update check, and nothing to put in a bug report. Bump it in the same commit
 # as the tag, and keep it equal to the tag minus the leading "v".
-ITDECK_VERSION = "0.5.1"
+ITDECK_VERSION = "0.5.7"
 
 # Where an installed copy looks to find out it is out of date, and where it
 # sends the user when it is. An install has no other way to learn this: the
@@ -75,6 +76,25 @@ SESSION_END_CHILD_GRACE = 1.0
 # gone by the time it starts -- so being killed during it costs nothing.
 SESSION_END_EXIT_DELAY = 0.05
 
+# A log past this size is rolled to <name>.1 when IT-Deck starts, so the three
+# logs together stay within a few tens of MB instead of growing for as long as
+# the PC does. At launch rather than mid-run: the children hold their files
+# open, and Windows will not rename a file another process has open.
+LOG_ROTATE_BYTES = 5 * 1024 * 1024
+
+
+def open_log(path: Path, **kwargs):
+    """Open `path` for appending, rolling it to `<name>.1` first if it is big."""
+    try:
+        if path.stat().st_size > LOG_ROTATE_BYTES:
+            os.replace(path, path.with_name(path.name + ".1"))
+    except OSError:
+        # Missing (first run), or still held by another copy of IT-Deck --
+        # which the port check will stop shortly anyway. Append as before.
+        pass
+    return open(path, "a", encoding="utf-8", **kwargs)
+
+
 # The frozen exe is built --windowed, so it has NO console: sys.stdout and
 # sys.stderr are None and a bare print() would raise AttributeError. They are
 # pointed at a log file here instead, before anything prints.
@@ -101,7 +121,7 @@ def _redirect_output_to_log() -> None:
     try:
         logs = default_data_dir() / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        stream = open(logs / "launcher.log", "a", encoding="utf-8", buffering=1)
+        stream = open_log(logs / "launcher.log", buffering=1)
         sys.stdout = stream
         sys.stderr = stream
     except Exception:
@@ -111,6 +131,19 @@ def _redirect_output_to_log() -> None:
             sys.stdout = sys.stderr = open(os.devnull, "w")
         except Exception:
             pass
+
+
+def _ps_quote(value) -> str:
+    """`value` as a PowerShell single-quoted string literal.
+
+    Inside '...' PowerShell expands nothing and the only special character is
+    the quote itself, written twice. Every path this module splices into a
+    PowerShell command goes through here: an unescaped one broke the whole
+    command for any profile path containing an apostrophe (a user named O'Brien),
+    and each caller failed quietly -- no desktop shortcut, firewall rules and
+    files left behind by the uninstall.
+    """
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def is_frozen() -> bool:
@@ -599,11 +632,9 @@ def _line_buffer_stdio() -> None:
 
 def run_backend() -> int:
     _line_buffer_stdio()
-    if is_frozen():
-        os.environ.setdefault("ITDECK_FRONTEND_DIR", str(Path(sys._MEIPASS) / "frontend"))
-    else:
+    if not is_frozen():
         sys.path.insert(0, str(REPO_ROOT / "backend"))
-        os.environ.setdefault("ITDECK_FRONTEND_DIR", str(REPO_ROOT / "frontend"))
+    os.environ.setdefault("ITDECK_FRONTEND_DIR", str(frontend_dir()))
 
     import uvicorn
     from app.config import SERVER_PORT
@@ -648,10 +679,10 @@ def ensure_desktop_shortcut() -> None:
             return
         exe_path = sys.executable
         ps_command = (
-            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}'); "
-            f"$s.TargetPath = '{exe_path}'; "
-            f"$s.WorkingDirectory = '{Path(exe_path).parent}'; "
-            f"$s.IconLocation = '{exe_path}'; "
+            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut({_ps_quote(shortcut_path)}); "
+            f"$s.TargetPath = {_ps_quote(exe_path)}; "
+            f"$s.WorkingDirectory = {_ps_quote(Path(exe_path).parent)}; "
+            f"$s.IconLocation = {_ps_quote(exe_path)}; "
             f"$s.Save()"
         )
         subprocess.run(
@@ -669,36 +700,251 @@ def ensure_desktop_shortcut() -> None:
 
 # --- info window ---------------------------------------------------------
 
-# Same palette as the Dashboard's own "Liquid Glass" theme (see
-# frontend/css/themes.css's dark [data-theme="liquid-glass"] block) --
-# tkinter can't do that theme's actual backdrop-filter frost (no blur
-# compositing), so this borrows its *colors* (deep blue-black ground,
-# lifted surface, purple/teal accents) rather than trying to fake glass
-# with gradients tkinter can't draw either. The one piece of real
-# translucency available on this platform -- Windows 11's Mica material --
-# is applied separately, best-effort, in _apply_windows11_chrome() below.
-_GLASS = {
-    "bg": "#070a11",
-    "surface": "#151a23",
-    "border": "#2f3644",
-    "text": "#F1F5F9",
-    "text_muted": "#9aa3b2",
-    "accent": "#a78bfa",
-    "accent_active": "#8e5ff5",
-    # Added for the step cards: "surface" is the card fill, so buttons
-    # sitting on a card need to be a shade above it to read as raised.
-    # "ok" is the running dot in the header -- the one non-purple accent,
-    # because green means running in every other status UI a person has
-    # ever used.
-    "surface_raised": "#1d2330",
-    "ok": "#4ade80",
-    "warn": "#f59e0b",
-    # The deck's own alert red (themes.css's --state-alert), reused here so
-    # "red means something is about to be destroyed" is one decision across
-    # both surfaces rather than two similar-looking ones.
-    "danger": "#dc2626",
-    "danger_active": "#b91c1c",
+# This window is dressed as Studio: the same dark Liquid Glass tokens, copied
+# here verbatim from the CSS and composited into the opaque colours Tk can
+# paint. tests/test_launcher.py checks every value below against
+# frontend/css/{base,themes,studio}.css, so a palette change in Studio fails
+# CI until this window follows it. No new colours are invented here.
+#
+# Tk has no blur, so the frost itself can't be reproduced: a panel is the
+# panel token plus the veil's middle stop, flattened over the ground. The
+# rounded panels and buttons are drawn as images (see _rounded_png).
+_STUDIO_TOKENS = {
+    # themes.css, [data-theme="liquid-glass"] dark
+    "--color-bg": "#070a11",
+    "--glass-veil": "rgba(255, 255, 255, 0.06)",  # the veil's 42% stop
+    "--glass-edge": "rgba(255, 255, 255, 0.42)",  # its top highlight
+    # base.css, :root
+    "--color-text": "#F1F5F9",
+    "--color-text-muted": "#9aa3b2",
+    "--color-accent": "#a78bfa",
+    "--color-active": "#0d9488",
+    "--color-alert-text": "#e85757",
+    # studio.css, dark
+    "--studio-panel": "rgba(21, 26, 35, 0.62)",
+    "--studio-well": "rgba(0, 0, 0, 0.28)",
+    "--studio-card": "rgba(255, 255, 255, 0.04)",
+    "--studio-card-hover": "rgba(255, 255, 255, 0.08)",
+    "--studio-hairline": "rgba(255, 255, 255, 0.10)",
+    "--studio-accent-wash": "rgba(167, 139, 250, 0.12)",
 }
+
+# studio.css's .btn-primary ink: dark text on the accent (7.0:1).
+_ACCENT_INK = "#1A1F26"
+
+
+def _css_rgba(value: str) -> tuple:
+    """"#rrggbb" or "rgba(r, g, b, a)" as (r, g, b, a), a in 0..1."""
+    value = value.strip()
+    if value.startswith("#"):
+        return (int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16), 1.0)
+    parts = [p.strip() for p in value[value.index("(") + 1 : value.rindex(")")].split(",")]
+    return (int(parts[0]), int(parts[1]), int(parts[2]), float(parts[3]) if len(parts) > 3 else 1.0)
+
+
+def _over(top: str, bottom: str) -> str:
+    """`top` (any CSS colour) painted over the opaque `bottom`, as #rrggbb."""
+    r, g, b, a = _css_rgba(top)
+    br, bg, bb, _ = _css_rgba(bottom)
+    mix = [round(c * a + d * (1 - a)) for c, d in ((r, br), (g, bg), (b, bb))]
+    return "#{:02x}{:02x}{:02x}".format(*mix)
+
+
+def _brighten(color: str, factor: float) -> str:
+    """CSS filter: brightness(factor) -- .btn-primary:hover."""
+    r, g, b, _ = _css_rgba(color)
+    return "#{:02x}{:02x}{:02x}".format(*(min(255, round(c * factor)) for c in (r, g, b)))
+
+
+def _studio_palette(t: dict) -> dict:
+    bg = t["--color-bg"]
+    # A Studio panel, flattened: what a person sees behind a card's text.
+    surface = _over(t["--glass-veil"], _over(t["--studio-panel"], bg))
+    return {
+        "bg": bg,
+        "surface": surface,
+        # The panel's containing hairline and its brighter top edge.
+        "border": _over(t["--studio-hairline"], surface),
+        "edge": _over(t["--glass-edge"], surface),
+        # A line drawn straight on the window ground, not on a panel.
+        "rule": _over(t["--studio-hairline"], bg),
+        "text": t["--color-text"],
+        "text_muted": t["--color-text-muted"],
+        "accent": t["--color-accent"],
+        "accent_active": _brighten(t["--color-accent"], 1.08),
+        "accent_ink": _ACCENT_INK,
+        "accent_wash": _over(t["--studio-accent-wash"], surface),
+        # .btn on a panel, and its hover.
+        "surface_raised": _over(t["--studio-card"], surface),
+        "surface_hover": _over(t["--studio-card-hover"], surface),
+        # .input: a well sunk into the panel.
+        "well": _over(t["--studio-well"], surface),
+        # Studio's "done" teal: the running dot.
+        "ok": t["--color-active"],
+        # The one colour Studio has no token for: "the agent is down" is a
+        # warning, not a destruction, so it must not borrow the alert red.
+        "warn": "#f59e0b",
+        # .btn-danger: alert-coloured text, never a red fill.
+        "danger": t["--color-alert-text"],
+    }
+
+
+_GLASS = _studio_palette(_STUDIO_TOKENS)
+
+# Corner radii, from studio.css: a panel (.glass, 20px) is scaled down with
+# this much smaller window; a button or field is Studio's 10px exactly.
+_RADIUS_PANEL = 16
+_RADIUS_CONTROL = 10
+_RADIUS_BADGE = 7
+# Room around a button for its focus ring: 2px of ring, 1px of gap.
+_FOCUS_MARGIN = 3
+
+
+def _rounded_image(
+    width: int,
+    height: int,
+    radius: int,
+    fill: str,
+    outline: "Optional[str]" = None,
+    edge: "Optional[str]" = None,
+    ring: "Optional[str]" = None,
+    ring_width: int = 2,
+    margin: int = 0,
+):
+    """A rounded rectangle as a Pillow RGBA image, antialiased, transparent outside.
+
+    Drawn four times too big and scaled down: Pillow's own rounded_rectangle
+    has hard edges, and so does anything Tk draws on a canvas.
+    - outline: a 1-px hairline (Studio's --studio-hairline ring);
+    - edge: a 1-px brighter line along the top, the glass's specular edge;
+    - ring: a focus ring `margin` px outside the shape (Studio's
+      outline: 2px + offset 2px), so a focused and a plain button are the
+      same size and nothing jumps.
+    """
+    from PIL import Image, ImageDraw
+
+    k = 4
+    w, h, r, m = width * k, height * k, radius * k, margin * k
+    image = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    box = (m, m, w - m - 1, h - m - 1)
+    if ring:
+        draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=r + m, fill=ring)
+        inner = max(0, m - ring_width * k)
+        draw.rounded_rectangle(
+            (m - inner, m - inner, w - 1 - (m - inner), h - 1 - (m - inner)),
+            radius=r + inner,
+            fill=(0, 0, 0, 0),
+        )
+    line = k  # 1 px once scaled down
+    if edge:
+        draw.rounded_rectangle(box, radius=r, fill=edge)
+    if outline:
+        top = box[1] + (line if edge else 0)
+        draw.rounded_rectangle((box[0], top, box[2], box[3]), radius=r, fill=outline)
+        box = (box[0] + line, box[1] + line, box[2] - line, box[3] - line)
+        r = max(0, r - line)
+    elif edge:
+        box = (box[0], box[1] + line, box[2], box[3])
+    draw.rounded_rectangle(box, radius=r, fill=fill)
+    return image.resize((width, height), Image.LANCZOS)
+
+
+def _png(image) -> bytes:
+    """PNG bytes, so Tk 8.6 can load the image with PhotoImage(data=...)
+    without Pillow's ImageTk bridge. Fastest compression: the bytes go
+    straight to Tk in memory, and a smaller file saves nothing."""
+    import io
+
+    out = io.BytesIO()
+    image.save(out, format="PNG", compress_level=1)
+    return out.getvalue()
+
+
+def _nine_slice(image, border: int, width: int, height: int):
+    """`image` stretched to width x height with its `border`-px corners kept
+    as they are -- what ttk does with an image element, done once in Pillow.
+
+    A big panel then costs one small antialiased drawing instead of one at
+    four times its full size.
+    """
+    from PIL import Image
+
+    iw, ih = image.size
+    b = border
+    out = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    xs = [(0, b, 0, b), (b, iw - b, b, width - b), (iw - b, iw, width - b, width)]
+    ys = [(0, b, 0, b), (b, ih - b, b, height - b), (ih - b, ih, height - b, height)]
+    for sx0, sx1, dx0, dx1 in xs:
+        for sy0, sy1, dy0, dy1 in ys:
+            if dx1 > dx0 and dy1 > dy0:
+                piece = image.crop((sx0, sy0, sx1, sy1)).resize((dx1 - dx0, dy1 - dy0), Image.NEAREST)
+                out.paste(piece, (dx0, dy0))
+    return out
+
+
+def _rounded_png(width: int, height: int, radius: int, fill: str, **kwargs) -> bytes:
+    return _png(_rounded_image(width, height, radius, fill, **kwargs))
+
+
+# Studio's ground: the two soft pools themes.css lays over the dark Liquid
+# Glass page, copied verbatim (tests/test_launcher.py finds each one in the
+# CSS). The first is painted on top, as in CSS.
+_STUDIO_POOLS = (
+    "radial-gradient(70% 55% at 18% 8%, rgba(142, 95, 245, 0.20) 0%, rgba(142, 95, 245, 0) 100%)",
+    "radial-gradient(60% 50% at 88% 82%, rgba(13, 148, 136, 0.16) 0%, rgba(13, 148, 136, 0) 100%)",
+)
+_POOL_RE = re.compile(
+    r"radial-gradient\((\d+)% (\d+)% at (\d+)% (\d+)%, (rgba\([^)]*\)) 0%, rgba\([^)]*\) 100%\)"
+)
+# Parsed once: (rx%, ry%, cx%, cy%, (r, g, b, a)), painted bottom first.
+_POOLS = tuple(
+    (int(m[1]), int(m[2]), int(m[3]), int(m[4]), _css_rgba(m[5]))
+    for m in (_POOL_RE.fullmatch(css) for css in reversed(_STUDIO_POOLS))
+)
+
+
+def _ground_image(width: int, height: int):
+    """Studio's page background at this size: --color-bg and the two pools.
+
+    Each pool is an ellipse whose colour fades linearly from its centre
+    alpha to nothing at its edge -- what CSS does for a two-stop
+    radial-gradient with an explicit size. Drawn at 1x: a gradient has no
+    edge to antialias.
+    """
+    from PIL import Image
+
+    ground = Image.new("RGB", (width, height), _GLASS["bg"])
+    for rx_pct, ry_pct, cx_pct, cy_pct, (r, g, b, a) in _POOLS:
+        rx = max(1, round(width * rx_pct / 100))
+        ry = max(1, round(height * ry_pct / 100))
+        cx = round(width * cx_pct / 100)
+        cy = round(height * cy_pct / 100)
+        # Pillow's radial_gradient is 0 at the centre of its 256px square and
+        # 255 at the *corner* (radius ~181), so x sqrt(2) makes it reach 255
+        # at radius 128, the inscribed circle -- then clamped. Inverted and
+        # scaled by the pool's alpha; stretched to (2rx, 2ry), the ellipse.
+        # Without the rescale the pool would stop at its box with a visible
+        # edge instead of fading out.
+        falloff = Image.radial_gradient("L").resize((2 * rx, 2 * ry), Image.BILINEAR)
+        mask = falloff.point(lambda v: round((255 - min(255, v * 1.41421356)) * a))
+        ground.paste((r, g, b), (cx - rx, cy - ry, cx + rx, cy + ry), mask)
+    return ground
+
+
+def _ground_png(width: int, height: int, card: tuple, radius: int, fill: str, outline: str, edge: str) -> bytes:
+    """The ground with one panel baked into it at `card` (x, y, w, h).
+
+    Baked rather than layered: a ttk panel fills its corners with one flat
+    colour, which on a gradient shows as a square around the curve.
+    """
+    ground = _ground_image(width, height).convert("RGBA")
+    x, y, w, h = card
+    side = 3 * radius  # corners plus a straight run of edge to stretch
+    tile = _rounded_image(side, side, radius, fill, outline=outline, edge=edge)
+    ground.alpha_composite(_nine_slice(tile, radius, w, h), (x, y))
+    return _png(ground.convert("RGB"))
+
 
 _STRINGS = {
     "en": {
@@ -731,6 +977,15 @@ _STRINGS = {
         "step2_body": "Every tile works out of the box except VPN: it doesn't know which program to launch yet. Open Studio on this PC and give it the path to your VPN client.",
         "open_studio": "Open Studio",
         "show_token": "Show agent token",
+        "new_pin": "New phone PIN",
+        "new_pin_confirm": "Replace the phone token with a new random PIN?\n\nEvery connected phone will ask for the new PIN once. You can also change both tokens in Studio \u2192 Access.",
+        "new_pin_done": "New PIN: {pin} \u2014 the link and QR code above are updated.",
+        "new_pin_failed": "Couldn't change it: {error}",
+        "autostart": "Start IT-Deck with Windows",
+        "autostart_failed": "Couldn't change the Windows start-up setting: {error}",
+        "whats_new_title": "What's new in IT-Deck {version}",
+        "whats_new_ok": "Got it",
+        "whats_new_all": "All changes",
         "token_hint": "Studio asks for this once:",
         "copy_token": "Copy",
         "step3_title": "When you're done here",
@@ -754,7 +1009,8 @@ _STRINGS = {
             "   •  ITDeck.exe itself\n"
             "   •  the Desktop shortcut\n"
             "   •  settings, both tokens and your tile layout\n"
-            "   •  its Windows Firewall rules"
+            "   •  its Windows Firewall rules\n"
+            "   •  starting with Windows, if it was turned on"
         ),
         "uninstall_warning": "The deck on your phone stops working. This cannot be undone.",
         "uninstall_uac": (
@@ -799,6 +1055,15 @@ _STRINGS = {
         "step2_body": "Все плитки работают сразу, кроме VPN: она пока не знает, какую программу запускать. Открой Studio на этом ПК и укажи путь до своего VPN-клиента.",
         "open_studio": "Открыть Studio",
         "show_token": "Показать токен агента",
+        "new_pin": "Новый PIN для телефона",
+        "new_pin_confirm": "Заменить токен телефона на новый случайный PIN?\n\nКаждый подключённый телефон один раз попросит новый PIN. Оба токена можно поменять и в Studio \u2192 Доступ.",
+        "new_pin_done": "Новый PIN: {pin} \u2014 ссылка и QR-код выше обновлены.",
+        "new_pin_failed": "Не получилось: {error}",
+        "autostart": "Запускать IT-Deck вместе с Windows",
+        "autostart_failed": "Не получилось изменить автозапуск: {error}",
+        "whats_new_title": "Что нового в IT-Deck {version}",
+        "whats_new_ok": "Понятно",
+        "whats_new_all": "Все изменения",
         "token_hint": "Studio спросит его один раз:",
         "copy_token": "Копировать",
         "step3_title": "Когда всё готово",
@@ -822,7 +1087,8 @@ _STRINGS = {
             "   •  сам ITDeck.exe\n"
             "   •  ярлык на рабочем столе\n"
             "   •  настройки, оба токена и раскладка плиток\n"
-            "   •  правила брандмауэра Windows для него"
+            "   •  правила брандмауэра Windows для него\n"
+            "   •  автозапуск с Windows, если он был включён"
         ),
         "uninstall_warning": "Дека на телефоне перестанет работать. Отменить это нельзя.",
         "uninstall_uac": (
@@ -1100,7 +1366,7 @@ def remove_firewall_rules(exe: Path) -> None:
     # through consent prompts.
     count = (
         "(Get-NetFirewallApplicationFilter | "
-        f"Where-Object {{ $_.Program -eq '{exe}' }} | Measure-Object).Count"
+        f"Where-Object {{ $_.Program -eq {_ps_quote(exe)} }} | Measure-Object).Count"
     )
     try:
         found = subprocess.run(
@@ -1128,10 +1394,9 @@ def remove_firewall_rules(exe: Path) -> None:
 
     NEWLINE = chr(10)
     script_path = Path(tempfile.gettempdir()) / f"itdeck-firewall-{os.getpid()}.ps1"
-    quoted = str(exe).replace("'", "''")
     script_path.write_text(
         "Get-NetFirewallApplicationFilter | "
-        f"Where-Object {{ $_.Program -eq '{quoted}' }} | "
+        f"Where-Object {{ $_.Program -eq {_ps_quote(exe)} }} | "
         "Get-NetFirewallRule | Remove-NetFirewallRule -ErrorAction SilentlyContinue" + NEWLINE
         + "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue" + NEWLINE,
         encoding="utf-8",
@@ -1140,7 +1405,10 @@ def remove_firewall_rules(exe: Path) -> None:
     # inner one, so the UAC prompt is resolved before this returns.
     outer = (
         "Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList "
-        f"'-NoProfile','-ExecutionPolicy','Bypass','-File','{script_path}'"
+        # The path carries its own double quotes: Start-Process joins the
+        # list with spaces and does not quote an element that contains one,
+        # so a profile path with a space would split into two arguments.
+        f"'-NoProfile','-ExecutionPolicy','Bypass','-File',{_ps_quote(chr(34) + str(script_path) + chr(34))}"
     )
     try:
         subprocess.run(
@@ -1203,7 +1471,7 @@ def spawn_uninstall_helper(*targets) -> None:
         "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n"
     ).format(
         seconds=UNINSTALL_RETRY_SECONDS,
-        targets=", ".join(f"'{t}'" for t in wanted),
+        targets=", ".join(_ps_quote(t) for t in wanted),
     )
     try:
         import tempfile
@@ -1251,13 +1519,14 @@ def spawn_uninstall_helper(*targets) -> None:
 def perform_uninstall(data_dir: Path, stop_children=None) -> None:
     """Remove every trace of IT-Deck from this PC, then exit.
 
-    The inventory, and it is the whole inventory -- IT-Deck writes nothing to
-    the registry, installs no service and registers no scheduled task:
+    The inventory, and it is the whole inventory -- IT-Deck installs no
+    service and registers no scheduled task:
 
     - `%LOCALAPPDATA%\\IT-Deck\\` — config.env with both tokens, the tile
       database, the logs
     - the Desktop shortcut the first launch created
     - the Windows Firewall rules that name this exe (see above)
+    - the "Start with Windows" Run value, if the person turned it on
     - the exe itself and its unpacked temp directory (via the helper above,
       because this process is holding both open)
 
@@ -1276,6 +1545,16 @@ def perform_uninstall(data_dir: Path, stop_children=None) -> None:
     # Before the teardown, so the consent prompt appears while the window the
     # user clicked in is still there to explain it.
     remove_firewall_rules(exe)
+
+    # Whatever copy it points at: an uninstalled IT-Deck must not try to
+    # start at the next logon.
+    try:
+        import winreg
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+            winreg.DeleteValue(key, AUTOSTART_VALUE)
+    except (OSError, ImportError):
+        pass  # it was never turned on
 
     if stop_children is not None:
         try:
@@ -1741,6 +2020,136 @@ def _update_check_worker(result_queue: queue.Queue) -> None:
     result_queue.put(version)
 
 
+# --- what's new after an update ---------------------------------------------
+
+# frontend/whats-new.json: [{"version": "0.5.6", "en": [...], "ru": [...]}],
+# newest first. One file for both surfaces -- this window reads it from the
+# bundled frontend, Studio fetches it like any static file.
+WHATS_NEW_FILENAME = "whats-new.json"
+# Which version's notes this PC has already been shown. A file of its own in
+# the data directory rather than a config.env key: config.env is the
+# person's to edit, and this is bookkeeping.
+WHATS_NEW_SEEN_FILENAME = "whats-new-seen.txt"
+# A person who skipped several updates gets the latest two, and the
+# "All changes" link for the rest -- a card, not a changelog.
+WHATS_NEW_MAX_VERSIONS = 2
+
+
+def frontend_dir() -> Path:
+    if is_frozen():
+        return Path(sys._MEIPASS) / "frontend"
+    return REPO_ROOT / "frontend"
+
+
+def load_whats_new(frontend: Path) -> list:
+    """The entries, newest first; [] if the file is missing or unreadable."""
+    try:
+        entries = json.loads((frontend / WHATS_NEW_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [e for e in entries if isinstance(e, dict) and e.get("version")]
+
+
+def whats_new_to_show(entries: list, current: str, seen: Optional[str]) -> list:
+    """The entries newer than `seen` and no newer than `current`, newest first.
+
+    Nothing newer than the running version: the file ships with the build,
+    and a development build ahead of its notes must not announce them.
+    `seen` None -- an install from before this feature -- counts as "seen
+    nothing", which the version cap keeps to a card, not a history lesson.
+    """
+    floor = _version_tuple(seen) if seen else ()
+    ceiling = _version_tuple(current)
+    picked = [e for e in entries if floor < _version_tuple(e["version"]) <= ceiling]
+    picked.sort(key=lambda e: _version_tuple(e["version"]), reverse=True)
+    return picked[:WHATS_NEW_MAX_VERSIONS]
+
+
+def read_whats_new_seen(data_dir: Path) -> Optional[str]:
+    try:
+        return (data_dir / WHATS_NEW_SEEN_FILENAME).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def mark_whats_new_seen(data_dir: Path, version: str) -> None:
+    try:
+        (data_dir / WHATS_NEW_SEEN_FILENAME).write_text(version, encoding="utf-8")
+    except OSError:
+        pass  # at worst the card shows once more
+
+
+# --- tokens: a new PIN from the window ----------------------------------------
+
+
+def new_pin(digits: int = 6) -> str:
+    """A random numeric PIN: easy to type on a phone, and URL-safe."""
+    import secrets
+
+    return "".join(secrets.choice("0123456789") for _ in range(digits))
+
+
+def change_tokens_via_backend(port: int, agent_token: str, **tokens) -> Optional[str]:
+    """Ask the local backend to change tokens (PUT /api/access).
+
+    Through the backend rather than writing config.env here, so there is one
+    code path for a change: the backend saves it, applies it at once and
+    disconnects phones on the old phone token -- exactly as when Studio does
+    it. The window then picks the new values up from config.env like any
+    other change. Returns an error message, or None on success.
+    """
+    body = json.dumps({key: value for key, value in tokens.items() if value}).encode("utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/access",
+        data=body,
+        method="PUT",
+        headers={"Content-Type": "application/json", "X-Agent-Token": agent_token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            response.read()
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
+# --- start with Windows -------------------------------------------------------
+
+AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_VALUE = "IT-Deck"
+
+
+def autostart_command(exe: Path) -> str:
+    return f'"{exe}"'
+
+
+def autostart_enabled(winreg, exe: Path) -> bool:
+    """Whether Windows starts *this* exe at logon.
+
+    A Run value that points at another copy (the exe was moved, or an older
+    download) is reported as off, so ticking the box repoints it here.
+    `winreg` is passed in so this is testable off Windows.
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, AUTOSTART_VALUE)
+    except OSError:
+        return False
+    return str(value).strip().lower() == autostart_command(exe).lower()
+
+
+def set_autostart(winreg, exe: Path, enabled: bool) -> None:
+    """Add or remove the per-user Run value. Per-user: no admin rights needed."""
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+        if enabled:
+            winreg.SetValueEx(key, AUTOSTART_VALUE, 0, winreg.REG_SZ, autostart_command(exe))
+        else:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_VALUE)
+            except OSError:
+                pass  # already off
+
+
 def show_info_window(
     dashboard_url: str,
     studio_url: str,
@@ -1755,6 +2164,10 @@ def show_info_window(
     on_start_agent=None,
     first_run: bool = False,
     client_token: str = "admin",
+    config_path: Optional[Path] = None,
+    port: Optional[int] = None,
+    whats_new: Optional[list] = None,
+    autostart=None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1778,9 +2191,23 @@ def show_info_window(
     def worker() -> None:
         import tkinter as tk
         from tkinter import ttk
+        from types import SimpleNamespace
 
-        s = _STRINGS[_detect_ui_lang()]
+        lang = _detect_ui_lang()
+        s = _STRINGS[lang]
         g = _GLASS
+
+        # The tokens as they are *now*. Studio (or the New PIN button) can
+        # change them while this window is open; poll_config() below keeps
+        # this, the link, the QR code and the shown token in step with
+        # config.env, and every button reads from here rather than from the
+        # values this window was opened with.
+        current = {
+            "dashboard_url": dashboard_url,
+            "agent_token": agent_token,
+            "client_token": client_token,
+        }
+        dashboard_base = dashboard_url.split("?token=")[0]
 
         root = tk.Tk()
         root.title(s["title"])
@@ -1813,69 +2240,194 @@ def show_info_window(
 
         style = ttk.Style(root)
         style.theme_use("clam")
+        # Studio's type: Segoe UI, semibold on buttons and titles.
+        ui_font = ("Segoe UI", 9)
+        button_font = ("Segoe UI Semibold", 9)
+
+        # Flat first: every style works with plain colours, so a checkout
+        # without Pillow (or a Tk that can't load the images) still gets a
+        # usable window. glass_images() below then swaps in the rounded
+        # look where it can.
+        style.configure("Card.TFrame", background=g["surface"])
+        style.configure("Notice.TFrame", background=g["accent_wash"])
         style.configure(
             "Glass.TEntry",
-            fieldbackground=g["surface"],
+            fieldbackground=g["well"],
             foreground=g["text"],
             insertcolor=g["text"],
             borderwidth=1,
             relief="flat",
-        )
-        style.configure(
-            "Glass.TButton",
-            background=g["surface_raised"],
-            foreground=g["text"],
-            borderwidth=1,
-            relief="flat",
-            padding=(10, 6),
-        )
-        style.map("Glass.TButton", background=[("active", g["border"])])
-        style.configure(
-            "Accent.TButton",
-            background=g["accent_active"],
-            foreground=g["bg"],
-            borderwidth=0,
-            relief="flat",
-            padding=(10, 6),
-        )
-        style.map("Accent.TButton", background=[("active", g["accent"])])
-        style.configure(
-            "Mini.TButton",
-            background=g["surface_raised"],
-            foreground=g["text_muted"],
-            borderwidth=1,
-            relief="flat",
-            padding=(6, 2),
-            font=("Segoe UI", 8),
-        )
-        style.map("Mini.TButton", background=[("active", g["border"])])
-        # The only red in this window, and it is spent on the one button that
-        # destroys something. Same alert red the deck uses for a muted mic, so
-        # the two surfaces agree about what red means.
-        style.configure(
-            "Danger.TButton",
-            background=g["danger"],
-            foreground="#ffffff",
-            borderwidth=0,
-            relief="flat",
-            padding=(10, 6),
-        )
-        style.map(
-            "Danger.TButton",
-            background=[("active", g["danger_active"]), ("disabled", g["surface_raised"])],
-            foreground=[("disabled", g["text_muted"])],
+            padding=(8, 5),
         )
         # clam draws a light focus/border ring on an Entry, which on a
         # read-only field that exists only to be copied reads as "this is
-        # selected, type here". Pin every border colour to the card edge.
+        # selected, type here". Pin every border colour to the hairline.
         style.map(
             "Glass.TEntry",
             bordercolor=[("focus", g["border"]), ("!focus", g["border"])],
             lightcolor=[("focus", g["border"]), ("!focus", g["border"])],
             darkcolor=[("focus", g["border"]), ("!focus", g["border"])],
-            fieldbackground=[("readonly", g["surface"])],
+            fieldbackground=[("readonly", g["well"])],
             foreground=[("readonly", g["text"])],
         )
+        # studio.css .btn / .btn-primary / .btn-danger, and a smaller .btn
+        # for the quiet secondary actions (Studio's chips).
+        buttons_spec = {
+            "Glass.TButton": (g["surface_raised"], g["surface_hover"], g["text"], button_font, (14, 6)),
+            "Accent.TButton": (g["accent"], g["accent_active"], g["accent_ink"], button_font, (14, 6)),
+            "Danger.TButton": (g["surface_raised"], g["surface_hover"], g["danger"], button_font, (14, 6)),
+            "Mini.TButton": (g["surface_raised"], g["surface_hover"], g["text_muted"], ui_font, (10, 3)),
+        }
+        for name, (fill, hover, ink, font, padding) in buttons_spec.items():
+            style.configure(
+                name,
+                background=fill,
+                foreground=ink,
+                bordercolor=g["border"],
+                lightcolor=fill,
+                darkcolor=fill,
+                focuscolor=g["accent"],
+                borderwidth=1,
+                relief="flat",
+                padding=padding,
+                font=font,
+            )
+            style.map(
+                name,
+                background=[("disabled", g["surface_raised"]), ("pressed", hover), ("active", hover)],
+                foreground=[("disabled", g["text_muted"])],
+                lightcolor=[("active", hover)],
+                darkcolor=[("active", hover)],
+            )
+
+        # Kept alive for as long as the window: Tk drops an image the moment
+        # Python's last reference to it goes.
+        images: dict = {}
+
+        def photo(key: str, **spec) -> "tk.PhotoImage":
+            if key not in images:
+                images[key] = tk.PhotoImage(master=root, data=_rounded_png(**spec))
+            return images[key]
+
+        def glass_images() -> bool:
+            """Rounded panels, buttons and fields, as ttk image elements.
+
+            Each is a small image stretched nine-slice style (ttk's
+            `border`), so a panel of any size costs one image, drawn once.
+            Returns False, leaving the flat styles above, if Pillow or the
+            PNG load isn't available.
+            """
+            try:
+                panel = dict(width=48, height=48, radius=_RADIUS_PANEL)
+                photo("card", **panel, fill=g["surface"], outline=g["border"], edge=g["edge"])
+                # Studio's .setup-card: the accent wash inside an accent ring.
+                photo("notice", **panel, fill=g["accent_wash"], outline=g["accent"])
+                # Buttons carry a transparent margin: the focus ring (2px,
+                # just outside, like Studio's :focus-visible) lives in it, so
+                # focusing a button never changes its size.
+                ctl = dict(width=36, height=36, radius=_RADIUS_CONTROL, margin=_FOCUS_MARGIN)
+                for name, (fill, hover, _ink, _font, _pad) in buttons_spec.items():
+                    base = name.split(".")[0]
+                    line = None if base == "Accent" else g["border"]
+                    hover_line = g["danger"] if base == "Danger" else line
+                    photo(f"{base}", **ctl, fill=fill, outline=line)
+                    photo(f"{base}-hover", **ctl, fill=hover, outline=hover_line)
+                    photo(f"{base}-focus", **ctl, fill=fill, outline=line, ring=g["accent"])
+                    photo(f"{base}-focus-hover", **ctl, fill=hover, outline=hover_line, ring=g["accent"])
+                    photo(f"{base}-disabled", **ctl, fill=g["surface_raised"], outline=g["border"])
+                photo("well", width=32, height=32, radius=_RADIUS_CONTROL, fill=g["well"], outline=g["border"])
+            except Exception as exc:
+                print(f"Window: flat look, rounded images unavailable: {exc}")
+                return False
+
+            # ttk paints a widget's whole rectangle in its style background
+            # before drawing the image, so that background must be whatever
+            # is *behind* the widget or the rounded corners show a square.
+            # Panels always sit on the window ground.
+            for name, key in (("Card.TFrame", "card"), ("Notice.TFrame", "notice")):
+                element = f"{key}.panel"
+                style.element_create(
+                    element, "image", images[key], border=_RADIUS_PANEL, padding=0, sticky="nsew"
+                )
+                style.layout(name, [(element, {"sticky": "nsew"})])
+                style.configure(name, background=g["bg"])
+
+            for name in buttons_spec:
+                base = name.split(".")[0]
+                element = f"{base}.face"
+                style.element_create(
+                    element,
+                    "image",
+                    images[base],
+                    ("disabled", images[f"{base}-disabled"]),
+                    ("focus", "pressed", images[f"{base}-focus-hover"]),
+                    ("focus", "active", images[f"{base}-focus-hover"]),
+                    ("focus", images[f"{base}-focus"]),
+                    ("pressed", images[f"{base}-hover"]),
+                    ("active", images[f"{base}-hover"]),
+                    border=_RADIUS_CONTROL + _FOCUS_MARGIN,
+                    padding=_FOCUS_MARGIN,
+                    sticky="nsew",
+                )
+                style.layout(
+                    name,
+                    [(element, {"sticky": "nsew", "children": [
+                        ("Button.padding", {"sticky": "nsew", "children": [
+                            ("Button.label", {"sticky": "nsew"}),
+                        ]}),
+                    ]})],
+                )
+                # The image draws the fill now; the style background is
+                # only what shows around the corners -- see button_style().
+                style.map(name, background=[], lightcolor=[], darkcolor=[])
+
+            style.element_create(
+                "well.field", "image", images["well"], border=_RADIUS_CONTROL, padding=1, sticky="nsew"
+            )
+            # Fields only ever sit on a panel. Mapped, not just configured:
+            # clam maps a read-only entry's background to its own grey, and
+            # a map beats a plain setting.
+            style.configure("Glass.TEntry", background=g["surface"], padding=(10, 6))
+            style.map("Glass.TEntry", background=[("readonly", g["surface"]), ("!readonly", g["surface"])])
+            style.layout(
+                "Glass.TEntry",
+                [("well.field", {"sticky": "nsew", "children": [
+                    ("Entry.padding", {"sticky": "nsew", "children": [
+                        ("Entry.textarea", {"sticky": "nsew"}),
+                    ]}),
+                ]})],
+            )
+            return True
+
+        rounded = glass_images()
+
+        def button_style(parent, kind: str) -> str:
+            """The ttk style for a `kind` button sitting on `parent`.
+
+            With the rounded look, a button's style background is what shows
+            around its corners and focus ring, so it has to be the colour of
+            whatever it sits on -- a panel, the notice or the window ground.
+            One derived style per (colour, kind), made on first use; ttk
+            inherits everything else from "<kind>.TButton".
+            """
+            base = f"{kind}.TButton"
+            if not rounded:
+                return base
+            behind = parent.cget("bg")
+            name = f"on{behind.lstrip('#')}.{base}"
+            if name not in derived_styles:
+                style.configure(name, background=behind)
+                derived_styles.add(name)
+            return name
+
+        derived_styles: set = set()
+
+        def glass_button(parent, kind: str, **options) -> "ttk.Button":
+            """A Studio button of `kind` (Glass, Accent, Danger, Mini) on
+            `parent`. The only way buttons are made here: the style has to
+            be derived from the very widget the button sits on, and taking
+            both from one argument makes getting that wrong impossible."""
+            return ttk.Button(parent, style=button_style(parent, kind), **options)
 
         # --- small helpers -------------------------------------------------
 
@@ -1920,34 +2472,43 @@ def show_info_window(
             else:
                 root.geometry(f"{width}x{height}+{place[0]}+{place[1]}")
 
-        def card(number: str, title: str) -> tk.Frame:
-            """One numbered step: a flat panel with a badge, a title, a body.
+        def panel(parent, notice: bool = False):
+            """A Studio panel: (outer to pack, inner to fill).
 
-            tkinter has no rounded corners, no shadow and no blur, so the
-            separation between a step and the background is carried entirely
-            by a lighter fill and generous padding. That is the whole visual
-            vocabulary available here; anything else would be a lie.
+            The outer ttk frame draws the rounded glass (or, flat, just the
+            colour); the inner plain frame carries the content, inset past
+            the corners so no rectangle pokes out of the curve.
             """
-            outer = tk.Frame(root, bg=g["surface"])
-            outer.pack(fill="x", padx=PAD, pady=(0, 8))
-            head = tk.Frame(outer, bg=g["surface"])
-            head.pack(fill="x", padx=12, pady=(10, 6))
-            tk.Label(
-                head,
-                text=f" {number} ",
-                font=("Segoe UI", 9, "bold"),
-                bg=g["accent"],
-                fg=g["bg"],
-            ).pack(side="left")
+            fill = g["accent_wash"] if notice else g["surface"]
+            outer = ttk.Frame(parent, style="Notice.TFrame" if notice else "Card.TFrame")
+            inner = tk.Frame(outer, bg=fill)
+            inner.pack(fill="both", expand=True, padx=14 if rounded else 12, pady=12 if rounded else 10)
+            return outer, inner
+
+        def badge(parent, number: str) -> tk.Label:
+            # Studio's .setup-icon: the accent square with the dark ink.
+            common = dict(font=("Segoe UI Semibold", 9), fg=g["accent_ink"], bd=0)
+            if rounded:
+                image = photo("badge", width=22, height=22, radius=_RADIUS_BADGE, fill=g["accent"])
+                return tk.Label(parent, text=number, image=image, compound="center", bg=parent.cget("bg"), **common)
+            return tk.Label(parent, text=f" {number} ", bg=g["accent"], **common)
+
+        def card(number: str, title: str) -> tk.Frame:
+            """One numbered step: a Studio panel with a badge and a title."""
+            outer, inner = panel(root)
+            outer.pack(fill="x", padx=PAD, pady=(0, 10))
+            head = tk.Frame(inner, bg=g["surface"])
+            head.pack(fill="x", pady=(0, 8))
+            badge(head, number).pack(side="left")
             tk.Label(
                 head,
                 text=title,
-                font=("Segoe UI", 10, "bold"),
+                font=("Segoe UI Semibold", 11),
                 bg=g["surface"],
                 fg=g["text"],
-            ).pack(side="left", padx=(8, 0))
-            body = tk.Frame(outer, bg=g["surface"])
-            body.pack(fill="x", padx=12, pady=(0, 12))
+            ).pack(side="left", padx=(10, 0))
+            body = tk.Frame(inner, bg=g["surface"])
+            body.pack(fill="x")
             return body
 
         def draw_qr(parent, data: str):
@@ -1994,13 +2555,15 @@ def show_info_window(
 
         # --- header ---------------------------------------------------------
 
-        header = tk.Frame(root, bg=g["bg"])
-        header.pack(fill="x", padx=PAD, pady=(14, 8))
-        status_dot = tk.Label(header, text="●", font=("Segoe UI", 9), bg=g["bg"], fg=g["ok"])
+        # Studio's top bar: one panel with the name on the left and the
+        # quiet controls on the right.
+        header_panel, header = panel(root)
+        header_panel.pack(fill="x", padx=PAD, pady=(PAD, 10))
+        status_dot = tk.Label(header, text="●", font=("Segoe UI", 9), bg=g["surface"], fg=g["ok"])
         status_dot.pack(side="left", padx=(0, 6))
-        label(header, s["running"], bold=True, size=13).pack(side="left")
+        label(header, s["running"], bold=True, size=12).pack(side="left")
         label(header, f"v{ITDECK_VERSION}", muted=True, size=9).pack(side="right")
-        tour_button = ttk.Button(header, text=s["tour_again"], style="Mini.TButton")
+        tour_button = glass_button(header, "Mini", text=s["tour_again"])
         tour_button.pack(side="right", padx=(0, 10))
 
         # A dot that is always green is decoration pretending to be status.
@@ -2024,8 +2587,8 @@ def show_info_window(
                 # the button must not stay greyed out forever.
                 root.after(10000, lambda: start_agent_button.configure(text=s["start_agent"], state="normal"))
 
-            start_agent_button = ttk.Button(
-                agent_warning, text=s["start_agent"], style="Mini.TButton", command=start_agent
+            start_agent_button = glass_button(
+                agent_warning, "Mini", text=s["start_agent"], command=start_agent
             )
             start_agent_button.pack(side="right", padx=(8, 0))
 
@@ -2037,40 +2600,43 @@ def show_info_window(
             status_dot.configure(fg=g["ok"] if alive else g["warn"])
             if alive and start_agent_button is not None:
                 start_agent_button.configure(text=s["start_agent"], state="normal")
+            # "Shown" means packed, not mapped: winfo_ismapped() is False for
+            # everything in a minimised window, and read that way the warning
+            # was re-packed and the window re-fitted every two seconds while
+            # IT-Deck sat minimised with the agent down.
             if alive:
-                if agent_warning.winfo_ismapped():
+                if agent_warning.winfo_manager():
                     # Shrink back too, not just hide: fit_window() is the only
                     # thing that resizes an explicitly-sized window, so
                     # without this the window keeps the taller geometry after
                     # the agent recovers.
                     agent_warning.pack_forget()
                     fit_window()
-            elif not agent_warning.winfo_ismapped():
-                agent_warning.pack(fill="x", padx=PAD, pady=(0, 6), after=header)
+            elif not agent_warning.winfo_manager():
+                agent_warning.pack(fill="x", padx=PAD, pady=(0, 10), after=header_panel)
                 fit_window()
             root.after(AGENT_STATUS_POLL_MS, poll_agent)
 
         if agent_alive is not None:
             root.after(AGENT_STATUS_POLL_MS, poll_agent)
 
-        separator = tk.Frame(root, bg=g["border"], height=1)
-        separator.pack(fill="x", padx=PAD, pady=(0, 10))
-
         # --- update notice (hidden until the check says otherwise) -----------
 
-        update_bar = tk.Frame(root, bg=g["surface"])
-        update_text = label(update_bar, "", size=9)
-        update_text.pack(side="left", padx=(12, 0), pady=8)
-        ttk.Button(
-            update_bar,
+        # Studio's setup card: the one panel with an accent ring, because it
+        # is the one thing here asking for something to be done.
+        update_bar, update_row = panel(root, notice=True)
+        update_text = label(update_row, "", size=9)
+        update_text.pack(side="left")
+        glass_button(
+            update_row, "Accent",
             text=s["update_download"],
-            style="Accent.TButton",
             command=lambda: webbrowser.open(RELEASES_PAGE_URL),
-        ).pack(side="right", padx=12, pady=8)
+        ).pack(side="right")
 
         def show_update(version: str) -> None:
             update_text.configure(text=s["update_available"].format(version=version))
-            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=separator)
+            above = agent_warning if agent_warning.winfo_manager() else header_panel
+            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=above)
             # The window already has an explicit geometry by the time this
             # runs, so it will NOT grow on its own -- packing a new block into
             # a fixed-height window pushes the footer buttons off the bottom
@@ -2099,7 +2665,7 @@ def show_info_window(
         step1 = card("1", s["step1_title"])
         qr = draw_qr(step1, dashboard_url)
         if qr is not None:
-            qr.pack(side="left", padx=(0, 12))
+            qr.pack(side="left", anchor="n", padx=(0, 14))
 
         right = tk.Frame(step1, bg=g["surface"])
         right.pack(side="left", fill="both", expand=True)
@@ -2117,11 +2683,10 @@ def show_info_window(
         dash_row = tk.Frame(right, bg=g["surface"])
         dash_row.pack(fill="x")
         dash_feedback = label(dash_row, "", muted=True)
-        ttk.Button(
-            dash_row,
+        glass_button(
+            dash_row, "Accent",
             text=s["copy"],
-            style="Accent.TButton",
-            command=lambda: copy_text(dashboard_url, dash_feedback),
+            command=lambda: copy_text(current["dashboard_url"], dash_feedback),
         ).pack(side="left")
         dash_feedback.pack(side="left", padx=(10, 0))
 
@@ -2138,6 +2703,84 @@ def show_info_window(
                 wrap=300,
             ).pack(anchor="w", pady=(8, 0))
 
+        # A new random phone PIN in one click, for the person who shares
+        # their Wi-Fi and wants the default "admin" gone. Through the
+        # backend (change_tokens_via_backend), so phones on the old token are
+        # disconnected at once; the refresh below then redraws the link and
+        # the QR code from config.env.
+        pin_row = tk.Frame(right, bg=g["surface"])
+        pin_feedback = label(right, "", muted=True, size=8, wrap=300)
+        if config_path is not None and port is not None:
+            def request_new_pin() -> None:
+                from tkinter import messagebox
+
+                if not messagebox.askokcancel(s["title"], s["new_pin_confirm"], parent=root):
+                    return
+                pin = new_pin()
+                error = change_tokens_via_backend(port, current["agent_token"], client_token=pin)
+                if error:
+                    pin_feedback.configure(text=s["new_pin_failed"].format(error=error))
+                else:
+                    pin_feedback.configure(text=s["new_pin_done"].format(pin=pin))
+                    poll_config(reschedule=False)
+                fit_window()
+
+            pin_row.pack(fill="x", pady=(8, 0))
+            glass_button(pin_row, "Mini", text=s["new_pin"], command=request_new_pin).pack(
+                side="left"
+            )
+            pin_feedback.pack(anchor="w", pady=(4, 0))
+
+        def refresh_link() -> None:
+            nonlocal qr
+            url_entry.configure(state="normal")
+            url_entry.delete(0, "end")
+            url_entry.insert(0, current["dashboard_url"])
+            url_entry.configure(state="readonly")
+            if qr is not None:
+                qr.destroy()
+                qr = draw_qr(step1, current["dashboard_url"])
+                if qr is not None:
+                    qr.pack(side="left", anchor="n", padx=(0, 14), before=right)
+
+        # (mtime, size, inode): Windows file times have a coarse tick, and
+        # two quick rewrites (Studio changing both tokens) can share one.
+        # os.replace always brings a new file, so the inode tells them apart.
+        config_stamp = {"mtime": None}
+
+        def poll_config(reschedule: bool = True) -> None:
+            # One stat() every two seconds; the file is read only when it
+            # has changed, and only a changed token touches the widgets.
+            # Rescheduled whatever happens: the backend swaps the file in
+            # with os.replace, and a read that lands on that moment must cost
+            # one tick, not the whole refresh (the stamp is only kept once
+            # the read succeeded, so the next tick tries again).
+            try:
+                info = config_path.stat()
+                mtime = (info.st_mtime_ns, info.st_size, info.st_ino)
+            except OSError:
+                mtime = None  # no file: nothing to follow (a silent no-op, as before)
+            if mtime is not None and (mtime != config_stamp["mtime"] or not reschedule):
+                try:
+                    apply_config(parse_config(config_path))
+                    config_stamp["mtime"] = mtime
+                except Exception as exc:
+                    print(f"Window: couldn't re-read config.env: {exc}")
+            if reschedule:
+                root.after(AGENT_STATUS_POLL_MS, poll_config)
+
+        def apply_config(values: dict) -> None:
+            new_client = values.get("CLIENT_TOKEN") or current["client_token"]
+            new_agent = values.get("AGENT_TOKEN") or current["agent_token"]
+            if new_client != current["client_token"]:
+                current["client_token"] = new_client
+                current["dashboard_url"] = f"{dashboard_base}?token={new_client}"
+                refresh_link()
+            if new_agent != current["agent_token"]:
+                current["agent_token"] = new_agent
+                if token_revealed["on"]:
+                    reveal_token()
+
         # --- step 2: Studio --------------------------------------------------
 
         step2 = card("2", s["step2_title"])
@@ -2145,10 +2788,9 @@ def show_info_window(
 
         studio_row = tk.Frame(step2, bg=g["surface"])
         studio_row.pack(fill="x")
-        ttk.Button(
-            studio_row,
+        glass_button(
+            studio_row, "Glass",
             text=s["open_studio"],
-            style="Glass.TButton",
             command=lambda: webbrowser.open(studio_url),
         ).pack(side="left")
 
@@ -2159,7 +2801,10 @@ def show_info_window(
         token_holder = tk.Frame(step2, bg=g["surface"])
         token_holder.pack(fill="x", pady=(8, 0))
 
+        token_revealed = {"on": False}
+
         def reveal_token() -> None:
+            token_revealed["on"] = True
             for child in token_holder.winfo_children():
                 child.destroy()
             label(token_holder, s["token_hint"], muted=True, size=8).pack(anchor="w")
@@ -2168,15 +2813,14 @@ def show_info_window(
             entry = ttk.Entry(
                 row, width=20, font=("Consolas", 9), style="Glass.TEntry", takefocus=False
             )
-            entry.insert(0, agent_token)
+            entry.insert(0, current["agent_token"])
             entry.configure(state="readonly")
             entry.pack(side="left")
             feedback = label(row, "", muted=True, size=8)
-            ttk.Button(
-                row,
+            glass_button(
+                row, "Mini",
                 text=s["copy_token"],
-                style="Mini.TButton",
-                command=lambda: copy_text(agent_token, feedback),
+                command=lambda: copy_text(current["agent_token"], feedback),
             ).pack(side="left", padx=(8, 0))
             feedback.pack(side="left", padx=(6, 0))
             # Same reason as the update notice: the window has an explicit
@@ -2184,8 +2828,8 @@ def show_info_window(
             # clips the footer instead of growing the window.
             fit_window()
 
-        ttk.Button(
-            token_holder, text=s["show_token"], style="Mini.TButton", command=reveal_token
+        glass_button(
+            token_holder, "Mini", text=s["show_token"], command=reveal_token
         ).pack(anchor="w")
 
         # --- step 3: what the two buttons do ---------------------------------
@@ -2239,8 +2883,8 @@ def show_info_window(
                 dialog.grab_release()
                 dialog.destroy()
 
-            cancel_button = ttk.Button(
-                buttons, text=s["cancel"], style="Glass.TButton", command=close
+            cancel_button = glass_button(
+                buttons, "Glass", text=s["cancel"], command=close
             )
             cancel_button.pack(side="left")
 
@@ -2254,8 +2898,8 @@ def show_info_window(
                 # in os._exit, so nothing comes back.
                 threading.Thread(target=on_uninstall, daemon=True).start()
 
-            go_button = ttk.Button(
-                buttons, text=s["uninstall_go"], style="Danger.TButton", command=run_uninstall
+            go_button = glass_button(
+                buttons, "Danger", text=s["uninstall_go"], command=run_uninstall
             )
             go_button.pack(side="right")
 
@@ -2289,9 +2933,42 @@ def show_info_window(
         # to Quit: those two are the buttons people press, and the one that
         # deletes the install has no business being a neighbour of the one
         # that ends the session.
+        # Off by default: starting with Windows is the person's call, not
+        # something an app should do to itself on first run.
+        if autostart is not None and is_frozen():
+            autostart_get, autostart_set = autostart
+            autostart_var = tk.BooleanVar(value=autostart_get())
+            autostart_feedback = label(step3, "", muted=True, size=8, wrap=460)
+
+            def toggle_autostart() -> None:
+                try:
+                    autostart_set(autostart_var.get())
+                    autostart_feedback.configure(text="")
+                except OSError as exc:
+                    autostart_var.set(autostart_get())
+                    autostart_feedback.configure(text=s["autostart_failed"].format(error=exc))
+                fit_window()
+
+            tk.Checkbutton(
+                step3,
+                text=s["autostart"],
+                variable=autostart_var,
+                command=toggle_autostart,
+                bg=g["surface"],
+                fg=g["text"],
+                activebackground=g["surface"],
+                activeforeground=g["text"],
+                selectcolor=g["surface_raised"],
+                font=("Segoe UI", 9),
+                anchor="w",
+                highlightthickness=0,
+                bd=0,
+            ).pack(anchor="w", pady=(10, 0))
+            autostart_feedback.pack(anchor="w")
+
         if on_uninstall is not None and is_frozen():
-            ttk.Button(
-                step3, text=s["uninstall"], style="Mini.TButton", command=confirm_uninstall
+            glass_button(
+                step3, "Mini", text=s["uninstall"], command=confirm_uninstall
             ).pack(anchor="w", pady=(10, 0))
 
         # --- footer ----------------------------------------------------------
@@ -2316,10 +2993,10 @@ def show_info_window(
             on_quit()
             root.destroy()
 
-        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.iconify).pack(
+        glass_button(buttons, "Glass", text=s["close"], command=root.iconify).pack(
             side="left"
         )
-        ttk.Button(buttons, text=s["quit"], style="Glass.TButton", command=quit_itdeck).pack(
+        glass_button(buttons, "Glass", text=s["quit"], command=quit_itdeck).pack(
             side="right"
         )
 
@@ -2384,63 +3061,212 @@ def show_info_window(
             ("tour4_title", "tour4_body"),
         ]
 
-        def show_tour() -> None:
-            overlay = tk.Frame(root, bg=g["bg"])
-            overlay.place(x=0, y=0, relwidth=1, relheight=1)
-            box = tk.Frame(overlay, bg=g["surface"])
-            box.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
-            counter = label(box, "", muted=True, size=9)
-            counter.pack(anchor="w", padx=20, pady=(18, 4))
-            title = label(box, "", bold=True, size=15, wrap=380)
-            title.pack(anchor="w", padx=20)
-            body = label(box, "", size=10, wrap=380)
-            body.pack(anchor="w", padx=20, pady=(8, 16))
-            nav = tk.Frame(box, bg=g["surface"])
-            nav.pack(fill="x", padx=20, pady=(0, 18))
-            state = {"page": 0}
+        # Both overlays (the tour, What's new) sit on Studio's own ground --
+        # the dark page with its purple and teal pools -- with the card baked
+        # into that one image, instead of a card floating on flat black.
+        #
+        # Nothing about the geometry changes while one is open: the card is
+        # measured once against every page it will show and fixed at the
+        # tallest, and the buttons keep their places and widths. A page turn
+        # then only swaps label text. (It used to resize the card, pack and
+        # unpack Back and change the Next button's width, and on Windows each
+        # click relaid and repainted the window in several visible passes.)
+        # The ground is drawn once, and again only if the window itself is
+        # resized -- debounced, never per frame.
+        overlay_pad_x, overlay_pad_y = 26, 22
 
-            def close_tour() -> None:
+        def open_overlay(pages: int = 1, render=None) -> SimpleNamespace:
+            overlay = tk.Frame(root, bg=g["bg"])
+            ground = tk.Label(overlay, bd=0, highlightthickness=0, bg=g["bg"])
+            ground.place(x=0, y=0, relwidth=1, relheight=1)
+            # The flat card: only shown if the image can't be drawn.
+            flat_card = tk.Frame(overlay, bg=g["surface"])
+            content = tk.Frame(overlay, bg=g["surface"])
+            width = max(root.winfo_width(), root.winfo_reqwidth())
+            card_w = min(width - 2 * PAD, 470)
+            state = {"size": None, "pending": None, "image": None, "height": 0}
+
+            def overlay_size() -> tuple:
+                w, h = overlay.winfo_width(), overlay.winfo_height()
+                if w > 1:
+                    return w, h
+                # Not mapped yet (the first-run tour opens before mainloop):
+                # winfo_width/height still say 1, but geometry() already holds
+                # the size fit_window() gave the window -- which may be less
+                # than it asked for on a small screen.
+                match = re.match(r"(\d+)x(\d+)", root.geometry())
+                if match and int(match.group(1)) > 1:
+                    return int(match.group(1)), int(match.group(2))
+                return root.winfo_reqwidth(), root.winfo_reqheight()
+
+            def draw() -> None:
+                state["pending"] = None
+                w, h = overlay_size()
+                if state["size"] == (w, h):
+                    return
+                state["size"] = (w, h)
+                # Never taller than the window: the buttons are packed first
+                # at the bottom, so on a small screen the text is what gives,
+                # never Next/OK.
+                card_h = min(state["height"] + 2 * overlay_pad_y, h - 2 * PAD)
+                x = (w - card_w) // 2
+                y = max(PAD, round(h * 0.45 - card_h / 2))
+                content.place(
+                    x=x + overlay_pad_x,
+                    y=y + overlay_pad_y,
+                    width=card_w - 2 * overlay_pad_x,
+                    height=card_h - 2 * overlay_pad_y,
+                )
+                if rounded:
+                    try:
+                        data = _ground_png(w, h, (x, y, card_w, card_h), _RADIUS_PANEL, g["surface"], g["border"], g["edge"])
+                        state["image"] = tk.PhotoImage(master=root, data=data)
+                        ground.configure(image=state["image"])
+                        flat_card.place_forget()
+                        return
+                    except Exception as exc:
+                        print(f"Window: flat overlay, ground image unavailable: {exc}")
+                flat_card.place(x=x, y=y, width=card_w, height=card_h)
+
+            def on_configure(_event) -> None:
+                if state["pending"] is not None:
+                    root.after_cancel(state["pending"])
+                state["pending"] = root.after(120, draw)
+
+            def finish() -> None:
+                """Measure every page, fix the card at the tallest, show it."""
+                heights = []
+                for page in range(pages):
+                    if render is not None:
+                        render(page)
+                    content.update_idletasks()
+                    heights.append(content.winfo_reqheight())
+                if render is not None:
+                    render(0)
+                state["height"] = max(heights)
+                overlay.place(x=0, y=0, relwidth=1, relheight=1)
+                draw()
+                overlay.bind("<Configure>", on_configure)
+
+            def refit() -> None:
+                """After a page turn: grow once if the page no longer fits.
+
+                Pages are measured on open, but the tour quotes the phone
+                token, and Studio can change that while the tour is open.
+                """
+                content.update_idletasks()
+                if content.winfo_reqheight() > state["height"]:
+                    state["height"] = content.winfo_reqheight()
+                    state["size"] = None
+                    draw()
+
+            def close() -> None:
+                if state["pending"] is not None:
+                    root.after_cancel(state["pending"])
                 root.unbind("<Escape>")
                 overlay.destroy()
 
-            skip = ttk.Button(nav, text=s["tour_skip"], style="Mini.TButton", command=close_tour)
-            skip.pack(side="left")
-            next_button = ttk.Button(nav, style="Accent.TButton")
-            next_button.pack(side="right")
-            back_button = ttk.Button(nav, text=s["tour_back"], style="Glass.TButton")
+            # The wrap leaves a few px spare: a tk.Label's own padding and
+            # border sit outside its wraplength, and a label exactly as wide
+            # as the card's content clips its last letters.
+            return SimpleNamespace(
+                content=content, wrap=card_w - 2 * overlay_pad_x - 8, finish=finish, refit=refit, close=close
+            )
 
-            def render_page() -> None:
-                page = state["page"]
+        def show_tour() -> None:
+            state = {"page": 0}
+
+            def render_page(page: int) -> None:
                 key_title, key_body = tour_pages[page]
                 counter.configure(text=s["tour_step"].format(n=page + 1, total=len(tour_pages)))
                 title.configure(text=s[key_title])
-                body.configure(text=s[key_body].format(token=client_token))
+                body.configure(text=s[key_body].format(token=current["client_token"]))
                 last = page == len(tour_pages) - 1
                 next_button.configure(text=s["tour_done"] if last else s["tour_next"])
-                if page > 0:
-                    back_button.pack(side="right", padx=(0, 8), before=next_button)
-                else:
-                    back_button.pack_forget()
-                next_button.focus_set()
+                # Always there, greyed on the first page: a button that
+                # appears and disappears moves its neighbours.
+                back_button.state(["disabled"] if page == 0 else ["!disabled"])
+
+            ov = open_overlay(pages=len(tour_pages), render=render_page)
+            box = ov.content
+            # The buttons first, pinned to the bottom of the fixed-height card,
+            # so a shorter page doesn't pull them up.
+            nav = tk.Frame(box, bg=g["surface"])
+            nav.pack(side="bottom", fill="x")
+            counter = label(box, "", muted=True, size=9)
+            counter.pack(anchor="w", pady=(0, 4))
+            title = label(box, "", bold=True, size=15, wrap=ov.wrap)
+            title.pack(anchor="w")
+            body = label(box, "", size=10, wrap=ov.wrap)
+            body.pack(anchor="w", pady=(8, 16))
 
             def go(delta: int) -> None:
                 page = state["page"] + delta
                 if page >= len(tour_pages):
-                    close_tour()
+                    ov.close()
                     return
                 state["page"] = max(0, page)
-                render_page()
+                render_page(state["page"])
+                ov.refit()
+                next_button.focus_set()
 
-            next_button.configure(command=lambda: go(1))
-            back_button.configure(command=lambda: go(-1))
+            glass_button(nav, "Mini", text=s["tour_skip"], command=ov.close).pack(side="left")
+            # Wide enough for the longer of its two labels, so it doesn't
+            # change size on the last page.
+            next_button = glass_button(
+                nav, "Accent",
+                width=max(len(s["tour_next"]), len(s["tour_done"])),
+                command=lambda: go(1),
+            )
+            next_button.pack(side="right")
+            # Packed after Next with side="right": it lands to Next's left,
+            # where Back belongs.
+            back_button = glass_button(nav, "Glass", text=s["tour_back"], command=lambda: go(-1))
+            back_button.pack(side="right", padx=(0, 8))
             # On root: focus sits on the Next button, so an overlay binding
             # would never see the key.
-            root.bind("<Escape>", lambda _event: close_tour())
-            render_page()
+            root.bind("<Escape>", lambda _event: ov.close())
+            ov.finish()
+            next_button.focus_set()
 
         tour_button.configure(command=show_tour)
         if first_run:
             show_tour()
+
+        if config_path is not None:
+            root.after(AGENT_STATUS_POLL_MS, poll_config)
+
+        # --- what's new after an update ---------------------------------------
+        # The same overlay as the tour, once per version (run_launcher decides
+        # which entries, and has already marked them seen). A fresh install
+        # gets the tour instead: release notes mean nothing to a new user.
+        def show_whats_new(entries: list) -> None:
+            ov = open_overlay()
+            box = ov.content
+            nav = tk.Frame(box, bg=g["surface"])
+            nav.pack(side="bottom", fill="x", pady=(14, 0))
+            label(
+                box, s["whats_new_title"].format(version=entries[0]["version"]), bold=True, size=15, wrap=ov.wrap
+            ).pack(anchor="w", pady=(0, 8))
+            for index, entry in enumerate(entries):
+                if len(entries) > 1:
+                    label(box, entry["version"], muted=True, size=9).pack(anchor="w", pady=(6 if index else 0, 2))
+                for bullet in entry.get(lang) or entry.get("en") or []:
+                    label(box, f"\u2022  {bullet}", size=10, wrap=ov.wrap).pack(anchor="w", pady=1)
+
+            ok = glass_button(nav, "Accent", text=s["whats_new_ok"], command=ov.close)
+            ok.pack(side="right")
+            glass_button(
+                nav, "Glass",
+                text=s["whats_new_all"],
+                command=lambda: webbrowser.open(RELEASES_PAGE_URL),
+            ).pack(side="right", padx=(0, 8))
+            root.bind("<Escape>", lambda _event: ov.close())
+            ov.finish()
+            ok.focus_set()
+
+        if whats_new and not first_run:
+            show_whats_new(whats_new)
 
         root.mainloop()
 
@@ -2480,6 +3306,10 @@ def run_launcher() -> int:
         "CLIENT_TOKEN": client_token,
         "SERVER_PORT": str(port),
         "ITDECK_DATA_DIR": str(data_dir),
+        # Where Studio's Access dialog saves a changed token (see
+        # backend/app/api/access.py); the agent re-reads its token from the
+        # same file on every reconnect.
+        "ITDECK_CONFIG_FILE": str(data_dir / CONFIG_FILENAME),
     }
     agent_env = {
         **os.environ,
@@ -2488,6 +3318,7 @@ def run_launcher() -> int:
         "SERVER_IP": "127.0.0.1",
         "SERVER_PORT": str(port),
         "AGENT_NAME": "windows",
+        "ITDECK_CONFIG_FILE": str(data_dir / CONFIG_FILENAME),
     }
     for key in OPTIONAL_AGENT_KEYS:
         if config.get(key):
@@ -2501,8 +3332,8 @@ def run_launcher() -> int:
     # console now only ever prints what run_launcher() itself writes.
     logs_dir = data_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    backend_log = open(logs_dir / "backend.log", "a", encoding="utf-8")
-    agent_log = open(logs_dir / "agent.log", "a", encoding="utf-8")
+    backend_log = open_log(logs_dir / "backend.log")
+    agent_log = open_log(logs_dir / "agent.log")
 
     print(f"IT-Deck v{ITDECK_VERSION} starting...")
     print(f"Data/config: {data_dir}")
@@ -2525,9 +3356,17 @@ def run_launcher() -> int:
     # terminal windows flashing onto the desktop at every launch. Their output
     # already goes to the log files opened above.
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # Below normal priority, so a game (or anything else in the foreground)
+    # always wins the CPU when both want it; the backend's work -- relaying a
+    # press, diffing a state tick -- can wait a few milliseconds. The whole
+    # process is safe to lower because it starts nothing. The agent does start
+    # things (every program a tile launches inherits a below-normal class from
+    # its parent), so it lowers only its own thread instead -- see
+    # agents/windows/agent.py's _yield_to_foreground_apps().
+    below_normal = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
     backend_proc = subprocess.Popen(
         self_invocation("backend"), env=backend_env, stdout=backend_log,
-        stderr=subprocess.STDOUT, creationflags=no_window,
+        stderr=subprocess.STDOUT, creationflags=no_window | below_normal,
     )
     assign_to_child_job(child_job, backend_proc)
 
@@ -2687,6 +3526,29 @@ def run_launcher() -> int:
     # loop below owns every spawn, so it is the one that acts on it.
     agent_start_requested = threading.Event()
 
+    # Which "What's new" notes to show, decided and recorded now: shown once
+    # per version however the window is closed. A first run records the
+    # current version without showing anything -- the tour is its welcome.
+    whats_new = []
+    if first_run:
+        mark_whats_new_seen(data_dir, ITDECK_VERSION)
+    else:
+        whats_new = whats_new_to_show(
+            load_whats_new(frontend_dir()), ITDECK_VERSION, read_whats_new_seen(data_dir)
+        )
+        if whats_new:
+            mark_whats_new_seen(data_dir, ITDECK_VERSION)
+
+    autostart = None
+    if is_frozen():
+        import winreg
+
+        exe = Path(sys.executable)
+        autostart = (
+            lambda: autostart_enabled(winreg, exe),
+            lambda enabled: set_autostart(winreg, exe, enabled),
+        )
+
     show_info_window(
         dashboard_url,
         studio_url,
@@ -2701,6 +3563,10 @@ def run_launcher() -> int:
         on_start_agent=agent_start_requested.set,
         first_run=first_run,
         client_token=client_token,
+        config_path=data_dir / CONFIG_FILENAME,
+        port=port,
+        whats_new=whats_new,
+        autostart=autostart,
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()

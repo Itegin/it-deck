@@ -169,6 +169,13 @@ body.studio {
   font-size: 13px;
 }
 
+/* A link inside a hint (the weather credit): the accent, underlined, so it
+   reads as a link in both modes rather than as the UA's default blue. */
+.field-hint a {
+  color: var(--color-accent);
+  text-underline-offset: 2px;
+}
+
 .input,
 .studio select,
 .studio textarea {
@@ -1080,6 +1087,120 @@ body.studio {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* ── Access and What's new ──────────────────────────────────────────────── */
+/* Both reuse .token-dialog's box. Access is a little wider: each token row
+   carries its field plus two buttons. */
+
+.access-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.access-field {
+  margin-top: 14px;
+}
+
+/* .token-dialog p spaces the dialog's own paragraphs; inside a field the
+   hint and the error sit tight against it, as everywhere else in Studio. */
+.access-dialog .field-hint,
+.access-dialog .message {
+  margin: 0;
+}
+
+.access-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.access-row .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+/* Narrow windows: the field keeps the full width, the two buttons wrap
+   under it rather than squeezing it to nothing. */
+@media (max-width: 480px) {
+  .access-row {
+    flex-wrap: wrap;
+  }
+
+  .access-row .input {
+    flex-basis: 100%;
+  }
+}
+
+.access-readonly {
+  margin-top: 10px;
+}
+
+.news-dialog h3 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.news-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}
+
+.decks-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.decks-section {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  padding: 12px 0;
+  border-top: 1px solid var(--studio-hairline);
+}
+
+.decks-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.decks-dialog .field-hint,
+.decks-dialog .message {
+  margin: 0;
+}
+
+.decks-templates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.decks-templates li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* The unread marker: the one accent dot in the bar, and it goes away on the
+   first click. Relative to the button so it sits on its corner. */
+.whats-new-btn {
+  position: relative;
+}
+
+.news-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
 }
 
 /* On the page, not the phone: the toast sits bottom-right of a desktop

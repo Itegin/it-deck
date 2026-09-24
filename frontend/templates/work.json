@@ -1,0 +1,176 @@
+{
+  "format": "itdeck-deck",
+  "version": 1,
+  "name": "Work",
+  "grid_cols": 3,
+  "grid_rows": 5,
+  "items": [
+    {
+      "row": 0,
+      "col": 0,
+      "width": 1,
+      "height": 1,
+      "label": "Mic",
+      "icon": "mic",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "audio_mute_toggle",
+      "target": "windows",
+      "params": {
+        "device": "microphone",
+        "active_style": "alert"
+      },
+      "state_key": "mic.muted",
+      "dock": false
+    },
+    {
+      "row": 0,
+      "col": 1,
+      "width": 1,
+      "height": 1,
+      "label": "Sound",
+      "icon": "headphones",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "audio_mute_toggle",
+      "target": "windows",
+      "params": {
+        "device": "speaker",
+        "active_style": "alert"
+      },
+      "state_key": "speaker.muted",
+      "dock": false
+    },
+    {
+      "row": 0,
+      "col": 2,
+      "width": 1,
+      "height": 1,
+      "label": "Lock PC",
+      "icon": "lock",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "power",
+      "target": "windows",
+      "params": {
+        "action": "lock"
+      },
+      "state_key": null,
+      "dock": false
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "width": 2,
+      "height": 1,
+      "label": "Volume",
+      "icon": "speaker",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "audio_volume_set",
+      "target": "windows",
+      "params": {
+        "device": "speaker",
+        "active_style": "normal"
+      },
+      "state_key": "speaker.volume",
+      "dock": false
+    },
+    {
+      "row": 1,
+      "col": 2,
+      "width": 1,
+      "height": 1,
+      "label": "Play / Pause",
+      "icon": "media",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "media_key",
+      "target": "windows",
+      "params": {
+        "key": "play_pause"
+      },
+      "state_key": null,
+      "dock": false
+    },
+    {
+      "row": 2,
+      "col": 0,
+      "width": 1,
+      "height": 1,
+      "label": "Send text",
+      "icon": "clipboard",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "clipboard_set",
+      "target": "windows",
+      "params": {},
+      "state_key": null,
+      "dock": false
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "width": 1,
+      "height": 1,
+      "label": "Screenshot",
+      "icon": "camera",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "screenshot",
+      "target": "windows",
+      "params": {},
+      "state_key": null,
+      "dock": false
+    },
+    {
+      "row": 2,
+      "col": 2,
+      "width": 1,
+      "height": 1,
+      "label": "Gmail",
+      "icon": "brand:gmail",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "open_url",
+      "target": "windows",
+      "params": {
+        "url": "https://mail.google.com/"
+      },
+      "state_key": null,
+      "dock": false
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "width": 2,
+      "height": 1,
+      "label": "Clock",
+      "icon": null,
+      "color": "#2a2f38",
+      "kind": "widget",
+      "type": "clock_weather",
+      "target": "backend",
+      "params": {},
+      "state_key": null,
+      "dock": false
+    },
+    {
+      "row": 3,
+      "col": 2,
+      "width": 1,
+      "height": 1,
+      "label": "Notion",
+      "icon": "brand:notion",
+      "color": "#2a2f38",
+      "kind": "action",
+      "type": "open_url",
+      "target": "windows",
+      "params": {
+        "url": "https://www.notion.so/"
+      },
+      "state_key": null,
+      "dock": false
+    }
+  ]
+}

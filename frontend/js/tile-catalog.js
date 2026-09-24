@@ -26,6 +26,11 @@ const ACTIVE_STYLE_FIELD = {
   options: ["normal", "alert"],
 };
 
+// "Ask before running": the phone shows Run / Cancel before sending the
+// command. On by default where a mis-tap costs something (power, stopping a
+// program, closing the agent); available under More settings elsewhere.
+const CONFIRM_FIELD = { param: "confirm", control: "toggle" };
+
 export const GROUPS = ["launch", "actions", "sound", "widgets", "other"];
 
 export const CATALOG = [
@@ -69,6 +74,7 @@ export const CATALOG = [
       { param: "args", control: "text", advanced: true },
       { param: "fallback_path", control: "text", advanced: true },
       { param: "process_name", control: "text", advanced: true },
+      { ...CONFIRM_FIELD, advanced: true },
     ],
   },
   {
@@ -94,6 +100,8 @@ export const CATALOG = [
     fields: [
       { param: "process_name", control: "text", required: true },
       { param: "path", control: "path" },
+      // A second tap stops the program (the VPN, say): tech debt #21.
+      { ...CONFIRM_FIELD, default: true },
     ],
   },
   {
@@ -104,6 +112,45 @@ export const CATALOG = [
     target: "windows",
     stateKey: null,
     icon: "power",
+    fixedParams: {},
+    fields: [{ ...CONFIRM_FIELD, default: true }],
+  },
+  {
+    id: "hotkey",
+    group: "actions",
+    kind: "action",
+    type: "send_keys",
+    target: "windows",
+    stateKey: null,
+    icon: "keyboard",
+    fixedParams: {},
+    fields: [
+      { param: "keys", control: "text", required: true, highlight: true },
+      { ...CONFIRM_FIELD, advanced: true },
+    ],
+  },
+  {
+    id: "power",
+    group: "actions",
+    kind: "action",
+    type: "power",
+    target: "windows",
+    stateKey: null,
+    icon: "lock",
+    fixedParams: {},
+    fields: [
+      { param: "action", control: "select", options: ["lock", "sleep", "restart", "shutdown"], default: "lock", highlight: true },
+      { ...CONFIRM_FIELD, default: true },
+    ],
+  },
+  {
+    id: "clipboard",
+    group: "actions",
+    kind: "action",
+    type: "clipboard_set",
+    target: "windows",
+    stateKey: null,
+    icon: "clipboard",
     fixedParams: {},
     fields: [],
   },
@@ -144,6 +191,25 @@ export const CATALOG = [
     fields: [],
   },
   {
+    id: "media",
+    group: "sound",
+    kind: "action",
+    type: "media_key",
+    target: "windows",
+    stateKey: null,
+    icon: "media",
+    fixedParams: {},
+    fields: [
+      {
+        param: "key",
+        control: "select",
+        options: ["play_pause", "next", "prev", "stop", "volume_up", "volume_down"],
+        default: "play_pause",
+        highlight: true,
+      },
+    ],
+  },
+  {
     id: "audio_switch",
     group: "sound",
     kind: "action",
@@ -172,6 +238,21 @@ export const CATALOG = [
     ],
   },
   {
+    id: "pc_stats",
+    group: "widgets",
+    kind: "widget",
+    type: "pc_stats",
+    // Unlike the clock, this one shows the agent's data, so it names the
+    // agent whose PC it describes. Widgets are never greyed or pressed, so
+    // the target only picks the state keys (see js/widgets/pc-stats.js).
+    target: "windows",
+    stateKey: null,
+    icon: null,
+    defaultWidth: 2,
+    fixedParams: {},
+    fields: [],
+  },
+  {
     // Anything the table above doesn't recognise. Keeps hand-made and legacy
     // tiles editable exactly as before: a raw type and raw params.
     id: "custom",
@@ -198,7 +279,7 @@ export function entryById(id) {
 export function detectEntry(item) {
   const params = item.params || {};
   if (item.kind === "widget") {
-    return entryById(item.type === "clock_weather" ? "clock_weather" : CUSTOM_ID);
+    return entryById(["clock_weather", "pc_stats"].includes(item.type) ? item.type : CUSTOM_ID);
   }
   if (item.kind !== "action") {
     return entryById(CUSTOM_ID);
@@ -222,6 +303,14 @@ export function detectEntry(item) {
       return entryById("process_toggle");
     case "agent_shutdown":
       return entryById("agent_shutdown");
+    case "send_keys":
+      return entryById("hotkey");
+    case "media_key":
+      return entryById("media");
+    case "power":
+      return entryById("power");
+    case "clipboard_set":
+      return entryById("clipboard");
     default:
       return entryById(CUSTOM_ID);
   }
@@ -301,6 +390,25 @@ const APP_BRANDS = [
   ["chatgpt", "chatgpt"],
   ["claude", "claude"],
   ["twitch", "twitch"],
+  // Games and launchers, by the names their Start menu shortcuts carry.
+  // Never a bare short needle ("ea" is inside "steam" and "realtek").
+  ["valorant", "valorant"],
+  ["league of legends", "leagueoflegends"],
+  ["riot client", "riotgames"],
+  ["counter-strike", "counterstrike"],
+  ["dota 2", "dota2"],
+  ["pubg", "pubg"],
+  ["fortnite", "fortnite"],
+  ["roblox", "roblox"],
+  ["rockstar", "rockstargames"],
+  ["grand theft auto", "rockstargames"],
+  ["faceit", "faceit"],
+  ["epic games", "epicgames"],
+  ["battle.net", "battlenet"],
+  ["ea app", "ea"],
+  ["ubisoft", "ubisoft"],
+  ["gog galaxy", "gog"],
+  ["playstation", "playstation"],
 ];
 
 export function brandForApp(name) {

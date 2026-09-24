@@ -1,5 +1,5 @@
 import { attachLongPress } from "./longpress.js";
-import { mountWidget, destroyWidgets } from "./widgets/index.js";
+import { mountWidget, destroyWidgets, notifyWidgets } from "./widgets/index.js";
 import { BRAND_ICONS } from "./brand-icons.js";
 
 const SLIDER_THROTTLE_MS = 100;
@@ -51,6 +51,10 @@ export const ICONS = {
   // rendered label-only next to eight tiles that all carry a glyph.
   power: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`,
   // The Website tile's default: any site, no brand implied.
+  keyboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg>`,
+  media: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5v14l9-7z"/><path d="M16 5v14M20 5v14"/></svg>`,
+  lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`,
+  clipboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>`,
   globe: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>`,
 };
 
@@ -84,14 +88,22 @@ export function iconText(value) {
 //   - "image" -> params.icon_img, a site icon, as an <img>
 // Only module-authored SVG goes through innerHTML; user values go through
 // textContent and img.src.
+// Own keys only. A bare ICONS[key] also finds what every object inherits, so
+// icon = "constructor" matched Object itself and the tile showed its source
+// text. hasOwnProperty.call rather than Object.hasOwn, which older iOS
+// Safari -- the deck's whole audience -- does not have.
+export function hasEntry(table, key) {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
 export function tileIconFor(item) {
   const key = item.icon || "";
   const params = item.params || {};
   const icon = document.createElement("div");
   icon.className = "icon";
-  if (ICONS[key]) {
+  if (hasEntry(ICONS, key)) {
     icon.innerHTML = ICONS[key];
-  } else if (key.startsWith(BRAND_PREFIX) && BRAND_ICONS[key.slice(BRAND_PREFIX.length)]) {
+  } else if (key.startsWith(BRAND_PREFIX) && hasEntry(BRAND_ICONS, key.slice(BRAND_PREFIX.length))) {
     icon.classList.add("icon-brand");
     icon.innerHTML = BRAND_ICONS[key.slice(BRAND_PREFIX.length)];
   } else if (key === ICON_TEXT && iconText(params.icon_text)) {
@@ -417,13 +429,18 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // Also after the append: a widget lays itself out with container queries,
   // and those need a tile that is in the document and has a size.
   for (const [tile, item] of widgets) {
-    mountWidget(tile, item);
+    mountWidget(tile, item, { state: knownState });
   }
 
   // Last, and it has to be here rather than only on the events that change
   // it: a re-render rebuilds every tile, so an agent that went away five
   // minutes ago has to be re-applied to the tiles that have just replaced
-  // the ones it greyed out.
+  // the ones it greyed out. Both halves: the greying on each tile (without
+  // it a Studio edit brought back live-looking, tappable tiles for an agent
+  // that could not answer them) and the clock takeover.
+  for (const agent of offlineAgents) {
+    markAgentTiles(agent, true);
+  }
   updateClockTakeover();
 }
 
@@ -545,6 +562,7 @@ const knownState = {};
 
 export function updateTileState(stateData) {
   Object.assign(knownState, stateData);
+  notifyWidgets(stateData);
   for (const [key, value] of Object.entries(stateData)) {
     const tiles = document.querySelectorAll(`.tile[data-state-key="${CSS.escape(key)}"]`);
 
@@ -621,7 +639,15 @@ export function updateTileState(stateData) {
 // than inventing selector-specific markup -- one workspace per row, full
 // width, stacked via --cols:1/--rows:<count> on the same #grid the
 // dashboard uses.
+function hideDeckDots() {
+  const dots = document.getElementById("deck-dots");
+  if (dots) {
+    dots.hidden = true;
+  }
+}
+
 export function renderWorkspaceSelector(workspaces, onSelect) {
+  hideDeckDots();
   const grid = document.getElementById("grid");
 
   // Explicitly cleared, not just left alone: arriving here from "Switch deck" means
@@ -874,6 +900,11 @@ export function setAgentOffline(agent, isOffline) {
   } else {
     offlineAgents.delete(agent);
   }
+  markAgentTiles(agent, isOffline);
+  updateClockTakeover();
+}
+
+function markAgentTiles(agent, isOffline) {
   // Scoped to the agent named in the agent_status message: with more than
   // one agent connected, one disconnecting must not grey out the other's
   // tiles. data-target is set from item.target when the tile is rendered.
@@ -891,10 +922,58 @@ export function setAgentOffline(agent, isOffline) {
     }
     tile.classList.toggle("tile-offline", isOffline);
   }
-  updateClockTakeover();
+}
+
+// One dot per deck, in a row of their own under the header, when there is
+// more than one: where a swipe will go, and a way to get there without
+// swiping. Not inside the header: the deck name already shares that row
+// with three controls, and the dots squeezed it to a single letter.
+// Hidden on the picker and the error screen.
+export function renderDeckDots(workspaces, currentId, onSelect) {
+  const header = document.getElementById("workspace-header");
+  let dots = document.getElementById("deck-dots");
+  if (!dots && header) {
+    dots = document.createElement("div");
+    dots.id = "deck-dots";
+    dots.className = "deck-dots";
+    header.insertAdjacentElement("afterend", dots);
+  }
+  if (!dots) {
+    return;
+  }
+  dots.replaceChildren();
+  dots.hidden = workspaces.length < 2;
+  workspaces.forEach((workspace, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "deck-dot";
+    const current = workspace.id === currentId;
+    dot.classList.toggle("is-current", current);
+    dot.setAttribute("aria-label", `Deck ${index + 1} of ${workspaces.length}: ${workspace.name}`);
+    if (current) {
+      dot.setAttribute("aria-current", "true");
+    }
+    dot.addEventListener("click", () => onSelect(workspace, index));
+    dots.appendChild(dot);
+  });
+}
+
+// A short slide in from the side the new deck came from. CSS-only, and
+// reduced motion turns it off (css/grid.css).
+export function markDeckEntrance(direction) {
+  const grid = document.getElementById("grid");
+  if (!grid) {
+    return;
+  }
+  grid.classList.remove("deck-enter-next", "deck-enter-prev");
+  // Reflow between remove and add, or a second swipe in the same direction
+  // would not replay the animation.
+  void grid.offsetWidth;
+  grid.classList.add(direction > 0 ? "deck-enter-next" : "deck-enter-prev");
 }
 
 export function renderError(message) {
+  hideDeckDots();
   const grid = document.getElementById("grid");
   destroyWidgets();
   grid.innerHTML = "";

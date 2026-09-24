@@ -1,20 +1,26 @@
-name: Build ITDeck.exe and publish release
+name: Build ITDeck.exe (tag) / publish a release (manual)
 
-# The thing this exists to fix: v0.3.0 and v0.3.1 were tagged with no
-# downloadable exe attached, so "install IT-Deck" meant "clone the repo and
-# build it yourself on every PC you want to control". standalone/build.ps1 is
-# a Windows-only PyInstaller build, so it needs a windows runner -- the
-# existing build.yml (GHCR backend image) is ubuntu and cannot do this.
+# Two jobs in one, split by how the run started:
+#
+# - A pushed v*.*.* tag BUILDS the exe and keeps it as a workflow artifact
+#   (Actions -> the run -> Artifacts). Nothing is published: a tag is a
+#   milestone, and users' update check (launcher.py, releases/latest) must not
+#   see it. This is also the only place the real Windows build is exercised.
+# - Running the workflow by hand (Actions -> this workflow -> Run workflow,
+#   with an existing tag) builds the same exe and PUBLISHES it as a GitHub
+#   release -- after checking that the tag matches ITDECK_VERSION and that the
+#   version has its "What's new" entry (scripts/check_release.py).
+#
+# standalone/build.ps1 is a Windows-only PyInstaller build, so this needs a
+# windows runner.
 on:
   push:
     tags:
       - "v*.*.*"
-  # Also runnable by hand, so a tag that was already pushed without an exe
-  # (v0.3.0, v0.3.1) can be given one without re-tagging.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach the exe to"
+        description: "Existing tag to build and publish as a release (e.g. v0.5.6)"
         required: true
 
 permissions:
@@ -38,6 +44,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Before the build, so a release that would ship without its "What's
+      # new" entry (or with a stale version number) fails in seconds.
+      - name: Check the release is ready
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/check_release.py "${{ github.event.inputs.tag }}"
 
       - name: Install dependencies
         run: |
@@ -67,6 +79,7 @@ jobs:
             --paths "$ws\agents\windows" `
             --add-data "$ws\frontend;frontend" `
             --add-data "$ws\agents\windows\tools\SoundVolumeView.exe;tools" `
+            --add-data "$ws\agents\windows\tools\readme.txt;tools" `
             --add-data "$ws\agents\windows\icon.ico;." `
             --icon "$ws\agents\windows\icon.ico" `
             --distpath "$ws\standalone\dist" `
@@ -85,14 +98,29 @@ jobs:
           # the real thing is ~26 MB, so anything tiny is a failed build.
           if ($size -lt 10MB) { throw "ITDeck.exe is implausibly small ($size bytes)" }
 
+      - name: Keep the exe as a build artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ITDeck-${{ github.ref_name }}
+          path: standalone/dist/ITDeck.exe
+          retention-days: 30
+
       - name: Publish the release
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           # Keeps hand-written release notes if the release already exists,
           # and generates them from commits if it doesn't.
           generate_release_notes: true
-          files: standalone/dist/ITDeck.exe
+          # The licence and the third-party notices travel with the exe:
+          # PolyForm asks that every copy carries its terms, and the notices
+          # say what the exe bundles (SoundVolumeView among it).
+          files: |
+            standalone/dist/ITDeck.exe
+            LICENSE
+            THIRD-PARTY-NOTICES.md
           body: |
             Download **ITDeck.exe** below and run it — the PC that runs it
             needs nothing installed, not even Python.
@@ -101,3 +129,7 @@ jobs:
             for what changed, and the
             [README](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/README.md)
             for setup.
+
+            IT-Deck is free for personal and other non-commercial use under the
+            [PolyForm Noncommercial License 1.0.0](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/LICENSE);
+            what it bundles is listed in THIRD-PARTY-NOTICES.md.

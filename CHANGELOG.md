@@ -7,6 +7,254 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## Unreleased
+
+---
+
+## v0.5.7 — 2026-09-24
+
+**The public release.** It includes the internal milestones v0.5.2 to
+v0.5.6 below; an install on v0.5.1 updates straight to it and keeps its
+tiles, decks and tokens.
+
+### Fixed
+
+- The tutorial and What's new overlays showed an empty black window and
+  stuttered on every page turn. They now sit on Studio's own background,
+  with its purple and teal glows. The card keeps one size across pages,
+  Back stays in place (greyed on page 1, left of the main button), and a
+  page turn changes only text.
+
+### Changed
+
+- README (EN/RU) covers everything since v0.5.1: the new tiles, several
+  decks, tokens, being easy on games and settings surviving updates.
+- CLAUDE.md gains the commands, the release rules and the conventions for
+  logos, performance and the PC window.
+- **NirSoft's `readme.txt` ships with SoundVolumeView.** It is committed next
+  to the exe in `agents/windows/tools/` and bundled into `ITDeck.exe` by both
+  `build.ps1` and the release workflow, so the NirSoft package goes out
+  complete.
+
+---
+
+## v0.5.6 — 2026-09-24
+
+Internal milestone; published together with the rest as v0.5.7.
+
+### Added
+
+- **The PC window looks like Studio.** Studio's own dark Liquid Glass tokens
+  (a test reads them back from the CSS), with rounded panels, buttons and
+  fields drawn as antialiased images, Studio's accent badge, setup-card
+  update notice, `.btn` styles and focus ring. Without Pillow it falls back
+  to flat colours.
+- **Game and launcher logos:** Valorant, League of Legends, Riot Games,
+  Counter-Strike, Dota 2, PUBG, Fortnite, Roblox, Rockstar Games, FACEIT,
+  Epic Games, Battle.net, EA, Ubisoft, GOG and PlayStation. Installed games
+  pick them up by name.
+- **`LICENSE`** (PolyForm Noncommercial 1.0.0) and
+  **`THIRD-PARTY-NOTICES.md`**, which lists what is bundled or used and on
+  what terms, plus what would have to change before charging money. Both
+  are attached to a published release.
+- The weather widget's setup credits Open-Meteo (CC BY 4.0), as its data
+  licence requires.
+
+### Changed
+
+- The window follows `config.env` by its modification time: one `stat()`
+  every 2 s instead of a read and parse.
+- `docs/DEVELOPMENT.md` §13 has measured costs: an agent state tick is about
+  0.1 ms once a second while a phone is open.
+
+---
+
+## v0.5.5 — 2026-09-24
+
+Internal milestone; published together with the rest as v0.5.7.
+
+### Added
+
+- **PC load widget.** CPU and memory as bars, network speed as text, live
+  on the phone. It is read only while a phone is looking, like all the
+  deck's state.
+- **Decks as files.** Studio → **Decks** can:
+  - download the deck on screen as a file;
+  - add a deck from a file;
+  - start one from a template (Streamer, Work).
+
+  An import always creates a new deck. It is checked by the same rules as a
+  tile saved in Studio, and a bad file adds nothing.
+- **Swipe between decks** on the phone, with dots under the header that
+  show where you are and switch decks with a tap.
+
+### Changed
+
+- A finger that moves more than a few pixels on a tile no longer presses
+  it. It is treated as a drag, which is also what lets a swipe start on a
+  tile.
+- Widgets can subscribe to the agent's live state (`ctx.onState`). The clock
+  is unaffected.
+
+---
+
+## v0.5.4 — 2026-09-24
+
+Internal milestone; published together with later work as v0.5.7.
+
+### Added
+
+- **Hotkey tile.** It presses a key combination on the PC, such as
+  `ctrl+shift+m` for Discord's mute, `alt+tab` or `win+d`. Some games and
+  anti-cheat systems ignore synthetic keys by design.
+- **Media key tile:** play/pause, next, previous, stop, volume up/down, for
+  whatever is playing.
+- **Power tile:** lock, sleep, restart or shut down. It asks "Run?" on the
+  phone first.
+- **Send text tile.** Type on the phone and it lands on the PC's clipboard,
+  ready to paste (up to 100,000 characters).
+- **"Ask before running"** is an option for any tile, under More settings in
+  Studio. It is on by default for Power, Program on/off and Close agent, so
+  a mis-tap can no longer stop the VPN (tech debt #21).
+
+### Tests
+
+- A new check ties every Studio tile type to an agent command, an icon and
+  its strings, so a tile can't ship half-wired.
+
+---
+
+## v0.5.3 — 2026-09-24
+
+Internal milestone; published together with later work as v0.5.7.
+
+### Added
+
+- **Change the tokens without editing files.**
+  - Studio → **Access** shows the phone token and changes either token. It
+    has a **Random PIN** button.
+  - The IT-Deck window gets a **New phone PIN** button.
+  - Changes apply immediately. Phones on the old token are signed out and
+    ask for the new one once; Studio switches to its new token by itself;
+    the window's link and QR code update within two seconds.
+  - A legacy Docker install shows the tokens read-only; they live in `.env`
+    on the server.
+- **"What's new" after an update.**
+  - The IT-Deck window shows a short card once per version: "Got it" and
+    "All changes".
+  - Studio has a quiet **What's new** button with a dot until it has been
+    opened.
+  - New installs see the tour instead. The phone never shows it.
+  - The notes live in `frontend/whats-new.json`, and a release is refused
+    without an entry for its version.
+- **Start with Windows**: a checkbox in the IT-Deck window, off by default.
+  Uninstall removes it.
+
+---
+
+## v0.5.2 — 2026-09-24
+
+Internal milestone; published together with later work as v0.5.7.
+
+A full audit of the backend, agent, frontend, launcher and infrastructure. No
+feature was removed. Nothing changes for a deck that was already working; the
+fixes are for the situations below. Details are in `docs/ARCHITECTURE.md` and
+the Tech Reference §3, §5 and §12.
+
+### Bug fixes
+
+- **An agent that restarted was reported offline while it was connected.**
+  The old connection's cleanup removed the new one, so every tap answered
+  "agent offline" until the next restart.
+- **A tile named "Spotify" (or "Lights", "Sleep PC") was deleted on every
+  start, and one named "Camera" was turned into a mic button.** Old startup
+  clean-ups matched on the name alone.
+- **Deleted or renamed built-in tiles came back on restart** (Headphones,
+  Audio Switch, Screenshot, VPN, Close Agent). Each built-in insert now runs
+  once per database.
+- **Tiles looked live while the agent was away** after any Studio edit. The
+  grey "offline" look now survives a redraw.
+- **The phone could take up to 30 s to reconnect** after being picked up.
+  It now reconnects as soon as the page is visible again or the network
+  returns.
+- **After a backend restart, the agent could wait 30 s to reconnect.** It
+  now retries after 1 s when the connection had been working.
+- **One bad message could drop the agent's connection**, e.g. an
+  unparseable site address for a site icon. Every command now gets an
+  answer, error or not.
+- **A PC with no microphone sent no state at all.** One failing reading
+  used to throw away the whole update; each value is now read on its own.
+- Failed sends to the agent are answered "agent offline" at once instead of
+  after a 5 s timeout. Unknown commands get an error reply instead of none.
+- Editing a tile with an empty width or height returned a server error
+  instead of a clear message.
+- With browser storage blocked, the deck did not load at all.
+- Uninstall left files and firewall rules behind, and no desktop shortcut
+  was made, when the Windows user name contained an apostrophe.
+- The deck works behind the HTTPS proxy from the Ansible playbook (the
+  WebSocket used `ws://` on an `https://` page).
+
+### Security
+
+- The phone can no longer send arbitrary agent commands through the
+  long-press override; only Force Stop is accepted.
+- The client token no longer appears in `backend.log` (the dashboard link
+  carries it as `?token=`).
+- Tokens are compared in constant time, in one place (`backend/app/auth.py`).
+- A tile's settings must be a JSON object; other JSON is refused on save.
+
+### Performance
+
+- **IT-Deck stays out of a game's way.**
+  - While no phone or PC browser has the deck open, the agent stops reading
+    audio and VPN state. It starts again the moment one connects.
+  - The backend and the agent's working thread run at below-normal priority.
+    Programs launched from a tile still start at normal priority.
+- The VPN tile's state no longer walks the process list every second.
+- `backend.log` no longer gets a line every second from the agent's state
+  updates (tens of MB a day). The launcher rolls each log to `.1` past 5 MB.
+- The SQLite `synchronous=NORMAL` setting now applies to every connection,
+  not just the first.
+
+### Refactoring
+
+- Both WebSocket endpoints share one handshake and frame reader
+  (`backend/app/ws/protocol.py`); the agent's command dispatch is its own
+  pure module (`agents/windows/dispatch.py`).
+- Startup uses FastAPI's `lifespan` instead of the deprecated `on_event`.
+- New `schema_migration` table (additive) records one-time data fixes.
+
+### Infrastructure
+
+- **A pushed version tag no longer publishes anything.**
+  - It builds the exe and keeps it as a workflow artifact, and builds the
+    Docker image without pushing it.
+  - Releases are published by running the workflow by hand.
+    `scripts/check_release.py` refuses a release whose version isn't bumped.
+- CI gains a fast Linux job: ruff, pytest and the frontend checks.
+  `pyproject.toml` holds the ruff and pytest settings.
+- Docker: a `HEALTHCHECK`, a `.dockerignore`, and log rotation in
+  `docker-compose.yml`. Successful health probes are not logged.
+- `check.sh` updated for the quieter log.
+- `.bat`/`.ps1` files check out with Windows line endings.
+- The legacy Scheduled Task no longer stops the agent after 72 hours.
+
+### Tests
+
+- New: the WebSocket endpoints (including the reconnect race), the startup
+  fixups on scratch databases, agent dispatch, input validation, and a check
+  that the theme lists agree everywhere they are copied. 31 → 59 Python
+  tests, 5 → 6 frontend tests.
+
+### Documentation
+
+- New `CONTRIBUTING.md` (setup, checks, rules, releasing), linked from both
+  READMEs.
+- New `docs/DEVELOPMENT.md` (quick start, architecture, protocol, debugging,
+  extension recipes) and `docs/ARCHITECTURE.md` (decision records).
+
+---
+
 ## v0.5.1 — 2026-09-24
 
 ### Fixed

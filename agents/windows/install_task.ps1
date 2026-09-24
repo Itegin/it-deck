@@ -50,9 +50,12 @@ $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interact
 # Windows Task Scheduler rejects a sub-1-minute RestartInterval -- a 30s
 # value was tried here and failed live ("Interval:PT30S" registration
 # error), so 1 minute is the floor, not a rounding quirk to work around.
+# ExecutionTimeLimit zero = no limit. The default is 72 hours, after which
+# Task Scheduler stops the agent -- a long-running process, not a job.
 $settings = New-ScheduledTaskSettingsSet `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -StartWhenAvailable
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null

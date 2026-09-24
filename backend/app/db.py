@@ -14,6 +14,11 @@ def get_connection() -> sqlite3.Connection:
     # sqlite3 defaults FK enforcement to off per-connection; item.workspace_id's
     # ON DELETE CASCADE only fires if this is set on every connection that writes.
     conn.execute("PRAGMA foreign_keys = ON")
+    # NORMAL only fsyncs at WAL checkpoints, not every commit; safe under WAL
+    # (survives app crashes) and far faster than FULL for a local single-user
+    # app. Per connection like foreign_keys: set once in init_db() it only
+    # ever applied to that one connection.
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -23,10 +28,8 @@ def init_db() -> None:
     try:
         # WAL lets the UI (reader) and agent actions (writer) hit the db at the
         # same time instead of blocking each other behind sqlite's default lock.
+        # Persistent: stored in the database file, so once is enough.
         conn.execute("PRAGMA journal_mode=WAL")
-        # NORMAL only fsyncs at WAL checkpoints, not every commit; safe under WAL
-        # (survives app crashes) and far faster than FULL for a local single-user app.
-        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS workspace (
@@ -70,6 +73,17 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            -- Which one-shot fixups this database has already had. The
+            -- insert-type fixups used to decide by looking for their own
+            -- label, so a seeded tile the user deleted or renamed came back
+            -- on the next start (see _run_once below). Additive: an older
+            -- build ignores the table, and a database without it gets it
+            -- here on first start.
+            CREATE TABLE IF NOT EXISTS schema_migration (
+                name TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
             """
         )
         # The quick-launch bar (v0.5.0). A schema step, not a value fixup: it
@@ -84,6 +98,17 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _already_applied(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM schema_migration WHERE name = ?", (name,)).fetchone() is not None
+
+
+def _mark_applied(conn: sqlite3.Connection, name: str) -> None:
+    # Same connection and transaction as the fixup's own writes, committed
+    # together by the caller: a crash between the two can't leave a fixup
+    # recorded as done that never ran, or run twice.
+    conn.execute("INSERT OR IGNORE INTO schema_migration (name) VALUES (?)", (name,))
 
 
 def seed_if_empty() -> None:
@@ -216,7 +241,17 @@ def fixup_remove_placeholder_tiles() -> None:
     # to migrate these into, they're just gone.
     conn = get_connection()
     try:
-        conn.execute("DELETE FROM item WHERE label IN ('Lights', 'Spotify', 'Sleep PC')")
+        # Guarded on the placeholder's own dead type as well as its label.
+        # Label alone deleted any tile a user named "Spotify" -- a shipped
+        # website preset and logo -- on every single start.
+        conn.execute(
+            """
+            DELETE FROM item
+            WHERE (label = 'Lights' AND type = 'toggle')
+               OR (label = 'Spotify' AND type = 'launch')
+               OR (label = 'Sleep PC' AND type = 'run')
+            """
+        )
         conn.commit()
     finally:
         conn.close()
@@ -226,6 +261,9 @@ def fixup_mic_item() -> None:
     # Same idempotent backfill approach as fixup_legacy_seed(): converts the
     # placeholder 'Camera' row left by seed_if_empty into the real mic mute
     # toggle action. No-op once the row already matches, safe every startup.
+    # Guarded on the placeholder's type ('toggle', which no handler serves):
+    # on the label alone, any action tile a user named "Camera" was turned
+    # into a mic button on the next start.
     conn = get_connection()
     try:
         conn.execute(
@@ -236,7 +274,7 @@ def fixup_mic_item() -> None:
                 target = 'windows',
                 params = '{"device":"microphone","active_style":"alert"}',
                 state_key = 'mic.muted'
-            WHERE label = 'Camera' AND kind = 'action'
+            WHERE label = 'Camera' AND kind = 'action' AND type = 'toggle'
             """
         )
         # The UPDATE above only ever matches once -- the label flips away
@@ -322,8 +360,15 @@ def fixup_day4_items() -> None:
     # takes the row1/col2 cell that move vacates. Must run after it in
     # main.py's startup sequence, or the two fixups briefly disagree about
     # who owns that cell.
+    #
+    # One-shot since schema_migration: the per-label check below still stops a
+    # duplicate on the first run after an upgrade, and the record stops the
+    # run after that from putting back a tile the user has since deleted or
+    # renamed (tech debt #24).
     conn = get_connection()
     try:
+        if _already_applied(conn, "day4_items"):
+            return
         (workspace_id,) = conn.execute(
             "SELECT id FROM workspace ORDER BY position LIMIT 1"
         ).fetchone()
@@ -349,6 +394,7 @@ def fixup_day4_items() -> None:
                 """,
                 (workspace_id, row, col, width, label, icon, kind, type_, target, params, state_key),
             )
+        _mark_applied(conn, "day4_items")
         conn.commit()
     finally:
         conn.close()
@@ -360,8 +406,13 @@ def fixup_audio_switch_state_key() -> None:
     # speaker.device_name. Guarded by state_key IS NULL (not a plain label
     # match) so a manual state_key set via Studio isn't clobbered on the
     # next startup, unlike fixup_volume_item()'s always-reapply pattern.
+    #
+    # One-shot as well: `state_key IS NULL` also matched a state_key the user
+    # had cleared on purpose, and refilled it on every start.
     conn = get_connection()
     try:
+        if _already_applied(conn, "audio_switch_state_key"):
+            return
         conn.execute(
             """
             UPDATE item
@@ -369,6 +420,7 @@ def fixup_audio_switch_state_key() -> None:
             WHERE label = 'Audio Switch' AND kind = 'action' AND state_key IS NULL
             """
         )
+        _mark_applied(conn, "audio_switch_state_key")
         conn.commit()
     finally:
         conn.close()
@@ -395,8 +447,8 @@ def fixup_toggle_off_colors() -> None:
     # must fire once on an unmigrated install and never again, or it would
     # revert a colour deliberately chosen in Studio on the next restart --
     # the scar fixup_volume_item() documents. It touches `color` only, which no
-    # other fixup writes for either row, so fixup_mic_item()'s unguarded
-    # params/icon UPDATE cannot undo it either.
+    # other fixup writes for either row, so fixup_mic_item()'s params/icon
+    # UPDATEs cannot undo it either.
     conn = get_connection()
     try:
         conn.execute(
@@ -431,9 +483,17 @@ def fixup_close_agent_item() -> None:
     # does not respawn (see AGENT_DELIBERATE_EXIT_CODES). With the console now
     # hidden there is no way to start it again from the desktop -- quit
     # IT-Deck from its window and relaunch.
+    #
+    # One-shot once the tile exists (inserted here or found already there), so
+    # deleting it in Studio sticks. A full grid is not recorded: the next start
+    # tries again, as it always has.
     conn = get_connection()
     try:
+        if _already_applied(conn, "close_agent_item"):
+            return
         if conn.execute("SELECT 1 FROM item WHERE label = 'Close Agent'").fetchone():
+            _mark_applied(conn, "close_agent_item")
+            conn.commit()
             return
 
         grid = conn.execute(
@@ -483,6 +543,7 @@ def fixup_close_agent_item() -> None:
             """,
             cell,
         )
+        _mark_applied(conn, "close_agent_item")
         conn.commit()
     finally:
         conn.close()
@@ -503,11 +564,11 @@ def fixup_widget_types() -> None:
     label. On the install that reported this, that fallback was the Terminal
     tile the widget had replaced, reappearing after every restart.
 
-    `clock_weather` is not a guess here: it is the only registered widget
-    type there has ever been (js/widgets/index.js, and CLAUDE.md's "keep in
-    step" list). **If a second widget type is ever added, this fixup has to
-    learn how to tell them apart or stop running** -- by then the damaged
-    rows it exists for are long since repaired.
+    `clock_weather` is not a guess here: it was the only widget type when
+    that bug existed, so every row it damaged was a clock. The second widget
+    (`pc_stats`, v0.5.5) came long after the bug was fixed and is never
+    stored as `launch_app`, so the match below can only ever find the old
+    damage -- keep it that narrow if more widget types are added.
     """
     conn = get_connection()
     try:
@@ -566,8 +627,13 @@ def fixup_vpn_item() -> None:
     # workspace, which gets id=1), but it's worth knowing this fixup
     # would silently insert against the wrong workspace if that ever
     # changes, where fixup_day4_items() would not.
+    #
+    # One-shot since schema_migration, for the same reason as
+    # fixup_day4_items(): a deleted VPN tile used to come back on every start.
     conn = get_connection()
     try:
+        if _already_applied(conn, "vpn_item"):
+            return
         conn.execute(
             """
             INSERT INTO item (workspace_id, row, col, width, height, label, icon,
@@ -577,6 +643,7 @@ def fixup_vpn_item() -> None:
             WHERE NOT EXISTS (SELECT 1 FROM item WHERE label='VPN')
             """
         )
+        _mark_applied(conn, "vpn_item")
         conn.commit()
     finally:
         conn.close()

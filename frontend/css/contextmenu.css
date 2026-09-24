@@ -66,3 +66,30 @@
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
 }
+
+/* The Send-text sheet's box. 16px on purpose: iOS Safari zooms the page into
+   any field smaller than that when it takes focus, and leaves it zoomed. */
+.context-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 32px);
+  margin: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 16px;
+  resize: none;
+}
+
+.context-textarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.context-row:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}

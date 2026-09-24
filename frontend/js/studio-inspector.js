@@ -19,7 +19,7 @@
 //   sequence and against its element still being on the page, so a slow
 //   reply can't fill in a tile the person has since moved away from.
 
-import { ICONS, ICON_TEXT, ICON_IMAGE, BRAND_PREFIX, iconText, isIconImage } from "./render.js";
+import { ICONS, ICON_TEXT, ICON_IMAGE, BRAND_PREFIX, hasEntry, iconText, isIconImage } from "./render.js";
 import { BRAND_ICONS, BRAND_NAMES } from "./brand-icons.js";
 import {
   CATALOG,
@@ -52,9 +52,10 @@ const DEFAULT_COLORS = {
 
 const SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">';
-// Type-card glyphs for the two entries with no tile icon of their own.
+// Type-card glyphs for the entries with no tile icon of their own.
 const CARD_GLYPHS = {
   clock_weather: `${SVG_OPEN}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
+  pc_stats: `${SVG_OPEN}<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 12l3-3 3 2 4-4M8 20h8"/></svg>`,
   custom: `${SVG_OPEN}<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>`,
 };
 
@@ -370,7 +371,7 @@ export function createInspector(root, ctx) {
         checked: entry === state.entry,
         onChange: () => switchEntry(entry.id),
       }),
-      h("span", { class: "type-icon", html: ICONS[entry.icon] || CARD_GLYPHS[entry.id] || CARD_GLYPHS.custom }),
+      h("span", { class: "type-icon", html: hasEntry(ICONS, entry.icon) ? ICONS[entry.icon] : CARD_GLYPHS[entry.id] || CARD_GLYPHS.custom }),
       h("span", { class: "type-name", text: entryName(entry) }),
       h("span", { class: "type-desc", text: t(`type.${entry.id}.desc`) }),
     ]);
@@ -831,6 +832,15 @@ export function createInspector(root, ctx) {
           ]),
         ]),
       ]),
+      // Open-Meteo's data is CC BY 4.0: the credit and the licence link are
+      // a condition of using it, so they sit where the weather is set up.
+      h("p", { class: "field-hint" }, [
+        `${t("city.credit")} `,
+        h("a", { href: "https://open-meteo.com/", target: "_blank", rel: "noopener noreferrer", text: "Open-Meteo.com" }),
+        " (",
+        h("a", { href: "https://creativecommons.org/licenses/by/4.0/", target: "_blank", rel: "noopener noreferrer", text: "CC BY 4.0" }),
+        ")",
+      ]),
     ]);
   }
 
@@ -885,7 +895,7 @@ export function createInspector(root, ctx) {
           text: t(`icon.mode.${m}`),
           onClick: () => {
             if (m === mode) return;
-            if (m === "symbol") draft.icon = state.entry.icon && ICONS[state.entry.icon] ? state.entry.icon : "";
+            if (m === "symbol") draft.icon = hasEntry(ICONS, state.entry.icon) ? state.entry.icon : "";
             else if (m === "brand") draft.icon = `${BRAND_PREFIX}${Object.keys(BRAND_ICONS)[0]}`;
             else if (m === "text") draft.icon = ICON_TEXT;
             else draft.icon = ICON_IMAGE;
@@ -918,7 +928,7 @@ export function createInspector(root, ctx) {
     if (mode === "symbol") {
       panel = radioGrid(
         [["", null, t("icon.none")], ...Object.entries(ICONS).map(([key, svg]) => [key, svg, key])],
-        (key) => draft.icon === key || (!key && !ICONS[draft.icon]),
+        (key) => draft.icon === key || (!key && !hasEntry(ICONS, draft.icon)),
       );
     } else if (mode === "brand") {
       panel = radioGrid(
