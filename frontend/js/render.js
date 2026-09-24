@@ -1,5 +1,5 @@
 import { attachLongPress } from "./longpress.js";
-import { mountWidget, destroyWidgets } from "./widgets/index.js";
+import { mountWidget, destroyWidgets, notifyWidgets } from "./widgets/index.js";
 import { BRAND_ICONS } from "./brand-icons.js";
 
 const SLIDER_THROTTLE_MS = 100;
@@ -429,7 +429,7 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // Also after the append: a widget lays itself out with container queries,
   // and those need a tile that is in the document and has a size.
   for (const [tile, item] of widgets) {
-    mountWidget(tile, item);
+    mountWidget(tile, item, { state: knownState });
   }
 
   // Last, and it has to be here rather than only on the events that change
@@ -562,6 +562,7 @@ const knownState = {};
 
 export function updateTileState(stateData) {
   Object.assign(knownState, stateData);
+  notifyWidgets(stateData);
   for (const [key, value] of Object.entries(stateData)) {
     const tiles = document.querySelectorAll(`.tile[data-state-key="${CSS.escape(key)}"]`);
 
@@ -638,7 +639,15 @@ export function updateTileState(stateData) {
 // than inventing selector-specific markup -- one workspace per row, full
 // width, stacked via --cols:1/--rows:<count> on the same #grid the
 // dashboard uses.
+function hideDeckDots() {
+  const dots = document.getElementById("deck-dots");
+  if (dots) {
+    dots.hidden = true;
+  }
+}
+
 export function renderWorkspaceSelector(workspaces, onSelect) {
+  hideDeckDots();
   const grid = document.getElementById("grid");
 
   // Explicitly cleared, not just left alone: arriving here from "Switch deck" means
@@ -915,7 +924,56 @@ function markAgentTiles(agent, isOffline) {
   }
 }
 
+// One dot per deck, in a row of their own under the header, when there is
+// more than one: where a swipe will go, and a way to get there without
+// swiping. Not inside the header: the deck name already shares that row
+// with three controls, and the dots squeezed it to a single letter.
+// Hidden on the picker and the error screen.
+export function renderDeckDots(workspaces, currentId, onSelect) {
+  const header = document.getElementById("workspace-header");
+  let dots = document.getElementById("deck-dots");
+  if (!dots && header) {
+    dots = document.createElement("div");
+    dots.id = "deck-dots";
+    dots.className = "deck-dots";
+    header.insertAdjacentElement("afterend", dots);
+  }
+  if (!dots) {
+    return;
+  }
+  dots.replaceChildren();
+  dots.hidden = workspaces.length < 2;
+  workspaces.forEach((workspace, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "deck-dot";
+    const current = workspace.id === currentId;
+    dot.classList.toggle("is-current", current);
+    dot.setAttribute("aria-label", `Deck ${index + 1} of ${workspaces.length}: ${workspace.name}`);
+    if (current) {
+      dot.setAttribute("aria-current", "true");
+    }
+    dot.addEventListener("click", () => onSelect(workspace, index));
+    dots.appendChild(dot);
+  });
+}
+
+// A short slide in from the side the new deck came from. CSS-only, and
+// reduced motion turns it off (css/grid.css).
+export function markDeckEntrance(direction) {
+  const grid = document.getElementById("grid");
+  if (!grid) {
+    return;
+  }
+  grid.classList.remove("deck-enter-next", "deck-enter-prev");
+  // Reflow between remove and add, or a second swipe in the same direction
+  // would not replay the animation.
+  void grid.offsetWidth;
+  grid.classList.add(direction > 0 ? "deck-enter-next" : "deck-enter-prev");
+}
+
 export function renderError(message) {
+  hideDeckDots();
   const grid = document.getElementById("grid");
   destroyWidgets();
   grid.innerHTML = "";

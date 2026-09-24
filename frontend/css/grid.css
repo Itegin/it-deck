@@ -223,3 +223,87 @@ body.has-dock:not(.deck-takeover) #grid {
     padding-left: 10px;
   }
 }
+
+/* ── Swiping between decks (js/swipe.js) ─────────────────────────────────── */
+
+/* Horizontal pans belong to the page here, so a sideways swipe reaches the
+   deck-switching handler instead of being claimed by the browser (which
+   would cancel the pointer mid-swipe). Vertical pans and pinch-zoom are
+   left as they were; the tiles' own manipulation still intersects with
+   this, so double-tap zoom stays off. */
+#deck {
+  touch-action: pan-y pinch-zoom;
+}
+
+.deck-dots {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  padding-top: 4px;
+  flex: 0 0 auto;
+}
+
+.deck-dots[hidden] {
+  display: none;
+}
+
+/* A 24px target around an 8px dot: small to look at, not to hit. */
+.deck-dot {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.deck-dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  opacity: 0.45;
+}
+
+.deck-dot.is-current::before {
+  background: var(--color-text);
+  opacity: 1;
+}
+
+.deck-dot:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: 50%;
+}
+
+#grid.deck-enter-next {
+  animation: deck-enter-next 180ms ease-out;
+}
+
+#grid.deck-enter-prev {
+  animation: deck-enter-prev 180ms ease-out;
+}
+
+@keyframes deck-enter-next {
+  from {
+    transform: translateX(24px);
+    opacity: 0.4;
+  }
+}
+
+@keyframes deck-enter-prev {
+  from {
+    transform: translateX(-24px);
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #grid.deck-enter-next,
+  #grid.deck-enter-prev {
+    animation: none;
+  }
+}

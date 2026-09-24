@@ -2,18 +2,18 @@
   {
     "version": "0.5.6",
     "en": [
-      "Change the phone and Studio tokens in Studio → Access, or get a new phone PIN from the IT-Deck window.",
-      "Easier on games: IT-Deck pauses while no phone is looking at it and runs at lower priority.",
-      "The phone reconnects the moment you pick it up.",
-      "Your tiles stay the way you left them: deleted ones no longer come back after a restart.",
-      "IT-Deck can start with Windows — tick the box in its window."
+      "New tiles: hotkeys and media keys, Power (asks before it acts), Send text to the PC's clipboard, and a live PC-load widget.",
+      "Swipe between decks on the phone. Save a deck to a file, load one, or start from a template in Studio → Decks.",
+      "Change the tokens in Studio → Access, or get a new phone PIN from this window. IT-Deck can also start with Windows.",
+      "Easier on games: IT-Deck pauses while no phone is looking at it and runs at lower priority. The phone reconnects as soon as you pick it up.",
+      "Your tiles stay the way you left them: deleted ones no longer come back after a restart."
     ],
     "ru": [
-      "Токены телефона и Studio меняются в Studio → Доступ, а новый PIN для телефона — прямо в окне IT-Deck.",
-      "Бережнее к играм: IT-Deck замирает, пока на него не смотрит телефон, и работает с пониженным приоритетом.",
-      "Телефон переподключается сразу, как только берёшь его в руки.",
-      "Плитки остаются такими, какими ты их оставил: удалённые больше не возвращаются после перезапуска.",
-      "IT-Deck может запускаться вместе с Windows — галочка в его окне."
+      "Новые плитки: горячие и медиаклавиши, «Питание» (спрашивает перед действием), отправка текста в буфер обмена ПК и живой виджет нагрузки ПК.",
+      "Деки листаются свайпом на телефоне. Деку можно сохранить в файл, загрузить или начать с шаблона: Studio → Деки.",
+      "Токены меняются в Studio → Доступ, а новый PIN для телефона — прямо в этом окне. IT-Deck может запускаться вместе с Windows.",
+      "Бережнее к играм: IT-Deck замирает, пока на него не смотрит телефон, и работает с пониженным приоритетом. Телефон переподключается сразу, как только берёшь его в руки.",
+      "Плитки остаются такими, какими ты их оставил: удалённые больше не возвращаются после перезапуска."
     ]
   }
 ]

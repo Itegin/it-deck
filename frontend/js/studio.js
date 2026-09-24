@@ -17,6 +17,7 @@ import { ICONS } from "./render.js";
 import { initGuide, isFirstVisit } from "./studio-guide.js";
 import { initAccess } from "./studio-access.js";
 import { initWhatsNew } from "./studio-whats-new.js";
+import { initDecks } from "./studio-decks.js";
 
 const grid = document.getElementById("preview-grid");
 const previewDock = document.getElementById("preview-dock");
@@ -559,6 +560,17 @@ initAccess(document.getElementById("access-dialog"), document.getElementById("ac
   request: api,
   currentAgentToken: () => agentToken,
   onAgentToken: rememberAgentToken,
+  showToast,
+});
+initDecks(document.getElementById("decks-dialog"), document.getElementById("decks-btn"), {
+  request: api,
+  currentWorkspace,
+  // Straight to the new deck: it is what the person just asked for.
+  onImported: async (id) => {
+    await loadItems();
+    workspaceSelect.value = String(id);
+    workspaceSelect.dispatchEvent(new Event("change"));
+  },
   showToast,
 });
 loadItems();

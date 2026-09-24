@@ -1142,6 +1142,44 @@ body.studio {
   gap: 6px;
 }
 
+.decks-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.decks-section {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  padding: 12px 0;
+  border-top: 1px solid var(--studio-hairline);
+}
+
+.decks-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.decks-dialog .field-hint,
+.decks-dialog .message {
+  margin: 0;
+}
+
+.decks-templates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.decks-templates li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 /* The unread marker: the one accent dot in the bar, and it goes away on the
    first click. Relative to the button so it sits on its corner. */
 .whats-new-btn {

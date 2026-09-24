@@ -238,6 +238,21 @@ export const CATALOG = [
     ],
   },
   {
+    id: "pc_stats",
+    group: "widgets",
+    kind: "widget",
+    type: "pc_stats",
+    // Unlike the clock, this one shows the agent's data, so it names the
+    // agent whose PC it describes. Widgets are never greyed or pressed, so
+    // the target only picks the state keys (see js/widgets/pc-stats.js).
+    target: "windows",
+    stateKey: null,
+    icon: null,
+    defaultWidth: 2,
+    fixedParams: {},
+    fields: [],
+  },
+  {
     // Anything the table above doesn't recognise. Keeps hand-made and legacy
     // tiles editable exactly as before: a raw type and raw params.
     id: "custom",
@@ -264,7 +279,7 @@ export function entryById(id) {
 export function detectEntry(item) {
   const params = item.params || {};
   if (item.kind === "widget") {
-    return entryById(item.type === "clock_weather" ? "clock_weather" : CUSTOM_ID);
+    return entryById(["clock_weather", "pc_stats"].includes(item.type) ? item.type : CUSTOM_ID);
   }
   if (item.kind !== "action") {
     return entryById(CUSTOM_ID);

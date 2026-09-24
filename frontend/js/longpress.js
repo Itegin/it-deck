@@ -2,14 +2,15 @@ const LONG_PRESS_MS = 500;
 const MOVE_CANCEL_PX = 10;
 
 // A stationary pointerdown held past LONG_PRESS_MS fires onLongPress instead
-// of onTap. Movement past MOVE_CANCEL_PX before then cancels the timer --
-// without this, a drag gesture starting on the tile would be misread as a
-// stationary hold instead of a drag.
+// of onTap. Movement past MOVE_CANCEL_PX makes it neither: the pointer is
+// dragging, not pressing -- a swipe to the next deck that happens to start on
+// a tile must not also run that tile.
 export function attachLongPress(element, onLongPress, onTap) {
   let timer = null;
   let startX = 0;
   let startY = 0;
   let firedLongPress = false;
+  let moved = false;
 
   function clearTimer() {
     if (timer !== null) {
@@ -20,6 +21,7 @@ export function attachLongPress(element, onLongPress, onTap) {
 
   element.addEventListener("pointerdown", (event) => {
     firedLongPress = false;
+    moved = false;
     startX = event.clientX;
     startY = event.clientY;
     clearTimer();
@@ -31,20 +33,21 @@ export function attachLongPress(element, onLongPress, onTap) {
   });
 
   element.addEventListener("pointermove", (event) => {
-    if (timer === null) {
+    if (moved || firedLongPress) {
       return;
     }
     const dx = event.clientX - startX;
     const dy = event.clientY - startY;
     if (Math.hypot(dx, dy) > MOVE_CANCEL_PX) {
+      moved = true;
       clearTimer();
     }
   });
 
   element.addEventListener("pointerup", () => {
-    const wasLongPress = firedLongPress;
+    const wasPress = !firedLongPress && !moved;
     clearTimer();
-    if (!wasLongPress) {
+    if (wasPress) {
       onTap();
     }
   });

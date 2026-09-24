@@ -1,10 +1,11 @@
 import { fetchWorkspaces } from "./api.js";
-import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
+import { renderWorkspace, renderWorkspaceSelector, renderError, renderDeckDots, markDeckEntrance, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
 import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onConnectionChange, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
 import { initTheme, applyTheme, applyMode } from "./theme.js";
 import { showContextMenu, showTextSheet } from "./contextmenu.js";
 import { showToast } from "./toast.js";
 import { maybeShowOnboarding } from "./onboarding.js";
+import { attachDeckSwipe } from "./swipe.js";
 
 // Device-local "which workspace does this deck show" choice. Deliberately
 // not part of any server state -- multiple phones can point at different
@@ -131,11 +132,38 @@ function describeCommandFailure(itemId, message) {
   }
 }
 
+// The decks from the last fetch, in order, and which one is on screen: what
+// a swipe moves through.
+let deckList = [];
+let currentDeckId = null;
+
 function loadWorkspace(workspace) {
   itemsById = new Map(workspace.items.map((item) => [item.id, item]));
+  currentDeckId = workspace.id;
   renderWorkspace(workspace, handleTileTap, sendSetValue, handleTileLongPress);
+  renderDeckDots(deckList, workspace.id, (target, index) => showDeck(target, index));
   // First deck this device has ever shown: the tour, once.
   maybeShowOnboarding();
+}
+
+// Moves to another deck and remembers it, as picking it from the list does.
+// No wrap-around: at the last deck a swipe further does nothing, which is
+// what the dots already say.
+function showDeck(target, index) {
+  const from = deckList.findIndex((w) => w.id === currentDeckId);
+  if (!target || target.id === currentDeckId) {
+    return;
+  }
+  saveWorkspace(target.id);
+  loadWorkspace(target);
+  markDeckEntrance(index > from ? 1 : -1);
+}
+
+function switchDeck(step) {
+  const index = deckList.findIndex((w) => w.id === currentDeckId) + step;
+  if (index >= 0 && index < deckList.length) {
+    showDeck(deckList[index], index);
+  }
 }
 
 function showSelector(workspaces) {
@@ -157,6 +185,7 @@ async function init() {
     if (seq !== initSeq) {
       return;
     }
+    deckList = workspaces;
 
     if (!workspaces.length) {
       renderError("The backend has no workspaces yet, so there's nothing to show.");
@@ -199,6 +228,8 @@ async function init() {
 }
 
 init();
+
+attachDeckSwipe(document.getElementById("deck"), switchDeck);
 
 document.getElementById("switch-workspace-link").addEventListener("click", (event) => {
   event.preventDefault();

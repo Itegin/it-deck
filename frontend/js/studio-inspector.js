@@ -52,9 +52,10 @@ const DEFAULT_COLORS = {
 
 const SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">';
-// Type-card glyphs for the two entries with no tile icon of their own.
+// Type-card glyphs for the entries with no tile icon of their own.
 const CARD_GLYPHS = {
   clock_weather: `${SVG_OPEN}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
+  pc_stats: `${SVG_OPEN}<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 12l3-3 3 2 4-4M8 20h8"/></svg>`,
   custom: `${SVG_OPEN}<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>`,
 };
 
