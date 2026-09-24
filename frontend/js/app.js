@@ -11,6 +11,29 @@ import { maybeShowOnboarding } from "./onboarding.js";
 // workspaces from the same backend.
 const STORAGE_KEY = "itdeck:workspaceId";
 
+// localStorage throws, rather than returning null, when site data is blocked
+// or in some private modes. The saved deck is a convenience: without it the
+// deck still draws, it just asks (or picks the only one) again.
+function readSavedWorkspace() {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveWorkspace(id) {
+  try {
+    if (id === null) {
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, String(id));
+    }
+  } catch (e) {
+    // Not saved; this visit still shows the chosen deck.
+  }
+}
+
 function handleTileLongPress(item) {
   showContextMenu(item, [
     {
@@ -77,21 +100,30 @@ function loadWorkspace(workspace) {
 
 function showSelector(workspaces) {
   renderWorkspaceSelector(workspaces, (workspace) => {
-    localStorage.setItem(STORAGE_KEY, String(workspace.id));
+    saveWorkspace(workspace.id);
     loadWorkspace(workspace);
   });
 }
 
+// Which init() is the latest. Two Studio saves in quick succession start two
+// fetches, and they can answer out of order; only the newest may draw, or the
+// deck would settle on the older catalog.
+let initSeq = 0;
+
 async function init() {
+  const seq = ++initSeq;
   try {
     const workspaces = await fetchWorkspaces();
+    if (seq !== initSeq) {
+      return;
+    }
 
     if (!workspaces.length) {
       renderError("The backend has no workspaces yet, so there's nothing to show.");
       return;
     }
 
-    const savedId = localStorage.getItem(STORAGE_KEY);
+    const savedId = readSavedWorkspace();
     let workspace = workspaces.find((w) => String(w.id) === savedId);
 
     if (!workspace) {
@@ -101,7 +133,7 @@ async function init() {
       const requestedId = new URLSearchParams(window.location.search).get("workspace");
       workspace = workspaces.find((w) => String(w.id) === requestedId);
       if (workspace) {
-        localStorage.setItem(STORAGE_KEY, String(workspace.id));
+        saveWorkspace(workspace.id);
       }
     }
 
@@ -120,7 +152,9 @@ async function init() {
       showSelector(workspaces);
     }
   } catch (err) {
-    renderError(describeLoadFailure(err));
+    if (seq === initSeq) {
+      renderError(describeLoadFailure(err));
+    }
   }
 }
 
@@ -128,7 +162,7 @@ init();
 
 document.getElementById("switch-workspace-link").addEventListener("click", (event) => {
   event.preventDefault();
-  localStorage.removeItem(STORAGE_KEY);
+  saveWorkspace(null);
   const url = new URL(window.location.href);
   url.searchParams.delete("workspace");
   history.replaceState({}, "", url);

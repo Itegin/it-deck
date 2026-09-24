@@ -19,7 +19,7 @@
 //   sequence and against its element still being on the page, so a slow
 //   reply can't fill in a tile the person has since moved away from.
 
-import { ICONS, ICON_TEXT, ICON_IMAGE, BRAND_PREFIX, iconText, isIconImage } from "./render.js";
+import { ICONS, ICON_TEXT, ICON_IMAGE, BRAND_PREFIX, hasEntry, iconText, isIconImage } from "./render.js";
 import { BRAND_ICONS, BRAND_NAMES } from "./brand-icons.js";
 import {
   CATALOG,
@@ -918,7 +918,7 @@ export function createInspector(root, ctx) {
     if (mode === "symbol") {
       panel = radioGrid(
         [["", null, t("icon.none")], ...Object.entries(ICONS).map(([key, svg]) => [key, svg, key])],
-        (key) => draft.icon === key || (!key && !ICONS[draft.icon]),
+        (key) => draft.icon === key || (!key && !hasEntry(ICONS, draft.icon)),
       );
     } else if (mode === "brand") {
       panel = radioGrid(

@@ -84,14 +84,22 @@ export function iconText(value) {
 //   - "image" -> params.icon_img, a site icon, as an <img>
 // Only module-authored SVG goes through innerHTML; user values go through
 // textContent and img.src.
+// Own keys only. A bare ICONS[key] also finds what every object inherits, so
+// icon = "constructor" matched Object itself and the tile showed its source
+// text. hasOwnProperty.call rather than Object.hasOwn, which older iOS
+// Safari -- the deck's whole audience -- does not have.
+export function hasEntry(table, key) {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
 export function tileIconFor(item) {
   const key = item.icon || "";
   const params = item.params || {};
   const icon = document.createElement("div");
   icon.className = "icon";
-  if (ICONS[key]) {
+  if (hasEntry(ICONS, key)) {
     icon.innerHTML = ICONS[key];
-  } else if (key.startsWith(BRAND_PREFIX) && BRAND_ICONS[key.slice(BRAND_PREFIX.length)]) {
+  } else if (key.startsWith(BRAND_PREFIX) && hasEntry(BRAND_ICONS, key.slice(BRAND_PREFIX.length))) {
     icon.classList.add("icon-brand");
     icon.innerHTML = BRAND_ICONS[key.slice(BRAND_PREFIX.length)];
   } else if (key === ICON_TEXT && iconText(params.icon_text)) {
@@ -423,7 +431,12 @@ export function renderWorkspace(workspace, onTileClick, onSliderChange, onTileLo
   // Last, and it has to be here rather than only on the events that change
   // it: a re-render rebuilds every tile, so an agent that went away five
   // minutes ago has to be re-applied to the tiles that have just replaced
-  // the ones it greyed out.
+  // the ones it greyed out. Both halves: the greying on each tile (without
+  // it a Studio edit brought back live-looking, tappable tiles for an agent
+  // that could not answer them) and the clock takeover.
+  for (const agent of offlineAgents) {
+    markAgentTiles(agent, true);
+  }
   updateClockTakeover();
 }
 
@@ -874,6 +887,11 @@ export function setAgentOffline(agent, isOffline) {
   } else {
     offlineAgents.delete(agent);
   }
+  markAgentTiles(agent, isOffline);
+  updateClockTakeover();
+}
+
+function markAgentTiles(agent, isOffline) {
   // Scoped to the agent named in the agent_status message: with more than
   // one agent connected, one disconnecting must not grey out the other's
   // tiles. data-target is set from item.target when the tile is rendered.
@@ -891,7 +909,6 @@ export function setAgentOffline(agent, isOffline) {
     }
     tile.classList.toggle("tile-offline", isOffline);
   }
-  updateClockTakeover();
 }
 
 export function renderError(message) {
