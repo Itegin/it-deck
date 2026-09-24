@@ -116,3 +116,78 @@ def test_autostart_on_off_and_moved_exe(exe):
     launcher.set_autostart(reg, exe, False)
     launcher.set_autostart(reg, exe, False)  # already off: no error
     assert launcher.autostart_enabled(reg, exe) is False
+
+
+# --- the window's look -------------------------------------------------------
+
+CSS = {
+    "base": (REPO / "frontend" / "css" / "base.css").read_text(encoding="utf-8"),
+    "themes": (REPO / "frontend" / "css" / "themes.css").read_text(encoding="utf-8"),
+    "studio": (REPO / "frontend" / "css" / "studio.css").read_text(encoding="utf-8"),
+}
+
+
+def css_block(text: str, selector: str) -> str:
+    """The body of the first rule whose selector is exactly `selector`."""
+    start = text.index(selector + " {")
+    return text[start : text.index("\n}", start)]
+
+
+def declared(block: str, name: str) -> str:
+    # The veil and the edge are single stops inside multi-part values; the
+    # rest are whole declarations.
+    if name == "--glass-veil":
+        return re.search(r"--glass-veil:[^;]*?(rgba\([^)]*\)) 42%", block).group(1)
+    if name == "--glass-edge":
+        return re.search(r"--glass-edge: inset 0 1px 0 (rgba\([^)]*\))", block).group(1)
+    return re.search(re.escape(name) + r":\s*([^;]+);", block).group(1).strip()
+
+
+def test_window_palette_is_studios():
+    # The window promises it looks like Studio. It only can while it uses
+    # Studio's own numbers, so each token is read back from the CSS it was
+    # copied from; a Studio palette change fails here until the window
+    # follows it.
+    blocks = {
+        "--color-bg": css_block(CSS["themes"], '[data-theme="liquid-glass"]:not([data-mode="light"])'),
+        "--glass-veil": css_block(CSS["themes"], '[data-theme="liquid-glass"]:not([data-mode="light"])'),
+        "--glass-edge": css_block(CSS["themes"], '[data-theme="liquid-glass"]:not([data-mode="light"])'),
+        "--studio-*": css_block(CSS["studio"], '[data-theme="liquid-glass"]:not([data-mode="light"])'),
+        "--color-*": css_block(CSS["base"], ":root"),
+    }
+    for name, value in launcher._STUDIO_TOKENS.items():
+        if name in blocks:
+            block = blocks[name]
+        else:
+            block = blocks["--studio-*" if name.startswith("--studio-") else "--color-*"]
+        assert declared(block, name).lower() == value.lower(), name
+    # And the primary button's ink.
+    assert launcher._ACCENT_INK in css_block(CSS["studio"], ".btn-primary")
+
+
+def test_palette_compositing():
+    assert launcher._over("rgba(255, 255, 255, 0.5)", "#000000") == "#808080"
+    assert launcher._over("#123456", "#ffffff") == "#123456"
+    assert launcher._brighten("#a78bfa", 1.08) == "#b496ff"
+    g = launcher._GLASS
+    # Every colour the window paints is opaque #rrggbb -- Tk has no alpha.
+    assert all(re.fullmatch(r"#[0-9a-fA-F]{6}", v) for v in g.values())
+    # A panel lifts off the ground, and a button off the panel.
+    lum = lambda c: sum(launcher._css_rgba(c)[:3])  # noqa: E731
+    assert lum(g["bg"]) < lum(g["surface"]) < lum(g["surface_raised"]) < lum(g["surface_hover"])
+
+
+def test_rounded_png_is_antialiased_and_transparent_outside():
+    pytest.importorskip("PIL")
+    import io
+
+    from PIL import Image
+
+    data = launcher._rounded_png(40, 40, 10, fill="#202020", outline="#808080", ring="#a78bfa", margin=3)
+    image = Image.open(io.BytesIO(data))
+    assert image.size == (40, 40) and image.mode == "RGBA"
+    assert image.getpixel((0, 0))[3] == 0  # the corner is see-through
+    assert image.getpixel((20, 20))[:3] == (0x20, 0x20, 0x20)  # the fill
+    # Partial alpha somewhere along the curve: antialiased, not stair-stepped.
+    alphas = {image.getpixel((x, x))[3] for x in range(0, 8)}
+    assert any(0 < a < 255 for a in alphas)

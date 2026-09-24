@@ -699,36 +699,161 @@ def ensure_desktop_shortcut() -> None:
 
 # --- info window ---------------------------------------------------------
 
-# Same palette as the Dashboard's own "Liquid Glass" theme (see
-# frontend/css/themes.css's dark [data-theme="liquid-glass"] block) --
-# tkinter can't do that theme's actual backdrop-filter frost (no blur
-# compositing), so this borrows its *colors* (deep blue-black ground,
-# lifted surface, purple/teal accents) rather than trying to fake glass
-# with gradients tkinter can't draw either. The one piece of real
-# translucency available on this platform -- Windows 11's Mica material --
-# is applied separately, best-effort, in _apply_windows11_chrome() below.
-_GLASS = {
-    "bg": "#070a11",
-    "surface": "#151a23",
-    "border": "#2f3644",
-    "text": "#F1F5F9",
-    "text_muted": "#9aa3b2",
-    "accent": "#a78bfa",
-    "accent_active": "#8e5ff5",
-    # Added for the step cards: "surface" is the card fill, so buttons
-    # sitting on a card need to be a shade above it to read as raised.
-    # "ok" is the running dot in the header -- the one non-purple accent,
-    # because green means running in every other status UI a person has
-    # ever used.
-    "surface_raised": "#1d2330",
-    "ok": "#4ade80",
-    "warn": "#f59e0b",
-    # The deck's own alert red (themes.css's --state-alert), reused here so
-    # "red means something is about to be destroyed" is one decision across
-    # both surfaces rather than two similar-looking ones.
-    "danger": "#dc2626",
-    "danger_active": "#b91c1c",
+# This window is dressed as Studio: the same dark Liquid Glass tokens, copied
+# here verbatim from the CSS and composited into the opaque colours Tk can
+# paint. tests/test_launcher.py checks every value below against
+# frontend/css/{base,themes,studio}.css, so a palette change in Studio fails
+# CI until this window follows it. No new colours are invented here.
+#
+# Tk has no blur, so the frost itself can't be reproduced: a panel is the
+# panel token plus the veil's middle stop, flattened over the ground. The
+# rounded panels and buttons are drawn as images (see _rounded_png).
+_STUDIO_TOKENS = {
+    # themes.css, [data-theme="liquid-glass"] dark
+    "--color-bg": "#070a11",
+    "--glass-veil": "rgba(255, 255, 255, 0.06)",  # the veil's 42% stop
+    "--glass-edge": "rgba(255, 255, 255, 0.42)",  # its top highlight
+    # base.css, :root
+    "--color-text": "#F1F5F9",
+    "--color-text-muted": "#9aa3b2",
+    "--color-accent": "#a78bfa",
+    "--color-active": "#0d9488",
+    "--color-alert-text": "#e85757",
+    # studio.css, dark
+    "--studio-panel": "rgba(21, 26, 35, 0.62)",
+    "--studio-well": "rgba(0, 0, 0, 0.28)",
+    "--studio-card": "rgba(255, 255, 255, 0.04)",
+    "--studio-card-hover": "rgba(255, 255, 255, 0.08)",
+    "--studio-hairline": "rgba(255, 255, 255, 0.10)",
+    "--studio-accent-wash": "rgba(167, 139, 250, 0.12)",
 }
+
+# studio.css's .btn-primary ink: dark text on the accent (7.0:1).
+_ACCENT_INK = "#1A1F26"
+
+
+def _css_rgba(value: str) -> tuple:
+    """"#rrggbb" or "rgba(r, g, b, a)" as (r, g, b, a), a in 0..1."""
+    value = value.strip()
+    if value.startswith("#"):
+        return (int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16), 1.0)
+    parts = [p.strip() for p in value[value.index("(") + 1 : value.rindex(")")].split(",")]
+    return (int(parts[0]), int(parts[1]), int(parts[2]), float(parts[3]) if len(parts) > 3 else 1.0)
+
+
+def _over(top: str, bottom: str) -> str:
+    """`top` (any CSS colour) painted over the opaque `bottom`, as #rrggbb."""
+    r, g, b, a = _css_rgba(top)
+    br, bg, bb, _ = _css_rgba(bottom)
+    mix = [round(c * a + d * (1 - a)) for c, d in ((r, br), (g, bg), (b, bb))]
+    return "#{:02x}{:02x}{:02x}".format(*mix)
+
+
+def _brighten(color: str, factor: float) -> str:
+    """CSS filter: brightness(factor) -- .btn-primary:hover."""
+    r, g, b, _ = _css_rgba(color)
+    return "#{:02x}{:02x}{:02x}".format(*(min(255, round(c * factor)) for c in (r, g, b)))
+
+
+def _studio_palette(t: dict) -> dict:
+    bg = t["--color-bg"]
+    # A Studio panel, flattened: what a person sees behind a card's text.
+    surface = _over(t["--glass-veil"], _over(t["--studio-panel"], bg))
+    return {
+        "bg": bg,
+        "surface": surface,
+        # The panel's containing hairline and its brighter top edge.
+        "border": _over(t["--studio-hairline"], surface),
+        "edge": _over(t["--glass-edge"], surface),
+        # A line drawn straight on the window ground, not on a panel.
+        "rule": _over(t["--studio-hairline"], bg),
+        "text": t["--color-text"],
+        "text_muted": t["--color-text-muted"],
+        "accent": t["--color-accent"],
+        "accent_active": _brighten(t["--color-accent"], 1.08),
+        "accent_ink": _ACCENT_INK,
+        "accent_wash": _over(t["--studio-accent-wash"], surface),
+        # .btn on a panel, and its hover.
+        "surface_raised": _over(t["--studio-card"], surface),
+        "surface_hover": _over(t["--studio-card-hover"], surface),
+        # .input: a well sunk into the panel.
+        "well": _over(t["--studio-well"], surface),
+        # Studio's "done" teal: the running dot.
+        "ok": t["--color-active"],
+        # The one colour Studio has no token for: "the agent is down" is a
+        # warning, not a destruction, so it must not borrow the alert red.
+        "warn": "#f59e0b",
+        # .btn-danger: alert-coloured text, never a red fill.
+        "danger": t["--color-alert-text"],
+    }
+
+
+_GLASS = _studio_palette(_STUDIO_TOKENS)
+
+# Corner radii, from studio.css: a panel (.glass, 20px) is scaled down with
+# this much smaller window; a button or field is Studio's 10px exactly.
+_RADIUS_PANEL = 16
+_RADIUS_CONTROL = 10
+_RADIUS_BADGE = 7
+# Room around a button for its focus ring: 2px of ring, 1px of gap.
+_FOCUS_MARGIN = 3
+
+
+def _rounded_png(
+    width: int,
+    height: int,
+    radius: int,
+    fill: str,
+    outline: "Optional[str]" = None,
+    edge: "Optional[str]" = None,
+    ring: "Optional[str]" = None,
+    ring_width: int = 2,
+    margin: int = 0,
+) -> bytes:
+    """A rounded rectangle as PNG bytes, antialiased, transparent outside.
+
+    Drawn four times too big and scaled down: Pillow's own rounded_rectangle
+    has hard edges, and so does anything Tk draws on a canvas.
+    - outline: a 1-px hairline (Studio's --studio-hairline ring);
+    - edge: a 1-px brighter line along the top, the glass's specular edge;
+    - ring: a focus ring `margin` px outside the shape (Studio's
+      outline: 2px + offset 2px), so a focused and a plain button are the
+      same size and nothing jumps.
+    Returned as PNG so Tk 8.6 can load it with PhotoImage(data=...), without
+    Pillow's ImageTk bridge.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    k = 4
+    w, h, r, m = width * k, height * k, radius * k, margin * k
+    image = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    box = (m, m, w - m - 1, h - m - 1)
+    if ring:
+        draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=r + m, fill=ring)
+        inner = max(0, m - ring_width * k)
+        draw.rounded_rectangle(
+            (m - inner, m - inner, w - 1 - (m - inner), h - 1 - (m - inner)),
+            radius=r + inner,
+            fill=(0, 0, 0, 0),
+        )
+    line = k  # 1 px once scaled down
+    if edge:
+        draw.rounded_rectangle(box, radius=r, fill=edge)
+    if outline:
+        top = box[1] + (line if edge else 0)
+        draw.rounded_rectangle((box[0], top, box[2], box[3]), radius=r, fill=outline)
+        box = (box[0] + line, box[1] + line, box[2] - line, box[3] - line)
+        r = max(0, r - line)
+    elif edge:
+        box = (box[0], box[1] + line, box[2], box[3])
+    draw.rounded_rectangle(box, radius=r, fill=fill)
+    image = image.resize((width, height), Image.LANCZOS)
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
 
 _STRINGS = {
     "en": {
@@ -2023,69 +2148,187 @@ def show_info_window(
 
         style = ttk.Style(root)
         style.theme_use("clam")
+        # Studio's type: Segoe UI, semibold on buttons and titles.
+        ui_font = ("Segoe UI", 9)
+        button_font = ("Segoe UI Semibold", 9)
+
+        # Flat first: every style works with plain colours, so a checkout
+        # without Pillow (or a Tk that can't load the images) still gets a
+        # usable window. glass_images() below then swaps in the rounded
+        # look where it can.
+        style.configure("Card.TFrame", background=g["surface"])
+        style.configure("Notice.TFrame", background=g["accent_wash"])
         style.configure(
             "Glass.TEntry",
-            fieldbackground=g["surface"],
+            fieldbackground=g["well"],
             foreground=g["text"],
             insertcolor=g["text"],
             borderwidth=1,
             relief="flat",
-        )
-        style.configure(
-            "Glass.TButton",
-            background=g["surface_raised"],
-            foreground=g["text"],
-            borderwidth=1,
-            relief="flat",
-            padding=(10, 6),
-        )
-        style.map("Glass.TButton", background=[("active", g["border"])])
-        style.configure(
-            "Accent.TButton",
-            background=g["accent_active"],
-            foreground=g["bg"],
-            borderwidth=0,
-            relief="flat",
-            padding=(10, 6),
-        )
-        style.map("Accent.TButton", background=[("active", g["accent"])])
-        style.configure(
-            "Mini.TButton",
-            background=g["surface_raised"],
-            foreground=g["text_muted"],
-            borderwidth=1,
-            relief="flat",
-            padding=(6, 2),
-            font=("Segoe UI", 8),
-        )
-        style.map("Mini.TButton", background=[("active", g["border"])])
-        # The only red in this window, and it is spent on the one button that
-        # destroys something. Same alert red the deck uses for a muted mic, so
-        # the two surfaces agree about what red means.
-        style.configure(
-            "Danger.TButton",
-            background=g["danger"],
-            foreground="#ffffff",
-            borderwidth=0,
-            relief="flat",
-            padding=(10, 6),
-        )
-        style.map(
-            "Danger.TButton",
-            background=[("active", g["danger_active"]), ("disabled", g["surface_raised"])],
-            foreground=[("disabled", g["text_muted"])],
+            padding=(8, 5),
         )
         # clam draws a light focus/border ring on an Entry, which on a
         # read-only field that exists only to be copied reads as "this is
-        # selected, type here". Pin every border colour to the card edge.
+        # selected, type here". Pin every border colour to the hairline.
         style.map(
             "Glass.TEntry",
             bordercolor=[("focus", g["border"]), ("!focus", g["border"])],
             lightcolor=[("focus", g["border"]), ("!focus", g["border"])],
             darkcolor=[("focus", g["border"]), ("!focus", g["border"])],
-            fieldbackground=[("readonly", g["surface"])],
+            fieldbackground=[("readonly", g["well"])],
             foreground=[("readonly", g["text"])],
         )
+        # studio.css .btn / .btn-primary / .btn-danger, and a smaller .btn
+        # for the quiet secondary actions (Studio's chips).
+        buttons_spec = {
+            "Glass.TButton": (g["surface_raised"], g["surface_hover"], g["text"], button_font, (14, 6)),
+            "Accent.TButton": (g["accent"], g["accent_active"], g["accent_ink"], button_font, (14, 6)),
+            "Danger.TButton": (g["surface_raised"], g["surface_hover"], g["danger"], button_font, (14, 6)),
+            "Mini.TButton": (g["surface_raised"], g["surface_hover"], g["text_muted"], ui_font, (10, 3)),
+        }
+        for name, (fill, hover, ink, font, padding) in buttons_spec.items():
+            style.configure(
+                name,
+                background=fill,
+                foreground=ink,
+                bordercolor=g["border"],
+                lightcolor=fill,
+                darkcolor=fill,
+                focuscolor=g["accent"],
+                borderwidth=1,
+                relief="flat",
+                padding=padding,
+                font=font,
+            )
+            style.map(
+                name,
+                background=[("disabled", g["surface_raised"]), ("pressed", hover), ("active", hover)],
+                foreground=[("disabled", g["text_muted"])],
+                lightcolor=[("active", hover)],
+                darkcolor=[("active", hover)],
+            )
+
+        # Kept alive for as long as the window: Tk drops an image the moment
+        # Python's last reference to it goes.
+        images: dict = {}
+
+        def photo(key: str, **spec) -> "tk.PhotoImage":
+            if key not in images:
+                images[key] = tk.PhotoImage(master=root, data=_rounded_png(**spec))
+            return images[key]
+
+        def glass_images() -> bool:
+            """Rounded panels, buttons and fields, as ttk image elements.
+
+            Each is a small image stretched nine-slice style (ttk's
+            `border`), so a panel of any size costs one image, drawn once.
+            Returns False, leaving the flat styles above, if Pillow or the
+            PNG load isn't available.
+            """
+            try:
+                panel = dict(width=48, height=48, radius=_RADIUS_PANEL)
+                photo("card", **panel, fill=g["surface"], outline=g["border"], edge=g["edge"])
+                # Studio's .setup-card: the accent wash inside an accent ring.
+                photo("notice", **panel, fill=g["accent_wash"], outline=g["accent"])
+                # Buttons carry a transparent margin: the focus ring (2px,
+                # just outside, like Studio's :focus-visible) lives in it, so
+                # focusing a button never changes its size.
+                ctl = dict(width=36, height=36, radius=_RADIUS_CONTROL, margin=_FOCUS_MARGIN)
+                for name, (fill, hover, _ink, _font, _pad) in buttons_spec.items():
+                    base = name.split(".")[0]
+                    line = None if base == "Accent" else g["border"]
+                    hover_line = g["danger"] if base == "Danger" else line
+                    photo(f"{base}", **ctl, fill=fill, outline=line)
+                    photo(f"{base}-hover", **ctl, fill=hover, outline=hover_line)
+                    photo(f"{base}-focus", **ctl, fill=fill, outline=line, ring=g["accent"])
+                    photo(f"{base}-focus-hover", **ctl, fill=hover, outline=hover_line, ring=g["accent"])
+                    photo(f"{base}-disabled", **ctl, fill=g["surface_raised"], outline=g["border"])
+                photo("well", width=32, height=32, radius=_RADIUS_CONTROL, fill=g["well"], outline=g["border"])
+            except Exception as exc:
+                print(f"Window: flat look, rounded images unavailable: {exc}")
+                return False
+
+            # ttk paints a widget's whole rectangle in its style background
+            # before drawing the image, so that background must be whatever
+            # is *behind* the widget or the rounded corners show a square.
+            # Panels always sit on the window ground.
+            for name, key in (("Card.TFrame", "card"), ("Notice.TFrame", "notice")):
+                element = f"{key}.panel"
+                style.element_create(
+                    element, "image", images[key], border=_RADIUS_PANEL, padding=0, sticky="nsew"
+                )
+                style.layout(name, [(element, {"sticky": "nsew"})])
+                style.configure(name, background=g["bg"])
+
+            for name in buttons_spec:
+                base = name.split(".")[0]
+                element = f"{base}.face"
+                style.element_create(
+                    element,
+                    "image",
+                    images[base],
+                    ("disabled", images[f"{base}-disabled"]),
+                    ("focus", "pressed", images[f"{base}-focus-hover"]),
+                    ("focus", "active", images[f"{base}-focus-hover"]),
+                    ("focus", images[f"{base}-focus"]),
+                    ("pressed", images[f"{base}-hover"]),
+                    ("active", images[f"{base}-hover"]),
+                    border=_RADIUS_CONTROL + _FOCUS_MARGIN,
+                    padding=_FOCUS_MARGIN,
+                    sticky="nsew",
+                )
+                style.layout(
+                    name,
+                    [(element, {"sticky": "nsew", "children": [
+                        ("Button.padding", {"sticky": "nsew", "children": [
+                            ("Button.label", {"sticky": "nsew"}),
+                        ]}),
+                    ]})],
+                )
+                # The image draws the fill now; the style background is
+                # only what shows around the corners -- see button_style().
+                style.map(name, background=[], lightcolor=[], darkcolor=[])
+
+            style.element_create(
+                "well.field", "image", images["well"], border=_RADIUS_CONTROL, padding=1, sticky="nsew"
+            )
+            # Fields only ever sit on a panel. Mapped, not just configured:
+            # clam maps a read-only entry's background to its own grey, and
+            # a map beats a plain setting.
+            style.configure("Glass.TEntry", background=g["surface"], padding=(10, 6))
+            style.map("Glass.TEntry", background=[("readonly", g["surface"]), ("!readonly", g["surface"])])
+            style.layout(
+                "Glass.TEntry",
+                [("well.field", {"sticky": "nsew", "children": [
+                    ("Entry.padding", {"sticky": "nsew", "children": [
+                        ("Entry.textarea", {"sticky": "nsew"}),
+                    ]}),
+                ]})],
+            )
+            return True
+
+        rounded = glass_images()
+
+        def button_style(parent, kind: str) -> str:
+            """The ttk style for a `kind` button sitting on `parent`.
+
+            With the rounded look, a button's style background is what shows
+            around its corners and focus ring, so it has to be the colour of
+            whatever it sits on -- a panel, the notice or the window ground.
+            One derived style per (colour, kind), made on first use; ttk
+            inherits everything else from "<kind>.TButton".
+            """
+            base = f"{kind}.TButton"
+            if not rounded:
+                return base
+            behind = parent.cget("bg")
+            name = f"on{behind.lstrip('#')}.{base}"
+            if name not in derived_styles:
+                style.configure(name, background=behind)
+                derived_styles.add(name)
+            return name
+
+        derived_styles: set = set()
 
         # --- small helpers -------------------------------------------------
 
@@ -2130,34 +2373,43 @@ def show_info_window(
             else:
                 root.geometry(f"{width}x{height}+{place[0]}+{place[1]}")
 
-        def card(number: str, title: str) -> tk.Frame:
-            """One numbered step: a flat panel with a badge, a title, a body.
+        def panel(parent, notice: bool = False):
+            """A Studio panel: (outer to pack, inner to fill).
 
-            tkinter has no rounded corners, no shadow and no blur, so the
-            separation between a step and the background is carried entirely
-            by a lighter fill and generous padding. That is the whole visual
-            vocabulary available here; anything else would be a lie.
+            The outer ttk frame draws the rounded glass (or, flat, just the
+            colour); the inner plain frame carries the content, inset past
+            the corners so no rectangle pokes out of the curve.
             """
-            outer = tk.Frame(root, bg=g["surface"])
-            outer.pack(fill="x", padx=PAD, pady=(0, 8))
-            head = tk.Frame(outer, bg=g["surface"])
-            head.pack(fill="x", padx=12, pady=(10, 6))
-            tk.Label(
-                head,
-                text=f" {number} ",
-                font=("Segoe UI", 9, "bold"),
-                bg=g["accent"],
-                fg=g["bg"],
-            ).pack(side="left")
+            fill = g["accent_wash"] if notice else g["surface"]
+            outer = ttk.Frame(parent, style="Notice.TFrame" if notice else "Card.TFrame")
+            inner = tk.Frame(outer, bg=fill)
+            inner.pack(fill="both", expand=True, padx=14 if rounded else 12, pady=12 if rounded else 10)
+            return outer, inner
+
+        def badge(parent, number: str) -> tk.Label:
+            # Studio's .setup-icon: the accent square with the dark ink.
+            common = dict(text=number, font=("Segoe UI Semibold", 9), fg=g["accent_ink"], bd=0)
+            if rounded:
+                image = photo("badge", width=22, height=22, radius=_RADIUS_BADGE, fill=g["accent"])
+                return tk.Label(parent, image=image, compound="center", bg=parent.cget("bg"), **common)
+            return tk.Label(parent, text=f" {number} ", bg=g["accent"], **{k: v for k, v in common.items() if k != "text"})
+
+        def card(number: str, title: str) -> tk.Frame:
+            """One numbered step: a Studio panel with a badge and a title."""
+            outer, inner = panel(root)
+            outer.pack(fill="x", padx=PAD, pady=(0, 10))
+            head = tk.Frame(inner, bg=g["surface"])
+            head.pack(fill="x", pady=(0, 8))
+            badge(head, number).pack(side="left")
             tk.Label(
                 head,
                 text=title,
-                font=("Segoe UI", 10, "bold"),
+                font=("Segoe UI Semibold", 11),
                 bg=g["surface"],
                 fg=g["text"],
-            ).pack(side="left", padx=(8, 0))
-            body = tk.Frame(outer, bg=g["surface"])
-            body.pack(fill="x", padx=12, pady=(0, 12))
+            ).pack(side="left", padx=(10, 0))
+            body = tk.Frame(inner, bg=g["surface"])
+            body.pack(fill="x")
             return body
 
         def draw_qr(parent, data: str):
@@ -2204,13 +2456,15 @@ def show_info_window(
 
         # --- header ---------------------------------------------------------
 
-        header = tk.Frame(root, bg=g["bg"])
-        header.pack(fill="x", padx=PAD, pady=(14, 8))
-        status_dot = tk.Label(header, text="●", font=("Segoe UI", 9), bg=g["bg"], fg=g["ok"])
+        # Studio's top bar: one panel with the name on the left and the
+        # quiet controls on the right.
+        header_panel, header = panel(root)
+        header_panel.pack(fill="x", padx=PAD, pady=(PAD, 10))
+        status_dot = tk.Label(header, text="●", font=("Segoe UI", 9), bg=g["surface"], fg=g["ok"])
         status_dot.pack(side="left", padx=(0, 6))
-        label(header, s["running"], bold=True, size=13).pack(side="left")
+        label(header, s["running"], bold=True, size=12).pack(side="left")
         label(header, f"v{ITDECK_VERSION}", muted=True, size=9).pack(side="right")
-        tour_button = ttk.Button(header, text=s["tour_again"], style="Mini.TButton")
+        tour_button = ttk.Button(header, text=s["tour_again"], style=button_style(header, "Mini"))
         tour_button.pack(side="right", padx=(0, 10))
 
         # A dot that is always green is decoration pretending to be status.
@@ -2235,7 +2489,7 @@ def show_info_window(
                 root.after(10000, lambda: start_agent_button.configure(text=s["start_agent"], state="normal"))
 
             start_agent_button = ttk.Button(
-                agent_warning, text=s["start_agent"], style="Mini.TButton", command=start_agent
+                agent_warning, text=s["start_agent"], style=button_style(agent_warning, "Mini"), command=start_agent
             )
             start_agent_button.pack(side="right", padx=(8, 0))
 
@@ -2256,31 +2510,30 @@ def show_info_window(
                     agent_warning.pack_forget()
                     fit_window()
             elif not agent_warning.winfo_ismapped():
-                agent_warning.pack(fill="x", padx=PAD, pady=(0, 6), after=header)
+                agent_warning.pack(fill="x", padx=PAD, pady=(0, 10), after=header_panel)
                 fit_window()
             root.after(AGENT_STATUS_POLL_MS, poll_agent)
 
         if agent_alive is not None:
             root.after(AGENT_STATUS_POLL_MS, poll_agent)
 
-        separator = tk.Frame(root, bg=g["border"], height=1)
-        separator.pack(fill="x", padx=PAD, pady=(0, 10))
-
         # --- update notice (hidden until the check says otherwise) -----------
 
-        update_bar = tk.Frame(root, bg=g["surface"])
-        update_text = label(update_bar, "", size=9)
-        update_text.pack(side="left", padx=(12, 0), pady=8)
+        # Studio's setup card: the one panel with an accent ring, because it
+        # is the one thing here asking for something to be done.
+        update_bar, update_row = panel(root, notice=True)
+        update_text = label(update_row, "", size=9)
+        update_text.pack(side="left")
         ttk.Button(
-            update_bar,
+            update_row,
             text=s["update_download"],
-            style="Accent.TButton",
+            style=button_style(update_row, "Accent"),
             command=lambda: webbrowser.open(RELEASES_PAGE_URL),
-        ).pack(side="right", padx=12, pady=8)
+        ).pack(side="right")
 
         def show_update(version: str) -> None:
             update_text.configure(text=s["update_available"].format(version=version))
-            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=separator)
+            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=header_panel)
             # The window already has an explicit geometry by the time this
             # runs, so it will NOT grow on its own -- packing a new block into
             # a fixed-height window pushes the footer buttons off the bottom
@@ -2309,7 +2562,7 @@ def show_info_window(
         step1 = card("1", s["step1_title"])
         qr = draw_qr(step1, dashboard_url)
         if qr is not None:
-            qr.pack(side="left", padx=(0, 12))
+            qr.pack(side="left", anchor="n", padx=(0, 14))
 
         right = tk.Frame(step1, bg=g["surface"])
         right.pack(side="left", fill="both", expand=True)
@@ -2330,7 +2583,7 @@ def show_info_window(
         ttk.Button(
             dash_row,
             text=s["copy"],
-            style="Accent.TButton",
+            style=button_style(dash_row, "Accent"),
             command=lambda: copy_text(current["dashboard_url"], dash_feedback),
         ).pack(side="left")
         dash_feedback.pack(side="left", padx=(10, 0))
@@ -2371,7 +2624,7 @@ def show_info_window(
                 fit_window()
 
             pin_row.pack(fill="x", pady=(8, 0))
-            ttk.Button(pin_row, text=s["new_pin"], style="Mini.TButton", command=request_new_pin).pack(
+            ttk.Button(pin_row, text=s["new_pin"], style=button_style(pin_row, "Mini"), command=request_new_pin).pack(
                 side="left"
             )
             pin_feedback.pack(anchor="w", pady=(4, 0))
@@ -2386,17 +2639,27 @@ def show_info_window(
                 qr.destroy()
                 qr = draw_qr(step1, current["dashboard_url"])
                 if qr is not None:
-                    qr.pack(side="left", padx=(0, 12), before=right)
+                    qr.pack(side="left", anchor="n", padx=(0, 14), before=right)
+
+        config_stamp = {"mtime": None}
 
         def poll_config(reschedule: bool = True) -> None:
-            # Cheap: a few lines read every two seconds, and only a change
-            # touches the widgets. Rescheduled whatever happens: the backend
-            # swaps the file in with os.replace, and a read that lands on
-            # that moment must cost one tick, not the whole refresh.
+            # One stat() every two seconds; the file is read only when it
+            # has changed, and only a changed token touches the widgets.
+            # Rescheduled whatever happens: the backend swaps the file in
+            # with os.replace, and a read that lands on that moment must cost
+            # one tick, not the whole refresh (the stamp is only kept once
+            # the read succeeded, so the next tick tries again).
             try:
-                apply_config(parse_config(config_path))
-            except Exception as exc:
-                print(f"Window: couldn't re-read config.env: {exc}")
+                mtime = config_path.stat().st_mtime_ns
+            except OSError:
+                mtime = None  # no file: nothing to follow (a silent no-op, as before)
+            if mtime is not None and (mtime != config_stamp["mtime"] or not reschedule):
+                try:
+                    apply_config(parse_config(config_path))
+                    config_stamp["mtime"] = mtime
+                except Exception as exc:
+                    print(f"Window: couldn't re-read config.env: {exc}")
             if reschedule:
                 root.after(AGENT_STATUS_POLL_MS, poll_config)
 
@@ -2422,7 +2685,7 @@ def show_info_window(
         ttk.Button(
             studio_row,
             text=s["open_studio"],
-            style="Glass.TButton",
+            style=button_style(studio_row, "Glass"),
             command=lambda: webbrowser.open(studio_url),
         ).pack(side="left")
 
@@ -2452,7 +2715,7 @@ def show_info_window(
             ttk.Button(
                 row,
                 text=s["copy_token"],
-                style="Mini.TButton",
+                style=button_style(row, "Mini"),
                 command=lambda: copy_text(current["agent_token"], feedback),
             ).pack(side="left", padx=(8, 0))
             feedback.pack(side="left", padx=(6, 0))
@@ -2462,7 +2725,7 @@ def show_info_window(
             fit_window()
 
         ttk.Button(
-            token_holder, text=s["show_token"], style="Mini.TButton", command=reveal_token
+            token_holder, text=s["show_token"], style=button_style(token_holder, "Mini"), command=reveal_token
         ).pack(anchor="w")
 
         # --- step 3: what the two buttons do ---------------------------------
@@ -2517,7 +2780,7 @@ def show_info_window(
                 dialog.destroy()
 
             cancel_button = ttk.Button(
-                buttons, text=s["cancel"], style="Glass.TButton", command=close
+                buttons, text=s["cancel"], style=button_style(buttons, "Glass"), command=close
             )
             cancel_button.pack(side="left")
 
@@ -2532,7 +2795,7 @@ def show_info_window(
                 threading.Thread(target=on_uninstall, daemon=True).start()
 
             go_button = ttk.Button(
-                buttons, text=s["uninstall_go"], style="Danger.TButton", command=run_uninstall
+                buttons, text=s["uninstall_go"], style=button_style(buttons, "Danger"), command=run_uninstall
             )
             go_button.pack(side="right")
 
@@ -2601,7 +2864,7 @@ def show_info_window(
 
         if on_uninstall is not None and is_frozen():
             ttk.Button(
-                step3, text=s["uninstall"], style="Mini.TButton", command=confirm_uninstall
+                step3, text=s["uninstall"], style=button_style(step3, "Mini"), command=confirm_uninstall
             ).pack(anchor="w", pady=(10, 0))
 
         # --- footer ----------------------------------------------------------
@@ -2626,10 +2889,10 @@ def show_info_window(
             on_quit()
             root.destroy()
 
-        ttk.Button(buttons, text=s["close"], style="Glass.TButton", command=root.iconify).pack(
+        ttk.Button(buttons, text=s["close"], style=button_style(buttons, "Glass"), command=root.iconify).pack(
             side="left"
         )
-        ttk.Button(buttons, text=s["quit"], style="Glass.TButton", command=quit_itdeck).pack(
+        ttk.Button(buttons, text=s["quit"], style=button_style(buttons, "Glass"), command=quit_itdeck).pack(
             side="right"
         )
 
@@ -2697,27 +2960,27 @@ def show_info_window(
         def show_tour() -> None:
             overlay = tk.Frame(root, bg=g["bg"])
             overlay.place(x=0, y=0, relwidth=1, relheight=1)
-            box = tk.Frame(overlay, bg=g["surface"])
-            box.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
+            box_panel, box = panel(overlay)
+            box_panel.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
             counter = label(box, "", muted=True, size=9)
-            counter.pack(anchor="w", padx=20, pady=(18, 4))
+            counter.pack(anchor="w", padx=6, pady=(18, 4))
             title = label(box, "", bold=True, size=15, wrap=380)
-            title.pack(anchor="w", padx=20)
+            title.pack(anchor="w", padx=6)
             body = label(box, "", size=10, wrap=380)
-            body.pack(anchor="w", padx=20, pady=(8, 16))
+            body.pack(anchor="w", padx=6, pady=(8, 16))
             nav = tk.Frame(box, bg=g["surface"])
-            nav.pack(fill="x", padx=20, pady=(0, 18))
+            nav.pack(fill="x", padx=6, pady=(0, 18))
             state = {"page": 0}
 
             def close_tour() -> None:
                 root.unbind("<Escape>")
                 overlay.destroy()
 
-            skip = ttk.Button(nav, text=s["tour_skip"], style="Mini.TButton", command=close_tour)
+            skip = ttk.Button(nav, text=s["tour_skip"], style=button_style(nav, "Mini"), command=close_tour)
             skip.pack(side="left")
-            next_button = ttk.Button(nav, style="Accent.TButton")
+            next_button = ttk.Button(nav, style=button_style(nav, "Accent"))
             next_button.pack(side="right")
-            back_button = ttk.Button(nav, text=s["tour_back"], style="Glass.TButton")
+            back_button = ttk.Button(nav, text=s["tour_back"], style=button_style(nav, "Glass"))
 
             def render_page() -> None:
                 page = state["page"]
@@ -2762,31 +3025,31 @@ def show_info_window(
         def show_whats_new(entries: list) -> None:
             overlay = tk.Frame(root, bg=g["bg"])
             overlay.place(x=0, y=0, relwidth=1, relheight=1)
-            box = tk.Frame(overlay, bg=g["surface"])
-            box.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
+            box_panel, box = panel(overlay)
+            box_panel.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
             label(
                 box, s["whats_new_title"].format(version=entries[0]["version"]), bold=True, size=15, wrap=380
-            ).pack(anchor="w", padx=20, pady=(18, 8))
+            ).pack(anchor="w", padx=6, pady=(18, 8))
             for index, entry in enumerate(entries):
                 if len(entries) > 1:
                     label(box, entry["version"], muted=True, size=9).pack(
-                        anchor="w", padx=20, pady=(6 if index else 0, 2)
+                        anchor="w", padx=6, pady=(6 if index else 0, 2)
                     )
                 for bullet in entry.get(lang) or entry.get("en") or []:
-                    label(box, f"\u2022  {bullet}", size=10, wrap=380).pack(anchor="w", padx=20, pady=1)
+                    label(box, f"\u2022  {bullet}", size=10, wrap=380).pack(anchor="w", padx=6, pady=1)
             nav = tk.Frame(box, bg=g["surface"])
-            nav.pack(fill="x", padx=20, pady=(14, 18))
+            nav.pack(fill="x", padx=6, pady=(14, 18))
 
             def close() -> None:
                 root.unbind("<Escape>")
                 overlay.destroy()
 
-            ok = ttk.Button(nav, text=s["whats_new_ok"], style="Accent.TButton", command=close)
+            ok = ttk.Button(nav, text=s["whats_new_ok"], style=button_style(nav, "Accent"), command=close)
             ok.pack(side="right")
             ttk.Button(
                 nav,
                 text=s["whats_new_all"],
-                style="Glass.TButton",
+                style=button_style(nav, "Glass"),
                 command=lambda: webbrowser.open(RELEASES_PAGE_URL),
             ).pack(side="right", padx=(0, 8))
             root.bind("<Escape>", lambda _event: close())
