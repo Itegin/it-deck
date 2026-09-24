@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { cleanUrl, brandForApp, WEB_PRESETS } from "../frontend/js/tile-catalog.js";
+import { cleanUrl, brandForApp, WEB_PRESETS, CATALOG } from "../frontend/js/tile-catalog.js";
 import { BRAND_ICONS, BRAND_NAMES } from "../frontend/js/brand-icons.js";
 
 test("cleanUrl adds a scheme and refuses what the agent refuses", () => {
@@ -81,4 +81,35 @@ test("the theme and mode allowlists agree everywhere they are copied", () => {
   const backendModes = quoted(between(settings, "MODES = (", ")"));
   const frontendModes = quoted(between(themeJs, "export const MODES = [", "]"));
   assert.deepEqual([...frontendModes].sort(), [...backendModes].sort());
+});
+
+test("every catalog tile has a handler, an icon and its strings (CLAUDE.md: keep in step)", () => {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const agent = read("agents/windows/agent.py");
+  const handlers = new Set(
+    [...agent.slice(agent.indexOf("HANDLERS = {")).matchAll(/^ {4}"([a-z_]+)":/gm)].map((m) => m[1]),
+  );
+  const render = read("frontend/js/render.js");
+  const iconsBlock = render.slice(render.indexOf("export const ICONS = {"), render.indexOf("\n};", render.indexOf("export const ICONS = {")));
+  const icons = new Set([...iconsBlock.matchAll(/^ {2}"?([a-z-]+)"?: `/gm)].map((m) => m[1]));
+  const i18n = read("frontend/js/studio-i18n.js");
+  const en = i18n.slice(i18n.indexOf("  en: {"), i18n.indexOf("  ru: {"));
+  const hasKey = (key) => en.includes(`"${key}":`);
+
+  for (const entry of CATALOG) {
+    if (entry.kind === "action") {
+      assert.ok(handlers.has(entry.type), `${entry.id}: agent.py HANDLERS has no "${entry.type}"`);
+    }
+    if (entry.icon) {
+      assert.ok(icons.has(entry.icon), `${entry.id}: ICONS has no "${entry.icon}"`);
+    }
+    assert.ok(hasKey(`type.${entry.id}.name`) && hasKey(`type.${entry.id}.desc`), `${entry.id}: name/desc strings`);
+    for (const field of entry.fields) {
+      if (["devices", "city"].includes(field.control)) continue;
+      assert.ok(hasKey(`field.${field.param}`), `${entry.id}: no string field.${field.param}`);
+      for (const option of field.options || []) {
+        assert.ok(hasKey(`option.${field.param}.${option}`), `${entry.id}: no string option.${field.param}.${option}`);
+      }
+    }
+  }
 });

@@ -26,6 +26,11 @@ const ACTIVE_STYLE_FIELD = {
   options: ["normal", "alert"],
 };
 
+// "Ask before running": the phone shows Run / Cancel before sending the
+// command. On by default where a mis-tap costs something (power, stopping a
+// program, closing the agent); available under More settings elsewhere.
+const CONFIRM_FIELD = { param: "confirm", control: "toggle" };
+
 export const GROUPS = ["launch", "actions", "sound", "widgets", "other"];
 
 export const CATALOG = [
@@ -69,6 +74,7 @@ export const CATALOG = [
       { param: "args", control: "text", advanced: true },
       { param: "fallback_path", control: "text", advanced: true },
       { param: "process_name", control: "text", advanced: true },
+      { ...CONFIRM_FIELD, advanced: true },
     ],
   },
   {
@@ -94,6 +100,8 @@ export const CATALOG = [
     fields: [
       { param: "process_name", control: "text", required: true },
       { param: "path", control: "path" },
+      // A second tap stops the program (the VPN, say): tech debt #21.
+      { ...CONFIRM_FIELD, default: true },
     ],
   },
   {
@@ -104,6 +112,45 @@ export const CATALOG = [
     target: "windows",
     stateKey: null,
     icon: "power",
+    fixedParams: {},
+    fields: [{ ...CONFIRM_FIELD, default: true }],
+  },
+  {
+    id: "hotkey",
+    group: "actions",
+    kind: "action",
+    type: "send_keys",
+    target: "windows",
+    stateKey: null,
+    icon: "keyboard",
+    fixedParams: {},
+    fields: [
+      { param: "keys", control: "text", required: true, highlight: true },
+      { ...CONFIRM_FIELD, advanced: true },
+    ],
+  },
+  {
+    id: "power",
+    group: "actions",
+    kind: "action",
+    type: "power",
+    target: "windows",
+    stateKey: null,
+    icon: "lock",
+    fixedParams: {},
+    fields: [
+      { param: "action", control: "select", options: ["lock", "sleep", "restart", "shutdown"], default: "lock", highlight: true },
+      { ...CONFIRM_FIELD, default: true },
+    ],
+  },
+  {
+    id: "clipboard",
+    group: "actions",
+    kind: "action",
+    type: "clipboard_set",
+    target: "windows",
+    stateKey: null,
+    icon: "clipboard",
     fixedParams: {},
     fields: [],
   },
@@ -142,6 +189,25 @@ export const CATALOG = [
     minWidth: 2,
     fixedParams: { device: "speaker" },
     fields: [],
+  },
+  {
+    id: "media",
+    group: "sound",
+    kind: "action",
+    type: "media_key",
+    target: "windows",
+    stateKey: null,
+    icon: "media",
+    fixedParams: {},
+    fields: [
+      {
+        param: "key",
+        control: "select",
+        options: ["play_pause", "next", "prev", "stop", "volume_up", "volume_down"],
+        default: "play_pause",
+        highlight: true,
+      },
+    ],
   },
   {
     id: "audio_switch",
@@ -222,6 +288,14 @@ export function detectEntry(item) {
       return entryById("process_toggle");
     case "agent_shutdown":
       return entryById("agent_shutdown");
+    case "send_keys":
+      return entryById("hotkey");
+    case "media_key":
+      return entryById("media");
+    case "power":
+      return entryById("power");
+    case "clipboard_set":
+      return entryById("clipboard");
     default:
       return entryById(CUSTOM_ID);
   }

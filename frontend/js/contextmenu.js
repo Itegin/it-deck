@@ -4,10 +4,11 @@ let currentOverlay = null;
 // tile again, not at the top of the document.
 let previouslyFocused = null;
 
-// options: {label, action, destructive?}[]. destructive is an addition
-// beyond the base {label, action} shape -- it's what contextmenu.css's
-// "red text for destructive rows" rule needs to key off of.
-export function showContextMenu(item, options) {
+// The sheet every phone-side choice slides up in: the long-press menu, the
+// "Run?" confirmation and the Send-text box. One overlay, one set of rules --
+// modal, Escape and the backdrop dismiss it, Tab stays inside, and focus goes
+// back to the tile afterwards.
+function openSheet(item, fill) {
   dismissContextMenu();
 
   previouslyFocused = document.activeElement;
@@ -21,8 +22,8 @@ export function showContextMenu(item, options) {
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", `Actions for ${item.label}`);
   // Only the dimmed backdrop itself dismisses -- row clicks already
-  // dismiss+act in their own handler below, and would double-fire here
-  // too since click events bubble up from a row to the overlay.
+  // dismiss+act in their own handler, and would double-fire here too since
+  // click events bubble up from a row to the overlay.
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) {
       dismissContextMenu();
@@ -37,24 +38,11 @@ export function showContextMenu(item, options) {
   header.textContent = item.label;
   panel.appendChild(header);
 
-  for (const option of options) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "context-row";
-    if (option.destructive) {
-      row.classList.add("destructive");
-    }
-    row.textContent = option.label;
-    row.addEventListener("click", () => {
-      dismissContextMenu();
-      option.action();
-    });
-    panel.appendChild(row);
-  }
+  fill(panel);
 
   // Escape is the keyboard equivalent of tapping the backdrop. Bound on the
   // overlay rather than on document, so it is removed with the element and
-  // there is no listener to leak or to fire after the menu is gone.
+  // there is no listener to leak or to fire after the sheet is gone.
   overlay.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -65,10 +53,10 @@ export function showContextMenu(item, options) {
       return;
     }
     // Keep Tab inside the sheet: with aria-modal set, focus escaping to the
-    // tiles behind would put the user somewhere the menu claims is inert.
-    const rows = panel.querySelectorAll("button");
-    const first = rows[0];
-    const last = rows[rows.length - 1];
+    // tiles behind would put the user somewhere the sheet claims is inert.
+    const focusable = panel.querySelectorAll("button:not(:disabled), textarea");
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
@@ -83,10 +71,10 @@ export function showContextMenu(item, options) {
   currentOverlay = overlay;
 
   // Into the sheet, so the first thing a keyboard or screen-reader user meets
-  // is the menu they just opened. The first row is the action, not Cancel.
-  const firstRow = panel.querySelector("button");
-  if (firstRow) {
-    firstRow.focus();
+  // is what they just opened: the first action, or the text box.
+  const firstFocus = panel.querySelector("textarea, button");
+  if (firstFocus) {
+    firstFocus.focus();
   }
 
   // Deferred a frame so the initial opacity:0 (set in CSS) paints before
@@ -94,6 +82,53 @@ export function showContextMenu(item, options) {
   // into a single frame and the transition never plays.
   requestAnimationFrame(() => {
     overlay.classList.add("visible");
+  });
+}
+
+function sheetRow(option) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "context-row";
+  if (option.destructive) {
+    row.classList.add("destructive");
+  }
+  row.textContent = option.label;
+  row.addEventListener("click", () => {
+    dismissContextMenu();
+    option.action();
+  });
+  return row;
+}
+
+// options: {label, action, destructive?}[]. destructive is what
+// contextmenu.css's "red text for destructive rows" rule keys off.
+export function showContextMenu(item, options) {
+  openSheet(item, (panel) => {
+    for (const option of options) {
+      panel.appendChild(sheetRow(option));
+    }
+  });
+}
+
+// A text box and Send / Cancel, for the Send-text tile. onSubmit gets the
+// text as typed; Send stays disabled until there is something to send.
+export function showTextSheet(item, { placeholder, sendLabel, cancelLabel, maxLength, onSubmit }) {
+  openSheet(item, (panel) => {
+    const input = document.createElement("textarea");
+    input.className = "context-textarea";
+    input.rows = 4;
+    input.maxLength = maxLength;
+    input.placeholder = placeholder;
+    input.setAttribute("aria-label", placeholder);
+    panel.appendChild(input);
+
+    const send = sheetRow({ label: sendLabel, action: () => onSubmit(input.value) });
+    send.disabled = true;
+    input.addEventListener("input", () => {
+      send.disabled = !input.value.trim();
+    });
+    panel.appendChild(send);
+    panel.appendChild(sheetRow({ label: cancelLabel, action: () => {} }));
   });
 }
 

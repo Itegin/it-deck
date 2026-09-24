@@ -2,7 +2,7 @@ import { fetchWorkspaces } from "./api.js";
 import { renderWorkspace, renderWorkspaceSelector, renderError, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
 import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onConnectionChange, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
 import { initTheme, applyTheme, applyMode } from "./theme.js";
-import { showContextMenu } from "./contextmenu.js";
+import { showContextMenu, showTextSheet } from "./contextmenu.js";
 import { showToast } from "./toast.js";
 import { maybeShowOnboarding } from "./onboarding.js";
 
@@ -32,6 +32,45 @@ function saveWorkspace(id) {
   } catch (e) {
     // Not saved; this visit still shows the chosen deck.
   }
+}
+
+// The rows of the deck on screen, by id, for the tap handler below: it needs
+// a tile's type and params, and render.js hands it only the id.
+let itemsById = new Map();
+
+// Types whose "Run?" row is red: the ones a mis-tap can't take back.
+const DESTRUCTIVE_TYPES = new Set(["power", "process_toggle", "agent_shutdown"]);
+
+// Same cap as the agent's (agents/windows/handlers/clipboard.py).
+const CLIPBOARD_MAX_CHARS = 100000;
+
+// A tap: most tiles just run, but two kinds ask first.
+function handleTileTap(itemId) {
+  const item = itemsById.get(itemId);
+  if (!item) {
+    sendExecute(itemId);
+    return;
+  }
+  if (item.type === "clipboard_set") {
+    showTextSheet(item, {
+      placeholder: "Text to put on the PC's clipboard",
+      sendLabel: "Send to PC",
+      cancelLabel: "Cancel",
+      maxLength: CLIPBOARD_MAX_CHARS,
+      onSubmit: (text) => sendSetValue(itemId, text, { track: true }),
+    });
+    return;
+  }
+  // "Ask before running" (Studio): Run / Cancel first. Power, a program
+  // on/off and Close Agent have it on by default -- tech debt #21.
+  if (item.params && item.params.confirm) {
+    showContextMenu(item, [
+      { label: "Run", destructive: DESTRUCTIVE_TYPES.has(item.type), action: () => sendExecute(itemId) },
+      { label: "Cancel", action: () => {} },
+    ]);
+    return;
+  }
+  sendExecute(itemId);
 }
 
 function handleTileLongPress(item) {
@@ -93,7 +132,8 @@ function describeCommandFailure(itemId, message) {
 }
 
 function loadWorkspace(workspace) {
-  renderWorkspace(workspace, sendExecute, sendSetValue, handleTileLongPress);
+  itemsById = new Map(workspace.items.map((item) => [item.id, item]));
+  renderWorkspace(workspace, handleTileTap, sendSetValue, handleTileLongPress);
   // First deck this device has ever shown: the tour, once.
   maybeShowOnboarding();
 }

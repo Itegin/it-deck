@@ -376,18 +376,25 @@ export function sendExecute(itemId, { overrideType } = {}) {
   trackRequest(reqId, itemId);
 }
 
-export function sendSetValue(itemId, value) {
+// A value for a tile: a slider's position (dozens per drag, fire-and-forget),
+// or with { track: true } a one-off like the Send-text tile's text, which gets
+// the same pending / ok / error feedback as a tap.
+export function sendSetValue(itemId, value, { track = false } = {}) {
   if (!socket || socket.readyState !== WebSocket.OPEN || !authenticated) {
     return;
   }
+  const reqId = generateReqId();
   socket.send(
     JSON.stringify({
       cmd: "set_value",
       item_id: itemId,
       value,
-      req_id: generateReqId(),
+      req_id: reqId,
     })
   );
+  if (track) {
+    trackRequest(reqId, itemId);
+  }
 }
 
 // Resolved per-item command feedback: {itemId, phase: "pending"|"ok"|"error",
