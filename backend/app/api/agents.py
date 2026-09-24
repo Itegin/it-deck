@@ -60,7 +60,7 @@ async def _ask_agent(agent_name: str, cmd: str, params: dict) -> dict:
     sent = await hub.send_to_agent(agent_name, {"cmd": cmd, "params": params, "req_id": req_id})
     if not sent:
         # The socket died between the membership check above and the send;
-        # send_to_agent already dropped it from the hub. No point parking for
+        # send_to_agent already closed it. No point parking for
         # 5s on a reply that can no longer come.
         discard_future(req_id)
         raise HTTPException(status_code=404, detail="agent offline")
