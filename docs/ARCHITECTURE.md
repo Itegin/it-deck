@@ -251,3 +251,49 @@ frames. An idle PC can legitimately show none.
   tick; the agent's immediate read replaces it within milliseconds.
 - The frame is optional in both directions, so mixed versions keep
   working.
+
+## ADR-15 Tokens change at runtime, through one path
+
+**Context.** Tokens could only be edited by hand in `config.env`, and each
+change needed a restart. People sharing a Wi-Fi wanted to replace `admin`
+without touching files.
+
+**Decision.** `PUT /api/access` is the only way a token changes at runtime.
+Studio's Access dialog and the window's "New phone PIN" button both call it.
+It does three things in this order:
+1. writes `config.env` **line by line**, so comments and unknown keys survive,
+   with an atomic replace;
+2. updates the backend's environment (`app/auth.py` reads it per request);
+3. on a new phone token, closes every phone socket with `4001`.
+
+The agent re-reads its token from `config.env` on each connect. The window
+re-reads the file every 2 s to redraw the link and the QR code.
+
+**Consequences.**
+- There is no restart and no second code path for "save".
+- Docker installs are read-only here (`409`): their tokens live in the
+  server's `.env`, which this process can't rewrite.
+
+## ADR-16 Widgets read live state through a subscription; decks are files
+
+**Context.**
+- The PC-load widget needs the agent's numbers.
+- Widgets were mount-and-forget.
+- Decks had no backup or sharing story.
+
+**Decision.**
+- `mount(tile, item, ctx)` gets `ctx.onState(callback)`, fed by
+  `render.js`'s `updateTileState`. The subscription lives and dies with the
+  widget.
+- A deck file is `{"format": "itdeck-deck", "version": 1, …}`: positions,
+  looks and settings, no ids or counters.
+- Import always creates a **new** deck. It uses the same validators as a
+  Studio save and runs in one transaction. Templates are ordinary deck files
+  in `frontend/templates/`.
+
+**Consequences.**
+- Adding a live widget is a reader in `poller.py` plus a widget module.
+- A deck file can create tiles that start programs, exactly like Studio can.
+  Import needs the Studio token, and the dialog says to import only trusted
+  files.
+

@@ -13,7 +13,8 @@ Read it before touching those areas. How-to and extension recipes:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). History: [`CHANGELOG.md`](CHANGELOG.md).
 
 Version: `ITDECK_VERSION` in `standalone/launcher.py`. Bump it in the same
-commit as the tag. Public name is IT-Deck; internal identifiers (`controlhub`
+commit as the tag. A public release also needs its `frontend/whats-new.json`
+entry (`scripts/check_release.py` enforces both). Public name is IT-Deck; internal identifiers (`controlhub`
 loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
 "Stage N", never "Day N".
 

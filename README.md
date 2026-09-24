@@ -206,4 +206,4 @@ that one on the phone.
 
 ## Status
 
-v0.5.4 — personal project, active development, API may change.
+v0.5.5 — personal project, active development, API may change.

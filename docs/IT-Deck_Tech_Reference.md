@@ -91,11 +91,13 @@ state snapshot every second.
 | `state.py` | In-memory current-state snapshot plus diffing. `update_state()` returns only keys whose values actually changed; `get_state()` returns a copy. Not persisted — rebuilt from the agent's next poll tick. |
 | `pending.py` | Per-`req_id` timeout timers. `track(req_id, seconds, on_timeout)` schedules a synthetic failure; `resolve(req_id)` cancels it. Broadcast-only — it never hands a value back to one caller. |
 | `agent_requests.py` | The request/response half, deliberately separate from `pending.py`: an HTTP handler parks on an `asyncio.Future` keyed by `req_id` and gets the agent's actual reply dict back. |
+| `config_file.py` | `config_path()` (from `ITDECK_CONFIG_FILE`, standalone only) and `update_config()`, the line-preserving atomic writer for `config.env`. |
+| `api/access.py` | `GET/PUT /api/access`: read the phone token, change either token at runtime (see `docs/ARCHITECTURE.md` ADR-15). |
 | `ws/protocol.py` | What both sockets share: `receive_object()` (a frame → dict or `None`, never fatal), `accept_hello()` (5 s timeout, token check, close codes `4001`/`4008`). |
 | `ws/hub.py` | `ConnectionHub` module-level singleton: a `set` of client sockets, a `dict` of one socket per agent name, `broadcast_to_clients()`, `send_to_agent()`. |
 | `ws/agent.py` | `/ws/agent` — hello/token check *before* hub registration, result fan-out (cancel timer → resolve future → broadcast), state ingestion with agent-name namespacing. |
 | `ws/client.py` | `/ws/client` — initial full-state push, then `execute` / `set_value` dispatch, each with a 5-second timeout started only after the command actually reached an agent. |
-| `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`_validate_params_json`) **and** validates grid placement (`_validate_placement`). Every mutation broadcasts `workspace_update`. |
+| `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`validate_params_json`) **and** validates grid placement (`validate_placement`). Every mutation broadcasts `workspace_update`. |
 | `api/workspaces.py` | Token-gated `POST /api/workspaces` and `POST /api/workspaces/{id}/compact`. `_pack_items()` is a pure placement pass, kept DB-free so it can be exercised directly. |
 | `api/screenshot.py` | Token-gated `POST /api/screenshot` — PNG ≤ 10 MB written beside the DB under `data/screenshots/`, named from the server clock. **Retained but called by nothing** (see §12). |
 | `api/agents.py` | Token-gated request/response proxies to a connected agent, one shared `_ask_agent()`: `list_devices` (audio devices), `list_apps` (Start Menu programs) and `fetch_icon` (a site's icon). Replies verbatim, 5-second budget. **There is no agent-status endpoint** (agent status travels over the WebSocket only). |
@@ -111,6 +113,11 @@ state snapshot every second.
 | `handlers/audio.py` | `audio_mute_toggle`, `audio_volume_set`, `audio_switch`, `list_devices`, plus the read functions the poller uses. Mute/volume go through pycaw's raw device enumerator; enumeration and switching shell out to the bundled `tools/SoundVolumeView.exe`. |
 | `handlers/process.py` | `launch_app` (detached CreateProcess first, `os.startfile` fallback so a UAC-manifested exe can actually elevate; expands `%VAR%` in paths, optional raw `args`), `open_url` (scheme allowlist, handed to `rundll32 url.dll,FileProtocolHandler` through the same detached spawn), `process_toggle` (start/stop the configured VPN), `force_stop` (derives a process name from the *original* item's type and params). |
 | `handlers/apps.py` | Studio queries, not tile actions: `list_apps` (Start Menu `.lnk` → exe path + args, plus Store apps as `%SystemRoot%\explorer.exe shell:AppsFolder\<AppID>`, read by a PowerShell child and cached 60 s) and `fetch_icon` (a site's icon → 64 px PNG data URI; HTTP/HTTPS-only opener, size caps, Google s2 fallback). Both run on the receive-loop thread -- a worker thread let garbage collection release pycaw's COM pointers off-thread and crashed the frozen agent (0xC0000005). DNS goes through a 2 s bounded lookup with GC paused. |
+| `handlers/input.py` | `send_keys` (a chord such as `ctrl+shift+m`) and `media_key`; `parse_keys()` is pure and tested. |
+| `handlers/power.py` | `power`: lock / sleep / restart / shutdown, scheduled 0.5 s after the reply. |
+| `handlers/clipboard.py` | `clipboard_set`: text from `set_value` onto the PC clipboard, capped at 100k characters. |
+| `handlers/system.py` | PC-load readers for the widget: `pc.cpu`, `pc.ram`, `pc.net_down`, `pc.net_up`. |
+| `config_file.py` | `current_token()`: the agent's token re-read from `config.env` on every connect. |
 | `handlers/screenshot.py` | `screenshot` — grabs the primary monitor with `mss`, converts to a CF_DIB (a BMP with its 14-byte file header sliced off) and puts it on the **PC's own clipboard**. |
 | `start_agent.bat` | The launcher. Creates the desktop shortcut and icon on first run; `pause`s only on a non-zero exit, so a window left open means the agent crashed and the text in it is the error. |
 | `install_task.ps1` / `uninstall_task.ps1` | Register/remove an "IT-Deck Agent" logon Scheduled Task, always as the interactive user. Per `CLAUDE.md` the task is **disabled on both PCs** and is not what runs the agent. |
@@ -136,7 +143,11 @@ state snapshot every second.
 | `js/onboarding.js`, `css/onboarding.css` | The phone's first-run tour, once per device (`itdeck:onboarded`), its own small EN/RU table. |
 | `img/guide/` | Guide pictures: shared ones at the top, Studio screenshots per language in `en/` and `ru/`. Bundled into the exe with the rest of `frontend/`. |
 | `js/tile-catalog.js` | What tile types exist and what each needs configured. Must agree with agent `HANDLERS`, `WIDGETS`, `ICONS` and db.py seeds. |
-| `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item) -> destroy`), `clock-weather.js`. |
+| `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item,ctx) -> destroy`, `ctx.onState` for live agent state), `clock-weather.js`, `pc-stats.js`. |
+| `js/swipe.js` | Horizontal swipe on the deck → next/previous deck (touch and pen only). |
+| `js/dom.js` | `el()`, the element builder Studio's dialogs share. |
+| `js/studio-access.js`, `js/studio-whats-new.js`, `js/studio-decks.js` | Studio's Access (tokens), What's new and Decks (export/import/templates) dialogs. |
+| `whats-new.json`, `templates/*.json` | The "What's new" notes (one entry per public version) and the deck templates. |
 | `css/widgets.css`, `css/studio.css` | Widget layout (currentColor only, container queries); Studio's glass panels and forms. |
 | `js/theme.js` | Fetch/PUT the theme, cycle it, apply it to `<html data-theme>`; derives the display label from the slug; re-validates every value against the allowlist before it reaches the DOM. |
 | `js/longpress.js` | 500 ms stationary hold → long press; movement past 10 px cancels. |
@@ -175,8 +186,8 @@ when it is on).
 | `id` | INTEGER PK | |
 | `name` | TEXT NOT NULL | Shown in the Dashboard header as `IT-Deck <name>` |
 | `position` | INTEGER NOT NULL | Sort order; `POST /api/workspaces` assigns `MAX(position)+1` |
-| `grid_cols` | INTEGER NOT NULL DEFAULT 3 | Enforced by `_validate_placement` |
-| `grid_rows` | INTEGER NOT NULL DEFAULT 5 | Enforced by `_validate_placement` |
+| `grid_cols` | INTEGER NOT NULL DEFAULT 3 | Enforced by `validate_placement` |
+| `grid_rows` | INTEGER NOT NULL DEFAULT 5 | Enforced by `validate_placement` |
 
 No `CHECK` constraint backs `grid_cols`, so `compact_workspace` clamps it with
 `max(1, ...)` — a 0 would make the placement scan spin forever.
@@ -308,7 +319,7 @@ no longer an action is a row somebody deliberately turned into something
 else, whatever its other columns say.
 
 The fixups write to SQLite directly and therefore **bypass**
-`_validate_placement`; their placements are hand-verified in their own
+`validate_placement`; their placements are hand-verified in their own
 comments. The inserts (#5, #6, #8) used to decide by label on every start,
 so a seeded tile that was renamed or deleted came back; they are one-shot now
 (see `schema_migration` above).
@@ -355,7 +366,7 @@ Notes that matter:
   *request* failed (agent offline, no reply in time). A handler's own
   `{"status": "error"}` is a successful round-trip reporting a failed
   operation and comes back as a normal `200`.
-- **`_validate_placement`** rejects `width`/`height` < 1, negative `row`/`col`,
+- **`validate_placement`** rejects `width`/`height` < 1, negative `row`/`col`,
   a placement outside the workspace's `grid_cols`×`grid_rows`, and any
   rectangle intersection with another item in the same workspace. The reason is
   concrete: every tile is placed *explicitly*, and CSS Grid stacks

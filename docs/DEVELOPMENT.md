@@ -173,10 +173,12 @@ backend/                 FastAPI app (Docker image = this folder)
   app/db.py              schema, seed, startup fixups, schema_migration
   app/models.py          read helpers: workspaces+items, one item, press count
   app/auth.py            the two shared-secret checks (hmac.compare_digest)
+  app/config_file.py     line-preserving writer for the launcher's config.env
   app/state.py           in-memory state snapshot + diff
   app/pending.py         per-req_id 5 s timeout timers
   app/agent_requests.py  HTTP request/response to the agent (futures)
-  app/api/*.py           REST routes: items, workspaces, settings, agents, widgets, screenshot
+  app/api/*.py           REST routes: items, workspaces (+ deck export/import), settings,
+                         access (tokens), agents, widgets, screenshot
   app/ws/protocol.py     shared: hello handshake, frame parsing, close codes
   app/ws/agent.py        /ws/agent
   app/ws/client.py       /ws/client (+ ALLOWED_OVERRIDES)
@@ -187,18 +189,27 @@ frontend/                static PWA, no build step
   js/ws.js               Dashboard socket, reconnect, req_id bookkeeping
   js/render.js           all Dashboard DOM, ICONS, tile state, clock takeover
   js/tile-catalog.js     what tile types exist (Studio builds its editor from it)
-  js/widgets/            widget registry + the clock/weather widget
+  js/widgets/            widget registry (mount + live-state API), clock/weather, PC load
+  js/contextmenu.js      the phone's bottom sheet: long-press menu, "Run?", Send text
+  js/swipe.js            swipe between decks
   js/theme.js            theme + light/dark mode
-  js/studio*.js          Studio (controller, inspector, preview, guide, i18n)
+  js/studio*.js          Studio (controller, inspector, preview, guide, access,
+                         what's new, decks, i18n); js/dom.js is their element builder
+  whats-new.json         the "What's new" notes, one entry per public version
+  templates/*.json       deck templates Studio offers
   css/                   base, grid (Dashboard only), button, themes, widgets, studio
 agents/windows/          the agent
   agent.py               connect, reconnect, HANDLERS table, singleton mutex
   dispatch.py            frame → handler → result (pure, testable anywhere)
-  poller.py              state readers, 1 s loop
-  handlers/              audio, process (launch/url/vpn/force stop), apps, screenshot
+  config_file.py         re-reads AGENT_TOKEN from config.env on every connect
+  poller.py              state readers, 1 s loop (paused while nobody watches)
+  handlers/              audio, process (launch/url/vpn/force stop), apps, screenshot,
+                         input (hotkeys/media keys), power, clipboard, system (PC load)
   tools/SoundVolumeView.exe  audio device switching (NirSoft)
 standalone/              launcher.py, build.ps1, requirements.txt
-tests/                   pytest (backend, agent, db, ws) + node --test (frontend)
+tests/                   pytest (backend, ws, db, access, decks, agent, launcher,
+                         release) + node --test (frontend, keep-in-step checks)
+scripts/check_release.py the gate a manual release runs first
 docs/                    this guide, ARCHITECTURE.md, the Tech Reference
 docker-compose.yml, deploy.sh, check.sh, backup.sh, ansible/   legacy server path
 .github/workflows/       ci.yml (tests), release.yml (exe on tag), build.yml (GHCR image)
@@ -224,6 +235,8 @@ picked up on the next load (the ETag makes that a cheap 304).
 | In-flight commands | `ws.js` `inFlight` (req_id → item), `inFlightPerItem` | until result or 8 s backstop |
 | Press feedback timers | `render.js` `commandTimers` | per item; re-query tiles when they fire |
 | Mounted widgets | `widgets/index.js` `active` | until `destroyWidgets()` before a grid wipe |
+| Widget state subscriptions | `widgets/index.js` `stateListeners` | removed with their widget |
+| Decks from the last fetch, the one on screen | `app.js` `deckList`, `currentDeckId` | page; what a swipe moves through |
 
 **Persistence** (`localStorage`, always wrapped in try/catch because
 it throws when storage is blocked):
@@ -235,6 +248,8 @@ it throws when storage is blocked):
 | `itdeck:theme`, `itdeck:mode` | cache for the inline boot script (no theme flash); the server value wins a moment later |
 | `itdeck:onboarded` | first-run tour seen |
 | `itdeck:studio-guide-seen` | Studio guide seen |
+| `itdeck.agent_token` | Studio's copy of the Studio (agent) token |
+| `itdeck:whats-new-seen` | the newest "What's new" version Studio has shown |
 
 ### Rendering
 
@@ -256,7 +271,16 @@ whose `data-state-key` changed.
 ### Events
 
 - Taps use pointer events plus `longpress.js` (500 ms). A long press opens the
-  Force Stop menu.
+  Force Stop menu. A pointer that moved more than 10 px is a drag, not a tap.
+- `app.js` `handleTileTap` decides what a tap does:
+  - a tile with `params.confirm` gets the Run / Cancel sheet first;
+  - a Send-text tile opens its text sheet;
+  - everything else executes straight away.
+
+  All sheets are one component (`contextmenu.js` `openSheet`).
+- A horizontal swipe on the deck (touch or pen, at least 60 px, clearly
+  sideways, under 0.8 s) moves to the next or previous deck. The dots under
+  the header do the same.
 - The slider handles pointer drag and the arrow keys.
 - The empty `touchstart` listener on `body` is required for iOS `:active`.
   Keep it.
@@ -302,6 +326,7 @@ whose `data-state-key` changed.
 | `GET /api/workspaces` | none | the catalog (the phone reads it) |
 | `POST/PUT/DELETE /api/items[/{id}]`, `GET /api/items/{id}` | `X-Agent-Token` | Studio CRUD; validates JSON-object params, placement, dock rules |
 | `POST /api/workspaces`, `POST /api/workspaces/{id}/compact` | `X-Agent-Token` | new deck, pack tiles |
+| `GET /api/workspaces/{id}/export`, `POST /api/workspaces/import` | `X-Agent-Token` | a deck as a file (`{"format": "itdeck-deck", "version": 1, …}`); import always creates a new deck, validated all-or-nothing |
 | `GET /api/settings`, `PUT /api/settings/theme\|mode` | none (deliberate) | shared theme / light-dark |
 | `POST /api/agents/{name}/list_devices\|list_apps\|fetch_icon` | `X-Agent-Token` | Studio asks the agent, 5 s budget |
 | `GET /api/widgets/weather` | none (phone) | Open-Meteo proxy with snapped-coordinate cache |
@@ -381,6 +406,14 @@ budget under 5 s:
 
 **Launching** uses `CreateProcess` with breakaway flags, so programs outlive
 IT-Deck. `os.startfile` is the fallback, for UAC elevation.
+
+**Other commands:**
+- `send_keys` / `media_key` press keys through `keybd_event`. `parse_keys`
+  validates key names; some games ignore synthetic input by design.
+- `power` answers first and acts 0.5 s later, because sleep and shutdown
+  would otherwise swallow the reply.
+- `clipboard_set` takes the text from `set_value`, checked and capped at
+  100k characters.
 
 **State readers** (`poller.READERS`) are read one by one. A failing key is
 skipped and logged once, not every second.
@@ -595,8 +628,12 @@ for f in $(find frontend/js -name '*.js'); do node --check "$f"; done
 | `tests/test_backend.py` | any OS | dock rules, auth on agent queries and item writes, null/params validation, static caching headers, access-log filter |
 | `tests/test_ws.py` | any OS | handshakes (4001), bad frames, unknown commands, offline answers, the override allowlist, state namespacing, **the agent reconnect race**, pending timers |
 | `tests/test_db.py` | any OS | startup fixups on scratch DBs: fresh seed, user tiles named like old placeholders, deletions that must stick, a pre-`schema_migration` database |
-| `tests/test_agent.py` | any OS (needs Pillow, psutil) | URL allowlist, private-host check, dispatch turns every failure into a result |
-| `tests/frontend.test.mjs` | Node 22 | URL cleaning, brand logos, no Russian services, EN/RU key parity, theme allowlists agree everywhere |
+| `tests/test_access.py` | any OS | token changes: auth, Docker read-only, validation, line-preserving `config.env` write, phones signed out |
+| `tests/test_decks.py` | any OS | deck export → import round trip, refused files, all-or-nothing import, every template imports |
+| `tests/test_agent.py` | any OS (needs Pillow, psutil) | URL allowlist, private-host check, dispatch, key parsing, power/clipboard, VPN watcher, PC-load readers, token re-read |
+| `tests/test_launcher.py` | any OS | "What's new" selection and file shape, PINs, start-with-Windows (fake `winreg`) |
+| `tests/test_release.py` | any OS | `scripts/check_release.py` |
+| `tests/frontend.test.mjs` | Node 22 | URL cleaning, brand logos, no Russian services, EN/RU key parity, theme allowlists agree, **every catalog tile has a handler, an icon and its strings** |
 
 CI (`.github/workflows/ci.yml`) runs all of it on Windows with Python 3.12 on
 every push to `main` and on every PR.
@@ -816,7 +853,12 @@ is the short form of these.
 ### Add a new widget
 
 1. Create `frontend/js/widgets/<name>.js` exporting
-   `mountX(tile, item) -> destroy`.
+   `mountX(tile, item, ctx) -> destroy`.
+   - For live agent data, use `ctx.onState((changed) => …)`: it gets
+     everything known at once, then every change, with keys like
+     `"windows:pc.cpu"`. The subscription ends with the widget.
+   - Add the readers to `agents/windows/poller.py` `READERS`. They only run
+     while a phone is watching.
    - Draw only inside `tile`.
    - Use `currentColor` for colours.
    - `destroy()` must clear every timer, listener and fetch.
@@ -825,6 +867,26 @@ is the short form of these.
 4. Put styles in `css/widgets.css`, using container queries against the tile.
 5. **Check `fixup_widget_types()` in `backend/app/db.py`.** It assumes
    `clock_weather` is the only widget. Teach it the new type or retire it.
+
+### Make a tile ask before it runs
+
+Add `{ ...CONFIRM_FIELD }` to its catalog entry's `fields` in
+`tile-catalog.js`. Give it `default: true` if a mis-tap costs something,
+or `advanced: true` to tuck it under More settings. The phone reads
+`params.confirm`. Nothing changes on the backend or the agent.
+
+### Add a "What's new" entry (every public release)
+
+1. Add an entry at the top of `frontend/whats-new.json`: `{"version": "X.Y.Z",
+   "en": [...], "ru": [...]}` with 1–5 short bullets that a user, not a
+   developer, would care about. Use the same number of bullets in both
+   languages.
+2. `tests/test_launcher.py` checks the shape.
+3. `scripts/check_release.py vX.Y.Z` (the release workflow runs it) refuses
+   a release without the entry.
+
+The PC window shows it once after the update, and Studio's What's new
+button gets its dot.
 
 ### Add a new theme
 

@@ -11,6 +11,35 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.5 — 2026-09-24
+
+Internal milestone; published together with the rest as v0.5.6.
+
+### Added
+
+- **PC load widget.** CPU and memory as bars, network speed as text, live
+  on the phone. It is read only while a phone is looking, like all the
+  deck's state.
+- **Decks as files.** Studio → **Decks** can:
+  - download the deck on screen as a file;
+  - add a deck from a file;
+  - start one from a template (Streamer, Work).
+
+  An import always creates a new deck. It is checked by the same rules as a
+  tile saved in Studio, and a bad file adds nothing.
+- **Swipe between decks** on the phone, with dots under the header that
+  show where you are and switch decks with a tap.
+
+### Changed
+
+- A finger that moves more than a few pixels on a tile no longer presses
+  it. It is treated as a drag, which is also what lets a swipe start on a
+  tile.
+- Widgets can subscribe to the agent's live state (`ctx.onState`). The clock
+  is unaffected.
+
+---
+
 ## v0.5.4 — 2026-09-24
 
 Internal milestone; published together with later work as v0.5.6.
