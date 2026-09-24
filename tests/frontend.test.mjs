@@ -135,3 +135,13 @@ test("every logo is one 24-unit path, and every app mapping has a logo", () => {
     assert.ok(BRAND_ICONS[key], `APP_BRANDS points at missing logo ${key}`);
   }
 });
+
+test("a token typed in another keyboard layout is not sent", async () => {
+  const { headerSafeToken } = await import("../frontend/js/token-check.js");
+  assert.equal(headerSafeToken("admin"), true);
+  assert.equal(headerSafeToken("a.b_c~d-9"), true);
+  assert.equal(headerSafeToken("фвьшт"), false); // "admin" in the Russian layout
+  assert.equal(headerSafeToken("adm in"), false);
+  assert.equal(headerSafeToken(""), false);
+  assert.equal(headerSafeToken(null), false);
+});

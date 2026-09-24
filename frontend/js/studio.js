@@ -18,6 +18,7 @@ import { initGuide, isFirstVisit } from "./studio-guide.js";
 import { initAccess } from "./studio-access.js";
 import { initWhatsNew } from "./studio-whats-new.js";
 import { initDecks } from "./studio-decks.js";
+import { headerSafeToken } from "./token-check.js";
 
 const grid = document.getElementById("preview-grid");
 const previewDock = document.getElementById("preview-dock");
@@ -134,7 +135,7 @@ async function api(path, { method = "GET", body, auth = true } = {}) {
     // and it would read as "can't reach IT-Deck" on every save. Real tokens
     // are ASCII (the Access dialog allows nothing else); this is one typed in
     // the wrong keyboard layout. Drop it so the next save asks again.
-    if (!/^[\x21-\x7e]+$/.test(token)) {
+    if (!headerSafeToken(token)) {
       forgetAgentToken();
       return { ok: false, status: 0, detail: t("error.tokenLayout") };
     }
