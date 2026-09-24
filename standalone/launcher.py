@@ -2390,8 +2390,17 @@ def show_info_window(
 
         def poll_config(reschedule: bool = True) -> None:
             # Cheap: a few lines read every two seconds, and only a change
-            # touches the widgets.
-            values = parse_config(config_path)
+            # touches the widgets. Rescheduled whatever happens: the backend
+            # swaps the file in with os.replace, and a read that lands on
+            # that moment must cost one tick, not the whole refresh.
+            try:
+                apply_config(parse_config(config_path))
+            except Exception as exc:
+                print(f"Window: couldn't re-read config.env: {exc}")
+            if reschedule:
+                root.after(AGENT_STATUS_POLL_MS, poll_config)
+
+        def apply_config(values: dict) -> None:
             new_client = values.get("CLIENT_TOKEN") or current["client_token"]
             new_agent = values.get("AGENT_TOKEN") or current["agent_token"]
             if new_client != current["client_token"]:
@@ -2402,8 +2411,6 @@ def show_info_window(
                 current["agent_token"] = new_agent
                 if token_revealed["on"]:
                     reveal_token()
-            if reschedule:
-                root.after(AGENT_STATUS_POLL_MS, poll_config)
 
         # --- step 2: Studio --------------------------------------------------
 

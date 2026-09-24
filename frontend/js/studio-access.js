@@ -14,6 +14,9 @@ import { el } from "./dom.js";
 import { t } from "./studio-i18n.js";
 
 const TOKEN_PATTERN = /^[A-Za-z0-9._~-]{4,64}$/;
+// Reserved: the launcher resets a token of this shape to "admin" on start
+// (see LEGACY_TOKEN_SHAPE in backend/app/api/access.py).
+const LEGACY_TOKEN_SHAPE = /^[0-9a-f]{32}$/;
 
 function randomDigits(count) {
   // crypto.getRandomValues works on plain http, unlike crypto.randomUUID
@@ -109,7 +112,8 @@ export function initAccess(dialog, openButton, { request, currentAgentToken, onA
 
   function validate(field) {
     const value = field.input.value.trim();
-    field.error.textContent = TOKEN_PATTERN.test(value) ? "" : t("access.invalid");
+    field.error.textContent =
+      TOKEN_PATTERN.test(value) && !LEGACY_TOKEN_SHAPE.test(value) ? "" : t("access.invalid");
     return !field.error.textContent;
   }
 
@@ -140,15 +144,21 @@ export function initAccess(dialog, openButton, { request, currentAgentToken, onA
   }
 
   async function save() {
-    const okClient = validate(client);
-    const okAgent = validate(agent);
+    // Only what changed is checked and sent: a hand-set token in config.env
+    // that predates these rules must not block changing the other one.
+    const clientChanged = client.input.value.trim() !== original.client;
+    const agentChanged = agent.input.value.trim() !== original.agent;
+    client.error.textContent = "";
+    agent.error.textContent = "";
+    const okClient = !clientChanged || validate(client);
+    const okAgent = !agentChanged || validate(agent);
     if (!okClient || !okAgent) {
       (okClient ? agent.input : client.input).focus();
       return;
     }
     const body = {};
-    if (client.input.value.trim() !== original.client) body.client_token = client.input.value.trim();
-    if (agent.input.value.trim() !== original.agent) body.agent_token = agent.input.value.trim();
+    if (clientChanged) body.client_token = client.input.value.trim();
+    if (agentChanged) body.agent_token = agent.input.value.trim();
     if (!Object.keys(body).length) {
       dialog.close();
       return;

@@ -2,7 +2,7 @@ import asyncio
 
 from handlers.audio import get_default_output_name, get_muted, get_volume
 from handlers.process import VPN_WATCH, get_watched_process_name
-from handlers.system import NET, cpu_percent, ram_percent
+from handlers.system import NET, cpu_percent, ram_percent, reset_baselines
 
 POLL_INTERVAL_SECONDS = 1
 
@@ -42,7 +42,11 @@ def read_snapshot(readers: dict, last_errors: dict) -> dict:
     snapshot = {}
     for key, read in readers.items():
         try:
-            snapshot[key] = read()
+            value = read()
+            # None: the reader has no honest value this tick (a rate right
+            # after its baseline was set). Leave the key out.
+            if value is not None:
+                snapshot[key] = value
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"
             if last_errors.get(key) != message:
@@ -70,6 +74,7 @@ async def poll_loop(send_state_callback, active: "asyncio.Event | None" = None) 
     while True:
         if active is not None and not active.is_set():
             await active.wait()
+            reset_baselines()
         snapshot = read_snapshot(READERS, last_errors)
         # Sent unconditionally every tick; the backend (app.state.update_state)
         # is what dedupes into change-only broadcasts, so no diffing here.

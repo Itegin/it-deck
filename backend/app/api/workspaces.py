@@ -164,7 +164,7 @@ class DeckItem(BaseModel):
     col: int
     width: int = 1
     height: int = 1
-    label: str = Field(min_length=1, max_length=80)
+    label: str = Field(max_length=200)
     icon: str | None = None
     color: str | None = "#2a2f38"
     kind: str
@@ -178,10 +178,13 @@ class DeckItem(BaseModel):
 class DeckFile(BaseModel):
     format: Literal["itdeck-deck"]
     version: Literal[1]
-    name: str = Field(min_length=1, max_length=60)
-    grid_cols: int = Field(ge=1, le=8)
-    grid_rows: int = Field(ge=1, le=12)
-    items: list[DeckItem] = Field(max_length=100)
+    # Bounds loose enough for anything the create endpoints accept, so a
+    # deck exported from any install imports back; tight enough that a
+    # hostile file can't ask for a million-cell grid.
+    name: str = Field(min_length=1, max_length=200)
+    grid_cols: int = Field(ge=1, le=50)
+    grid_rows: int = Field(ge=1, le=50)
+    items: list[DeckItem] = Field(max_length=500)
 
 
 def _free_name(conn: sqlite3.Connection, name: str) -> str:
@@ -219,6 +222,10 @@ def export_workspace(workspace_id: int, x_agent_token: str | None = Header(None)
         try:
             item["params"] = json.loads(item["params"] or "{}")
         except ValueError:
+            item["params"] = {}
+        if not isinstance(item["params"], dict):
+            # Only rows from before params had to be an object can hold
+            # anything else; export them importable rather than not at all.
             item["params"] = {}
         item["dock"] = bool(item["dock"])
         items.append(item)

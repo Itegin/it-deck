@@ -32,7 +32,12 @@ router = APIRouter()
 # URL-safe, because the phone token rides in the dashboard link and its QR
 # code (?token=...), and nothing in it can break a config.env line (no
 # newline, '#', '=' or quote). 4 is the floor so "admin" stays valid.
-TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{4,64}$")
+TOKEN_PATTERN = re.compile(r"[A-Za-z0-9._~-]{4,64}")
+# The shape of the random tokens installs before v0.3.0 generated. The
+# launcher resets any token of exactly this shape to "admin" on start
+# (standalone/launcher.py, _looks_auto_generated), so accepting one here
+# would quietly undo the change on the next launch.
+LEGACY_TOKEN_SHAPE = re.compile(r"[0-9a-f]{32}")
 
 
 class AccessUpdate(BaseModel):
@@ -67,10 +72,17 @@ async def update_access(body: AccessUpdate, x_agent_token: str | None = Header(N
     if not wanted:
         raise HTTPException(status_code=400, detail="nothing to change")
     for env_key, value in wanted.items():
-        if not TOKEN_PATTERN.match(value):
+        # fullmatch, not match with ^...$: "$" also matches before a final
+        # newline, and a newline is exactly what must never reach config.env.
+        if not TOKEN_PATTERN.fullmatch(value):
             raise HTTPException(
                 status_code=400,
                 detail=f"{env_key}: 4-64 characters, letters, digits and . _ ~ - only",
+            )
+        if LEGACY_TOKEN_SHAPE.fullmatch(value):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{env_key}: 32 hex characters is reserved -- add a letter outside a-f or change the length",
             )
 
     changed = {key: value for key, value in wanted.items() if os.environ.get(key) != value}

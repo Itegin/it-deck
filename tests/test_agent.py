@@ -259,13 +259,20 @@ def test_net_rate_reports_bytes_per_second_for_one_interval():
     times = iter([10.0, 12.0, 13.0])
     rate = NetRate(counters=lambda: next(samples), clock=lambda: next(times))
 
-    assert (rate.down(), rate.up()) == (0, 0)  # baseline only
+    assert (rate.down(), rate.up()) == (None, None)  # baseline only: nothing to report
     assert (rate.down(), rate.up()) == (1000, 500)  # 2000 B and 1000 B over 2 s
     assert (rate.down(), rate.up()) == (0, 0)  # counters reset: never negative
+    rate.reset()
+    samples_after = iter([Counters(0, 0)])
+    rate._counters = lambda: next(samples_after)
+    rate._clock = lambda: 20.0
+    assert (rate.down(), rate.up()) == (None, None)  # after a pause: a fresh baseline
 
 
 def test_cpu_and_ram_readers_return_percentages():
-    from handlers.system import cpu_percent, ram_percent
+    from handlers.system import cpu_percent, ram_percent, reset_baselines
 
+    reset_baselines()
+    assert cpu_percent() is None  # the first call only sets the baseline
     assert 0 <= cpu_percent() <= 100
     assert 0 <= ram_percent() <= 100

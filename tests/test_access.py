@@ -49,7 +49,10 @@ def test_read_only_without_a_config_file(client, monkeypatch):
     assert response.status_code == 409
 
 
-@pytest.mark.parametrize("bad", ["abc", "has space", "new\nline", "x" * 65, "a#b", "a=b", "émoji"])
+@pytest.mark.parametrize("bad", [
+    "abc", "has space", "new\nline", "trailing\n", "x" * 65, "a#b", "a=b", "émoji",
+    "0123456789abcdef0123456789abcdef",  # the old auto-generated shape
+])
 def test_invalid_tokens_are_refused(client, config, bad):
     response = client.put("/api/access", json={"client_token": bad}, headers=headers())
     assert response.status_code == 400
@@ -93,3 +96,12 @@ def test_a_new_phone_token_disconnects_phones(client, config):
     with client.websocket_connect("/ws/client") as phone:
         phone.send_json({"type": "hello", "token": "new-phone"})
         assert phone.receive_json()["type"] == "state"
+
+
+def test_a_key_written_twice_is_changed_everywhere(tmp_path):
+    from app.config_file import update_config
+
+    path = tmp_path / "config.env"
+    path.write_text("AGENT_TOKEN=old\n# note\nAGENT_TOKEN=older\nSERVER_PORT=1\n")
+    update_config(path, {"AGENT_TOKEN": "new1", "CLIENT_TOKEN": "added"})
+    assert path.read_text() == "AGENT_TOKEN=new1\n# note\nAGENT_TOKEN=new1\nSERVER_PORT=1\nCLIENT_TOKEN=added\n"

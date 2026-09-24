@@ -33,10 +33,12 @@ async def agent_ws(ws: WebSocket) -> None:
 
     hub.register_agent(name, ws)
     logger.info("Agent '%s' connected (version %s)", name, hello.get("version", "?"))
+    await hub.broadcast_to_clients({"type": "agent_status", "agent": name, "status": "online"})
     # Whether anyone is watching the deck right now, so a newly connected
     # agent can pause its state poll at once (see ConnectionHub.sync_watchers).
+    # After "online", not before: if this send fails, send_to_agent announces
+    # "offline", and that has to be the last word the phones hear.
     await hub.send_to_agent(name, hub.watchers_frame())
-    await hub.broadcast_to_clients({"type": "agent_status", "agent": name, "status": "online"})
 
     try:
         while True:

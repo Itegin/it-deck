@@ -160,6 +160,10 @@ function showDeck(target, index) {
 }
 
 function switchDeck(step) {
+  // Only from a deck: on the picker or an error screen there is no "next".
+  if (currentDeckId === null) {
+    return;
+  }
   const index = deckList.findIndex((w) => w.id === currentDeckId) + step;
   if (index >= 0 && index < deckList.length) {
     showDeck(deckList[index], index);
@@ -167,6 +171,7 @@ function switchDeck(step) {
 }
 
 function showSelector(workspaces) {
+  currentDeckId = null;
   renderWorkspaceSelector(workspaces, (workspace) => {
     saveWorkspace(workspace.id);
     loadWorkspace(workspace);
@@ -188,6 +193,7 @@ async function init() {
     deckList = workspaces;
 
     if (!workspaces.length) {
+      currentDeckId = null;
       renderError("The backend has no workspaces yet, so there's nothing to show.");
       return;
     }
@@ -222,6 +228,7 @@ async function init() {
     }
   } catch (err) {
     if (seq === initSeq) {
+      currentDeckId = null;
       renderError(describeLoadFailure(err));
     }
   }

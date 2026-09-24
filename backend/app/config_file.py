@@ -33,15 +33,19 @@ def update_config(path: Path, updates: dict[str, str]) -> None:
     would read on the next start as "no tokens" and quietly reset to admin.
     """
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    pending = dict(updates)
+    seen = set()
     for index, line in enumerate(lines):
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key = stripped.partition("=")[0].strip()
-        if key in pending:
-            lines[index] = f"{key}={pending.pop(key)}"
-    lines.extend(f"{key}={value}" for key, value in pending.items())
+        if key in updates:
+            # Every occurrence, not just the first: the launcher reads the
+            # last one and the agent the first, so a hand-edited file with a
+            # key twice would otherwise have them disagree after a change.
+            lines[index] = f"{key}={updates[key]}"
+            seen.add(key)
+    lines.extend(f"{key}={value}" for key, value in updates.items() if key not in seen)
 
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config-", suffix=".tmp")
     try:
