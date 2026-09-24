@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import socket
 import sqlite3
 import subprocess
@@ -799,7 +800,7 @@ _RADIUS_BADGE = 7
 _FOCUS_MARGIN = 3
 
 
-def _rounded_png(
+def _rounded_image(
     width: int,
     height: int,
     radius: int,
@@ -809,8 +810,8 @@ def _rounded_png(
     ring: "Optional[str]" = None,
     ring_width: int = 2,
     margin: int = 0,
-) -> bytes:
-    """A rounded rectangle as PNG bytes, antialiased, transparent outside.
+):
+    """A rounded rectangle as a Pillow RGBA image, antialiased, transparent outside.
 
     Drawn four times too big and scaled down: Pillow's own rounded_rectangle
     has hard edges, and so does anything Tk draws on a canvas.
@@ -819,11 +820,7 @@ def _rounded_png(
     - ring: a focus ring `margin` px outside the shape (Studio's
       outline: 2px + offset 2px), so a focused and a plain button are the
       same size and nothing jumps.
-    Returned as PNG so Tk 8.6 can load it with PhotoImage(data=...), without
-    Pillow's ImageTk bridge.
     """
-    import io
-
     from PIL import Image, ImageDraw
 
     k = 4
@@ -850,10 +847,101 @@ def _rounded_png(
     elif edge:
         box = (box[0], box[1] + line, box[2], box[3])
     draw.rounded_rectangle(box, radius=r, fill=fill)
-    image = image.resize((width, height), Image.LANCZOS)
+    return image.resize((width, height), Image.LANCZOS)
+
+
+def _png(image) -> bytes:
+    """PNG bytes, so Tk 8.6 can load the image with PhotoImage(data=...)
+    without Pillow's ImageTk bridge. Fastest compression: the bytes go
+    straight to Tk in memory, and a smaller file saves nothing."""
+    import io
+
     out = io.BytesIO()
-    image.save(out, format="PNG")
+    image.save(out, format="PNG", compress_level=1)
     return out.getvalue()
+
+
+def _nine_slice(image, border: int, width: int, height: int):
+    """`image` stretched to width x height with its `border`-px corners kept
+    as they are -- what ttk does with an image element, done once in Pillow.
+
+    A big panel then costs one small antialiased drawing instead of one at
+    four times its full size.
+    """
+    from PIL import Image
+
+    iw, ih = image.size
+    b = border
+    out = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    xs = [(0, b, 0, b), (b, iw - b, b, width - b), (iw - b, iw, width - b, width)]
+    ys = [(0, b, 0, b), (b, ih - b, b, height - b), (ih - b, ih, height - b, height)]
+    for sx0, sx1, dx0, dx1 in xs:
+        for sy0, sy1, dy0, dy1 in ys:
+            if dx1 > dx0 and dy1 > dy0:
+                piece = image.crop((sx0, sy0, sx1, sy1)).resize((dx1 - dx0, dy1 - dy0), Image.NEAREST)
+                out.paste(piece, (dx0, dy0))
+    return out
+
+
+def _rounded_png(width: int, height: int, radius: int, fill: str, **kwargs) -> bytes:
+    return _png(_rounded_image(width, height, radius, fill, **kwargs))
+
+
+# Studio's ground: the two soft pools themes.css lays over the dark Liquid
+# Glass page, copied verbatim (tests/test_launcher.py finds each one in the
+# CSS). The first is painted on top, as in CSS.
+_STUDIO_POOLS = (
+    "radial-gradient(70% 55% at 18% 8%, rgba(142, 95, 245, 0.20) 0%, rgba(142, 95, 245, 0) 100%)",
+    "radial-gradient(60% 50% at 88% 82%, rgba(13, 148, 136, 0.16) 0%, rgba(13, 148, 136, 0) 100%)",
+)
+_POOL_RE = re.compile(
+    r"radial-gradient\((\d+)% (\d+)% at (\d+)% (\d+)%, (rgba\([^)]*\)) 0%, rgba\([^)]*\) 100%\)"
+)
+
+
+def _ground_image(width: int, height: int):
+    """Studio's page background at this size: --color-bg and the two pools.
+
+    Each pool is an ellipse whose colour fades linearly from its centre
+    alpha to nothing at its edge -- what CSS does for a two-stop
+    radial-gradient with an explicit size. Drawn at 1x: a gradient has no
+    edge to antialias.
+    """
+    from PIL import Image
+
+    ground = Image.new("RGB", (width, height), _GLASS["bg"])
+    for css in reversed(_STUDIO_POOLS):
+        rx_pct, ry_pct, cx_pct, cy_pct, color = _POOL_RE.fullmatch(css).groups()
+        r, g, b, a = _css_rgba(color)
+        rx = max(1, round(width * int(rx_pct) / 100))
+        ry = max(1, round(height * int(ry_pct) / 100))
+        cx = round(width * int(cx_pct) / 100)
+        cy = round(height * int(cy_pct) / 100)
+        # Pillow's radial_gradient is 0 at the centre of its 256px square and
+        # 255 at the *corner* (radius ~181), so x sqrt(2) makes it reach 255
+        # at radius 128, the inscribed circle -- then clamped. Inverted and
+        # scaled by the pool's alpha; stretched to (2rx, 2ry), the ellipse.
+        # Without the rescale the pool would stop at its box with a visible
+        # edge instead of fading out.
+        falloff = Image.radial_gradient("L").resize((2 * rx, 2 * ry), Image.BILINEAR)
+        mask = falloff.point(lambda v: round((255 - min(255, v * 1.41421356)) * a))
+        ground.paste((r, g, b), (cx - rx, cy - ry, cx + rx, cy + ry), mask)
+    return ground
+
+
+def _ground_png(width: int, height: int, card: tuple, radius: int, fill: str, outline: str, edge: str) -> bytes:
+    """The ground with one panel baked into it at `card` (x, y, w, h).
+
+    Baked rather than layered: a ttk panel fills its corners with one flat
+    colour, which on a gradient shows as a square around the curve.
+    """
+    ground = _ground_image(width, height).convert("RGBA")
+    x, y, w, h = card
+    side = 3 * radius  # corners plus a straight run of edge to stretch
+    tile = _rounded_image(side, side, radius, fill, outline=outline, edge=edge)
+    ground.alpha_composite(_nine_slice(tile, radius, w, h), (x, y))
+    return _png(ground.convert("RGB"))
+
 
 _STRINGS = {
     "en": {
@@ -2100,6 +2188,7 @@ def show_info_window(
     def worker() -> None:
         import tkinter as tk
         from tkinter import ttk
+        from types import SimpleNamespace
 
         lang = _detect_ui_lang()
         s = _STRINGS[lang]
@@ -2957,59 +3046,142 @@ def show_info_window(
             ("tour4_title", "tour4_body"),
         ]
 
-        def show_tour() -> None:
-            overlay = tk.Frame(root, bg=g["bg"])
-            overlay.place(x=0, y=0, relwidth=1, relheight=1)
-            box_panel, box = panel(overlay)
-            box_panel.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
-            counter = label(box, "", muted=True, size=9)
-            counter.pack(anchor="w", padx=6, pady=(18, 4))
-            title = label(box, "", bold=True, size=15, wrap=380)
-            title.pack(anchor="w", padx=6)
-            body = label(box, "", size=10, wrap=380)
-            body.pack(anchor="w", padx=6, pady=(8, 16))
-            nav = tk.Frame(box, bg=g["surface"])
-            nav.pack(fill="x", padx=6, pady=(0, 18))
-            state = {"page": 0}
+        # Both overlays (the tour, What's new) sit on Studio's own ground --
+        # the dark page with its purple and teal pools -- with the card baked
+        # into that one image, instead of a card floating on flat black.
+        #
+        # Nothing about the geometry changes while one is open: the card is
+        # measured once against every page it will show and fixed at the
+        # tallest, and the buttons keep their places and widths. A page turn
+        # then only swaps label text. (It used to resize the card, pack and
+        # unpack Back and change the Next button's width, and on Windows each
+        # click relaid and repainted the window in several visible passes.)
+        # The ground is drawn once, and again only if the window itself is
+        # resized -- debounced, never per frame.
+        overlay_pad_x, overlay_pad_y = 26, 22
 
-            def close_tour() -> None:
+        def open_overlay(pages: int = 1, render=None) -> SimpleNamespace:
+            overlay = tk.Frame(root, bg=g["bg"])
+            ground = tk.Label(overlay, bd=0, highlightthickness=0, bg=g["bg"])
+            ground.place(x=0, y=0, relwidth=1, relheight=1)
+            # The flat card: only shown if the image can't be drawn.
+            flat_card = tk.Frame(overlay, bg=g["surface"])
+            content = tk.Frame(overlay, bg=g["surface"])
+            width = max(root.winfo_width(), root.winfo_reqwidth())
+            card_w = min(width - 2 * PAD, 470)
+            state = {"size": None, "pending": None, "image": None, "height": 0}
+
+            def draw() -> None:
+                state["pending"] = None
+                w, h = overlay.winfo_width(), overlay.winfo_height()
+                if w <= 1:  # not mapped yet: the window's own size
+                    w, h = max(root.winfo_width(), root.winfo_reqwidth()), max(root.winfo_height(), root.winfo_reqheight())
+                if state["size"] == (w, h):
+                    return
+                state["size"] = (w, h)
+                card_h = state["height"] + 2 * overlay_pad_y
+                x = (w - card_w) // 2
+                y = max(PAD, round(h * 0.45 - card_h / 2))
+                content.place(
+                    x=x + overlay_pad_x, y=y + overlay_pad_y, width=card_w - 2 * overlay_pad_x, height=state["height"]
+                )
+                if rounded:
+                    try:
+                        data = _ground_png(w, h, (x, y, card_w, card_h), _RADIUS_PANEL, g["surface"], g["border"], g["edge"])
+                        state["image"] = tk.PhotoImage(master=root, data=data)
+                        ground.configure(image=state["image"])
+                        flat_card.place_forget()
+                        return
+                    except Exception as exc:
+                        print(f"Window: flat overlay, ground image unavailable: {exc}")
+                flat_card.place(x=x, y=y, width=card_w, height=card_h)
+
+            def on_configure(_event) -> None:
+                if state["pending"] is not None:
+                    root.after_cancel(state["pending"])
+                state["pending"] = root.after(120, draw)
+
+            def finish() -> None:
+                """Measure every page, fix the card at the tallest, show it."""
+                heights = []
+                for page in range(pages):
+                    if render is not None:
+                        render(page)
+                    content.update_idletasks()
+                    heights.append(content.winfo_reqheight())
+                if render is not None:
+                    render(0)
+                state["height"] = max(heights)
+                overlay.place(x=0, y=0, relwidth=1, relheight=1)
+                draw()
+                overlay.bind("<Configure>", on_configure)
+
+            def close() -> None:
+                if state["pending"] is not None:
+                    root.after_cancel(state["pending"])
                 root.unbind("<Escape>")
                 overlay.destroy()
 
-            skip = ttk.Button(nav, text=s["tour_skip"], style=button_style(nav, "Mini"), command=close_tour)
-            skip.pack(side="left")
-            next_button = ttk.Button(nav, style=button_style(nav, "Accent"))
-            next_button.pack(side="right")
-            back_button = ttk.Button(nav, text=s["tour_back"], style=button_style(nav, "Glass"))
+            # The wrap leaves a few px spare: a tk.Label's own padding and
+            # border sit outside its wraplength, and a label exactly as wide
+            # as the card's content clips its last letters.
+            return SimpleNamespace(content=content, wrap=card_w - 2 * overlay_pad_x - 8, finish=finish, close=close)
 
-            def render_page() -> None:
-                page = state["page"]
+        def show_tour() -> None:
+            state = {"page": 0}
+
+            def render_page(page: int) -> None:
                 key_title, key_body = tour_pages[page]
                 counter.configure(text=s["tour_step"].format(n=page + 1, total=len(tour_pages)))
                 title.configure(text=s[key_title])
                 body.configure(text=s[key_body].format(token=current["client_token"]))
                 last = page == len(tour_pages) - 1
                 next_button.configure(text=s["tour_done"] if last else s["tour_next"])
-                if page > 0:
-                    back_button.pack(side="right", padx=(0, 8), before=next_button)
-                else:
-                    back_button.pack_forget()
-                next_button.focus_set()
+                # Always there, greyed on the first page: a button that
+                # appears and disappears moves its neighbours.
+                back_button.state(["disabled"] if page == 0 else ["!disabled"])
+
+            ov = open_overlay(pages=len(tour_pages), render=render_page)
+            box = ov.content
+            # The buttons first, pinned to the bottom of the fixed-height card,
+            # so a shorter page doesn't pull them up.
+            nav = tk.Frame(box, bg=g["surface"])
+            nav.pack(side="bottom", fill="x")
+            counter = label(box, "", muted=True, size=9)
+            counter.pack(anchor="w", pady=(0, 4))
+            title = label(box, "", bold=True, size=15, wrap=ov.wrap)
+            title.pack(anchor="w")
+            body = label(box, "", size=10, wrap=ov.wrap)
+            body.pack(anchor="w", pady=(8, 16))
 
             def go(delta: int) -> None:
                 page = state["page"] + delta
                 if page >= len(tour_pages):
-                    close_tour()
+                    ov.close()
                     return
                 state["page"] = max(0, page)
-                render_page()
+                render_page(state["page"])
+                next_button.focus_set()
 
-            next_button.configure(command=lambda: go(1))
-            back_button.configure(command=lambda: go(-1))
+            ttk.Button(nav, text=s["tour_skip"], style=button_style(nav, "Mini"), command=ov.close).pack(side="left")
+            # Wide enough for the longer of its two labels, so it doesn't
+            # change size on the last page.
+            next_button = ttk.Button(
+                nav,
+                style=button_style(nav, "Accent"),
+                width=max(len(s["tour_next"]), len(s["tour_done"])),
+                command=lambda: go(1),
+            )
+            next_button.pack(side="right")
+            # Packed after Next with side="right": it lands to Next's left,
+            # where Back belongs.
+            back_button = ttk.Button(nav, text=s["tour_back"], style=button_style(nav, "Glass"), command=lambda: go(-1))
+            back_button.pack(side="right", padx=(0, 8))
             # On root: focus sits on the Next button, so an overlay binding
             # would never see the key.
-            root.bind("<Escape>", lambda _event: close_tour())
-            render_page()
+            root.bind("<Escape>", lambda _event: ov.close())
+            ov.finish()
+            next_button.focus_set()
 
         tour_button.configure(command=show_tour)
         if first_run:
@@ -3023,28 +3195,20 @@ def show_info_window(
         # which entries, and has already marked them seen). A fresh install
         # gets the tour instead: release notes mean nothing to a new user.
         def show_whats_new(entries: list) -> None:
-            overlay = tk.Frame(root, bg=g["bg"])
-            overlay.place(x=0, y=0, relwidth=1, relheight=1)
-            box_panel, box = panel(overlay)
-            box_panel.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
+            ov = open_overlay()
+            box = ov.content
+            nav = tk.Frame(box, bg=g["surface"])
+            nav.pack(side="bottom", fill="x", pady=(14, 0))
             label(
-                box, s["whats_new_title"].format(version=entries[0]["version"]), bold=True, size=15, wrap=380
-            ).pack(anchor="w", padx=6, pady=(18, 8))
+                box, s["whats_new_title"].format(version=entries[0]["version"]), bold=True, size=15, wrap=ov.wrap
+            ).pack(anchor="w", pady=(0, 8))
             for index, entry in enumerate(entries):
                 if len(entries) > 1:
-                    label(box, entry["version"], muted=True, size=9).pack(
-                        anchor="w", padx=6, pady=(6 if index else 0, 2)
-                    )
+                    label(box, entry["version"], muted=True, size=9).pack(anchor="w", pady=(6 if index else 0, 2))
                 for bullet in entry.get(lang) or entry.get("en") or []:
-                    label(box, f"\u2022  {bullet}", size=10, wrap=380).pack(anchor="w", padx=6, pady=1)
-            nav = tk.Frame(box, bg=g["surface"])
-            nav.pack(fill="x", padx=6, pady=(14, 18))
+                    label(box, f"\u2022  {bullet}", size=10, wrap=ov.wrap).pack(anchor="w", pady=1)
 
-            def close() -> None:
-                root.unbind("<Escape>")
-                overlay.destroy()
-
-            ok = ttk.Button(nav, text=s["whats_new_ok"], style=button_style(nav, "Accent"), command=close)
+            ok = ttk.Button(nav, text=s["whats_new_ok"], style=button_style(nav, "Accent"), command=ov.close)
             ok.pack(side="right")
             ttk.Button(
                 nav,
@@ -3052,7 +3216,8 @@ def show_info_window(
                 style=button_style(nav, "Glass"),
                 command=lambda: webbrowser.open(RELEASES_PAGE_URL),
             ).pack(side="right", padx=(0, 8))
-            root.bind("<Escape>", lambda _event: close())
+            root.bind("<Escape>", lambda _event: ov.close())
+            ov.finish()
             ok.focus_set()
 
         if whats_new and not first_run:

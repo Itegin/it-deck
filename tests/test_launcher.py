@@ -191,3 +191,39 @@ def test_rounded_png_is_antialiased_and_transparent_outside():
     # Partial alpha somewhere along the curve: antialiased, not stair-stepped.
     alphas = {image.getpixel((x, x))[3] for x in range(0, 8)}
     assert any(0 < a < 255 for a in alphas)
+
+
+def test_overlay_ground_is_studios_page():
+    # The tour and What's new sit on Studio's own page background: both
+    # pools, verbatim, from the dark Liquid Glass body rule.
+    body = css_block(CSS["themes"], '[data-theme="liquid-glass"]:not([data-mode="light"]) body')
+    for pool in launcher._STUDIO_POOLS:
+        assert pool in body, pool
+        assert launcher._POOL_RE.fullmatch(pool), pool
+
+
+def test_overlay_ground_draws_the_pools():
+    pytest.importorskip("PIL")
+    image = launcher._ground_image(400, 600)
+    assert image.size == (400, 600)
+    bg = launcher._css_rgba(launcher._GLASS["bg"])[:3]
+    purple = image.getpixel((72, 48))  # the first pool's centre: 18% 8%
+    teal = image.getpixel((352, 492))  # the second's: 88% 82%
+    assert purple[2] > bg[2] + 20 and purple[0] > purple[1]  # violet, lifted
+    assert teal[1] > bg[1] + 10 and teal[1] > teal[0]  # teal, lifted
+    # Fades to the bare ground: far from both centres nothing is added, and
+    # there is no hard edge where a pool's box ends.
+    assert image.getpixel((399, 0)) == bg
+    column = [image.getpixel((72, y))[2] for y in range(48, 400)]
+    assert max(abs(a - b) for a, b in zip(column, column[1:])) <= 2
+
+
+def test_nine_slice_keeps_corners_and_fills_the_middle():
+    pytest.importorskip("PIL")
+    tile = launcher._rounded_image(48, 48, 16, fill="#202020", outline="#808080")
+    big = launcher._nine_slice(tile, 16, 300, 120)
+    assert big.size == (300, 120)
+    # Corners unchanged, so they stay antialiased; the middle is the fill.
+    assert big.crop((0, 0, 16, 16)).tobytes() == tile.crop((0, 0, 16, 16)).tobytes()
+    assert big.crop((284, 104, 300, 120)).tobytes() == tile.crop((32, 32, 48, 48)).tobytes()
+    assert big.getpixel((150, 60))[:3] == (0x20, 0x20, 0x20)
