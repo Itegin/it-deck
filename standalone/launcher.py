@@ -90,6 +90,25 @@ SESSION_END_EXIT_DELAY = 0.05
 # removes the minimized-console stub that showed up as a stray rectangle on
 # the desktop, and the "restore it from the taskbar to press Ctrl+C" story
 # that the Quit button had already replaced.
+# A log past this size is rolled to <name>.1 when IT-Deck starts, so the three
+# logs together stay within a few tens of MB instead of growing for as long as
+# the PC does. At launch rather than mid-run: the children hold their files
+# open, and Windows will not rename a file another process has open.
+LOG_ROTATE_BYTES = 5 * 1024 * 1024
+
+
+def open_log(path: Path, **kwargs):
+    """Open `path` for appending, rolling it to `<name>.1` first if it is big."""
+    try:
+        if path.stat().st_size > LOG_ROTATE_BYTES:
+            os.replace(path, path.with_name(path.name + ".1"))
+    except OSError:
+        # Missing (first run), or still held by another copy of IT-Deck --
+        # which the port check will stop shortly anyway. Append as before.
+        pass
+    return open(path, "a", encoding="utf-8", **kwargs)
+
+
 def _redirect_output_to_log() -> None:
     if not is_frozen():
         # A dev run has a real terminal and its output is the point.
@@ -101,7 +120,7 @@ def _redirect_output_to_log() -> None:
     try:
         logs = default_data_dir() / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        stream = open(logs / "launcher.log", "a", encoding="utf-8", buffering=1)
+        stream = open_log(logs / "launcher.log", buffering=1)
         sys.stdout = stream
         sys.stderr = stream
     except Exception:
@@ -111,6 +130,19 @@ def _redirect_output_to_log() -> None:
             sys.stdout = sys.stderr = open(os.devnull, "w")
         except Exception:
             pass
+
+
+def _ps_quote(value) -> str:
+    """`value` as a PowerShell single-quoted string literal.
+
+    Inside '...' PowerShell expands nothing and the only special character is
+    the quote itself, written twice. Every path this module splices into a
+    PowerShell command goes through here: an unescaped one broke the whole
+    command for any profile path containing an apostrophe (a user named O'Brien),
+    and each caller failed quietly -- no desktop shortcut, firewall rules and
+    files left behind by the uninstall.
+    """
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def is_frozen() -> bool:
@@ -648,10 +680,10 @@ def ensure_desktop_shortcut() -> None:
             return
         exe_path = sys.executable
         ps_command = (
-            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}'); "
-            f"$s.TargetPath = '{exe_path}'; "
-            f"$s.WorkingDirectory = '{Path(exe_path).parent}'; "
-            f"$s.IconLocation = '{exe_path}'; "
+            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut({_ps_quote(shortcut_path)}); "
+            f"$s.TargetPath = {_ps_quote(exe_path)}; "
+            f"$s.WorkingDirectory = {_ps_quote(Path(exe_path).parent)}; "
+            f"$s.IconLocation = {_ps_quote(exe_path)}; "
             f"$s.Save()"
         )
         subprocess.run(
@@ -1100,7 +1132,7 @@ def remove_firewall_rules(exe: Path) -> None:
     # through consent prompts.
     count = (
         "(Get-NetFirewallApplicationFilter | "
-        f"Where-Object {{ $_.Program -eq '{exe}' }} | Measure-Object).Count"
+        f"Where-Object {{ $_.Program -eq {_ps_quote(exe)} }} | Measure-Object).Count"
     )
     try:
         found = subprocess.run(
@@ -1128,10 +1160,9 @@ def remove_firewall_rules(exe: Path) -> None:
 
     NEWLINE = chr(10)
     script_path = Path(tempfile.gettempdir()) / f"itdeck-firewall-{os.getpid()}.ps1"
-    quoted = str(exe).replace("'", "''")
     script_path.write_text(
         "Get-NetFirewallApplicationFilter | "
-        f"Where-Object {{ $_.Program -eq '{quoted}' }} | "
+        f"Where-Object {{ $_.Program -eq {_ps_quote(exe)} }} | "
         "Get-NetFirewallRule | Remove-NetFirewallRule -ErrorAction SilentlyContinue" + NEWLINE
         + "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue" + NEWLINE,
         encoding="utf-8",
@@ -1140,7 +1171,10 @@ def remove_firewall_rules(exe: Path) -> None:
     # inner one, so the UAC prompt is resolved before this returns.
     outer = (
         "Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList "
-        f"'-NoProfile','-ExecutionPolicy','Bypass','-File','{script_path}'"
+        # The path carries its own double quotes: Start-Process joins the
+        # list with spaces and does not quote an element that contains one,
+        # so a profile path with a space would split into two arguments.
+        f"'-NoProfile','-ExecutionPolicy','Bypass','-File',{_ps_quote(chr(34) + str(script_path) + chr(34))}"
     )
     try:
         subprocess.run(
@@ -1203,7 +1237,7 @@ def spawn_uninstall_helper(*targets) -> None:
         "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n"
     ).format(
         seconds=UNINSTALL_RETRY_SECONDS,
-        targets=", ".join(f"'{t}'" for t in wanted),
+        targets=", ".join(_ps_quote(t) for t in wanted),
     )
     try:
         import tempfile
@@ -2501,8 +2535,8 @@ def run_launcher() -> int:
     # console now only ever prints what run_launcher() itself writes.
     logs_dir = data_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    backend_log = open(logs_dir / "backend.log", "a", encoding="utf-8")
-    agent_log = open(logs_dir / "agent.log", "a", encoding="utf-8")
+    backend_log = open_log(logs_dir / "backend.log")
+    agent_log = open_log(logs_dir / "agent.log")
 
     print(f"IT-Deck v{ITDECK_VERSION} starting...")
     print(f"Data/config: {data_dir}")
