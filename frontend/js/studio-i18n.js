@@ -320,6 +320,7 @@ const STRINGS = {
     "error.noToken": "no agent token entered",
     "error.badToken": "the agent token was rejected. Check AGENT_TOKEN in config.env and try again.",
     "error.network": "can't reach IT-Deck ({detail})",
+    "error.tokenLayout": "the saved agent token has letters that aren't Latin, probably typed in another keyboard layout. It was forgotten: press Save again and type it in English.",
 
     "confirm.delete": "Delete “{label}”? This can't be undone.",
     "confirm.compact": "Move every tile on “{name}” up and to the left to close the gaps? Positions are rewritten and this can't be undone.",
@@ -640,6 +641,7 @@ const STRINGS = {
     "error.noToken": "токен агента не введён",
     "error.badToken": "токен агента не подошёл. Проверьте AGENT_TOKEN в config.env и попробуйте снова.",
     "error.network": "нет связи с IT-Deck ({detail})",
+    "error.tokenLayout": "в сохранённом токене агента есть нелатинские буквы, похоже, он набран в русской раскладке. Он сброшен: нажмите «Сохранить» ещё раз и введите токен латиницей.",
 
     "confirm.delete": "Удалить «{label}»? Отменить это нельзя.",
     "confirm.compact": "Сдвинуть все плитки деки «{name}» вверх и влево, убрав пустые места? Позиции перезапишутся, отменить это нельзя.",

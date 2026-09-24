@@ -9,6 +9,12 @@ standalone mode is §10, tech debt is §12.
 
 ## Unreleased
 
+### Fixed
+
+- Studio could not save anything once its saved agent token had non-Latin
+  letters in it (typed in the Russian layout): every save said "can't reach
+  IT-Deck". It now drops that token, says why, and asks again.
+
 ---
 
 ## v0.5.7 — 2026-09-24
