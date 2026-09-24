@@ -2,6 +2,7 @@ import asyncio
 
 from handlers.audio import get_default_output_name, get_muted, get_volume
 from handlers.process import VPN_WATCH, get_watched_process_name
+from handlers.system import NET, cpu_percent, ram_percent
 
 POLL_INTERVAL_SECONDS = 1
 
@@ -22,6 +23,11 @@ READERS = {
     # Through VPN_WATCH rather than a full process walk every tick; see
     # ProcessWatch for how it stays just as current.
     "vpn.running": lambda: VPN_WATCH.running(get_watched_process_name()),
+    # The PC-load widget. net_down before net_up: one sample feeds both.
+    "pc.cpu": cpu_percent,
+    "pc.ram": ram_percent,
+    "pc.net_down": NET.down,
+    "pc.net_up": NET.up,
 }
 
 

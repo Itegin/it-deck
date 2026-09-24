@@ -564,11 +564,11 @@ def fixup_widget_types() -> None:
     label. On the install that reported this, that fallback was the Terminal
     tile the widget had replaced, reappearing after every restart.
 
-    `clock_weather` is not a guess here: it is the only registered widget
-    type there has ever been (js/widgets/index.js, and CLAUDE.md's "keep in
-    step" list). **If a second widget type is ever added, this fixup has to
-    learn how to tell them apart or stop running** -- by then the damaged
-    rows it exists for are long since repaired.
+    `clock_weather` is not a guess here: it was the only widget type when
+    that bug existed, so every row it damaged was a clock. The second widget
+    (`pc_stats`, v0.5.5) came long after the bug was fixed and is never
+    stored as `launch_app`, so the match below can only ever find the old
+    damage -- keep it that narrow if more widget types are added.
     """
     conn = get_connection()
     try:

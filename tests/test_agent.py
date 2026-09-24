@@ -247,3 +247,25 @@ def test_clipboard_checks_the_text(monkeypatch):
     for bad in ("", "   ", None, 42, "x" * (clipboard.MAX_CHARS + 1)):
         assert clipboard.handle_clipboard_set({"value": bad})["status"] == "error"
     assert got == ["hello"]
+
+
+def test_net_rate_reports_bytes_per_second_for_one_interval():
+    from collections import namedtuple
+
+    from handlers.system import NetRate
+
+    Counters = namedtuple("Counters", "bytes_recv bytes_sent")
+    samples = iter([Counters(1000, 500), Counters(3000, 1500), Counters(10, 10)])
+    times = iter([10.0, 12.0, 13.0])
+    rate = NetRate(counters=lambda: next(samples), clock=lambda: next(times))
+
+    assert (rate.down(), rate.up()) == (0, 0)  # baseline only
+    assert (rate.down(), rate.up()) == (1000, 500)  # 2000 B and 1000 B over 2 s
+    assert (rate.down(), rate.up()) == (0, 0)  # counters reset: never negative
+
+
+def test_cpu_and_ram_readers_return_percentages():
+    from handlers.system import cpu_percent, ram_percent
+
+    assert 0 <= cpu_percent() <= 100
+    assert 0 <= ram_percent() <= 100
