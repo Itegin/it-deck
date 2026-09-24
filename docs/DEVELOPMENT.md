@@ -18,8 +18,8 @@ now.
 
 ### What IT-Deck is
 
-It turns an old iPhone (or any phone) into a Stream Deck-style control panel
-for a Windows PC. You tap a tile on the phone, and the PC mutes the mic, opens
+It turns a phone, the everyday one or a spare, into a Stream Deck-style
+control panel for a Windows PC. You tap a tile on the phone, and the PC mutes the mic, opens
 a program, switches speakers, starts the VPN and so on. It is self-hosted and
 single-user, and runs on your own Wi-Fi.
 
@@ -30,7 +30,7 @@ relays messages. The **phone** (a static web page) and the **Windows agent**
 (a Python process on the PC) each hold one WebSocket to it.
 
 ```
- iPhone (browser)          Windows PC
+ Phone (browser)           Windows PC
  ┌────────────┐            ┌──────────────────────────────────────┐
  │ Dashboard  │── Wi-Fi ──▶│ ITDeck.exe                           │
  │ index.html │  WebSocket │  ├─ backend  (FastAPI + SQLite)      │

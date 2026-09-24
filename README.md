@@ -2,9 +2,14 @@
 
 ![IT-Deck logo](frontend/icons/icon-180.png)
 
-An old iPhone becomes a control deck for your Windows PC. One `.exe` on the
-PC, a QR code, and the phone is a Stream Deck that also shows what the PC is
-actually doing.
+Your phone becomes a control deck for your Windows PC — the one in your
+pocket while you sit at the desk, or a spare one that stays on the stand. One
+`.exe` on the PC, a QR code, and the phone is a Stream Deck that also shows
+what the PC is actually doing. Nothing to install on the phone: it runs in
+the browser.
+
+**Made for** gamers and streamers, people working from home, students, and
+anyone who likes one tap instead of three clicks.
 
 **[Русская версия](README.ru.md)**
 

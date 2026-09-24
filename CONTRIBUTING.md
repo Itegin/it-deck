@@ -50,8 +50,9 @@ but applies to everyone). The short version:
   with no result is a bug.
 - **Startup fixups never touch user edits.** Guard every UPDATE on the value
   it upgrades *from*. One-shot inserts go through `schema_migration`.
-- **Nothing on the phone may be heavy.** The deck targets iPhone X / Safari
-  16.7: no WebGL, no blur stacks, no scroll animation.
+- **Nothing on the phone may be heavy.** The oldest phone it must run on is an
+  iPhone X on Safari 16.7, and on anyone's everyday phone it shares the
+  battery with everything else: no WebGL, no blur stacks, no scroll animation.
 - **Comments explain why**, not what. Look at the surrounding code for the
   expected density.
 

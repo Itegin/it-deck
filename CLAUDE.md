@@ -1,7 +1,8 @@
 # IT-Deck
 
-Self-hosted control surface: an old iPhone becomes a deck for a Windows PC.
-Single-user. Three pieces, one WebSocket each: **backend/** (FastAPI + SQLite),
+Self-hosted control surface: a phone (the everyday one or a spare) becomes a
+deck for a Windows PC, in its browser. Audience: gamers, streamers, remote
+workers, students, enthusiasts -- never pitch it as "for old phones". Single-user. Three pieces, one WebSocket each: **backend/** (FastAPI + SQLite),
 **frontend/** (vanilla JS/CSS PWA, no build step), **agents/windows/** (Python
 agent). **standalone/** bundles all three into one `ITDeck.exe` (the main path).
 Legacy: backend in Docker on Athlon, frontend bind-mounted.

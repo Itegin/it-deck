@@ -44,7 +44,8 @@ Docker path remains for the original deployment.
 
 ## ADR-3 Vanilla JS, no build step, frontend bind-mounted
 
-**Context.** An old iPhone, a single developer, and the wish to edit and
+**Context.** A phone's browser as the only client (the oldest supported one
+is an iPhone X on Safari 16.7), a single developer, and the wish to edit and
 reload.
 
 **Decision.** ES modules served as-is, with no framework and no bundler. In
