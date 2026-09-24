@@ -363,9 +363,16 @@ def _fetch_icon(url: str) -> dict:
 
 
 def handle_fetch_icon(params: dict) -> dict:
-    url = (params.get("url") or "").strip()
-    if urlsplit(url).scheme not in ("http", "https") or not urlsplit(url).netloc:
-        return {"status": "error", "message": "Only a web address (http or https) has a site icon."}
+    not_web = {"status": "error", "message": "Only a web address (http or https) has a site icon."}
+    url = str(params.get("url") or "").strip()
+    try:
+        # Inside the try: urlsplit raises ValueError on input like
+        # "http://[x", and outside it that escaped the handler.
+        parts = urlsplit(url)
+    except ValueError:
+        return not_web
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return not_web
     try:
         return _fetch_icon(url)
     except Exception as exc:

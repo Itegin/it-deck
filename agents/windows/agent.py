@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 import win32api
 import win32event
@@ -9,6 +10,7 @@ import winerror
 from dotenv import load_dotenv
 from websockets.asyncio.client import connect
 
+from dispatch import receive_loop
 from handlers.apps import handle_fetch_icon, handle_list_apps
 from handlers.audio import (
     handle_audio_mute_toggle,
@@ -16,7 +18,12 @@ from handlers.audio import (
     handle_audio_volume_set,
     handle_list_devices,
 )
-from handlers.process import handle_force_stop, handle_launch_app, handle_open_url, handle_process_toggle
+from handlers.process import (
+    handle_force_stop,
+    handle_launch_app,
+    handle_open_url,
+    handle_process_toggle,
+)
 from handlers.screenshot import handle_screenshot
 from poller import poll_loop
 
@@ -34,6 +41,8 @@ SERVER_PORT = os.environ.get("SERVER_PORT", "8000")
 SERVER_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws/agent"
 
 MAX_BACKOFF = 30
+# A connection that lasted this long counts as having worked; see main().
+HEALTHY_CONNECTION_SECONDS = 10
 SINGLETON_MUTEX_NAME = "Global\\ITDeckAgentSingleton"
 
 # Exit code for "another agent already holds the singleton mutex". Mirrored
@@ -47,7 +56,7 @@ _singleton_handle = None
 
 
 def handle_agent_shutdown(params: dict) -> dict:
-    # No-op on purpose: the actual exit happens in _receive_loop once this
+    # No-op on purpose: the actual exit happens in _shutdown() once this
     # "ok" has gone out. Exiting from here would kill the process before the
     # result frame is written, leaving the req_id unresolved forever.
     return {"status": "ok"}
@@ -69,48 +78,13 @@ HANDLERS = {
 }
 
 
-async def _receive_loop(ws) -> None:
-    async for raw in ws:
-        print(f"Received: {raw}")
-        message = json.loads(raw)
-
-        cmd = message.get("cmd")
-        if cmd is None:
-            continue
-
-        handler = HANDLERS.get(cmd)
-        if handler is None:
-            await ws.send(json.dumps({
-                "type": "result",
-                "req_id": message["req_id"],
-                "status": "error",
-                "message": f"unknown command: {cmd}",
-            }))
-            continue
-
-        # force_stop is the one handler that needs more than its own
-        # params: it derives a process name from the ORIGINAL item's type
-        # (see handle_force_stop), which backend/app/ws/client.py sends
-        # alongside the (possibly overridden) cmd specifically for this.
-        if cmd == "force_stop":
-            result = handler(message["params"], message.get("item_type"))
-        else:
-            result = handler(message["params"])
-        await ws.send(json.dumps({
-            "type": "result",
-            "req_id": message["req_id"],
-            "item_id": message.get("item_id"),
-            **result,
-        }))
-
-        if cmd == "agent_shutdown":
-            # Brief pause so the "ok" above actually reaches the wire before
-            # we go. os._exit() rather than sys.exit()/returning cleanly:
-            # anything unwinding through run() lands back in main()'s
-            # reconnect loop, which would immediately reconnect the agent we
-            # were just asked to shut down.
-            await asyncio.sleep(0.2)
-            os._exit(0)
+async def _shutdown() -> None:
+    # Brief pause so the "ok" result actually reaches the wire before we go.
+    # os._exit() rather than sys.exit()/returning cleanly: anything unwinding
+    # through run() lands back in main()'s reconnect loop, which would
+    # immediately reconnect the agent we were just asked to shut down.
+    await asyncio.sleep(0.2)
+    os._exit(0)
 
 
 async def run() -> None:
@@ -126,10 +100,27 @@ async def run() -> None:
         async def send_state(snapshot: dict) -> None:
             await ws.send(json.dumps({"type": "state", "data": snapshot}))
 
-        # Both run for the lifetime of this connection; if either raises
-        # (e.g. the socket drops mid-send) gather propagates it up to main()'s
-        # reconnect loop, which tears down and retries the whole connection.
-        await asyncio.gather(_receive_loop(ws), poll_loop(send_state))
+        # Both run for the lifetime of this connection, and whichever ends
+        # first ends the other: a closed socket stops the receive loop and
+        # makes the poller's next send raise, and either way the survivor is
+        # cancelled here rather than left running against a dead connection
+        # (asyncio.gather, which this used to be, does not cancel it).
+        # Deliberately not asyncio.TaskGroup: that needs Python 3.11, and a
+        # legacy agent may run on any interpreter comtypes supports.
+        tasks = [
+            asyncio.ensure_future(receive_loop(ws, HANDLERS, _shutdown)),
+            asyncio.ensure_future(poll_loop(send_state)),
+        ]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for task in done:
+            # Re-raises the failure that ended the connection, if there was
+            # one, so main() logs it and backs off.
+            task.result()
 
 
 async def main() -> None:
@@ -172,11 +163,9 @@ async def main() -> None:
 
     backoff = 1
     while True:
+        started = time.monotonic()
         try:
             await run()
-            # A clean return still means the connection ended (server closed
-            # it normally); reset backoff since the connection had succeeded.
-            backoff = 1
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -197,6 +186,16 @@ async def main() -> None:
             # path -- and a reconnect that fails again simply backs off
             # further, which is the right response to every one of these.
             print(f"Disconnected ({type(exc).__name__}: {exc})")
+
+        # A connection that held for a while was a working one, so what ended
+        # it (typically a backend restart) deserves a prompt retry, not the
+        # delay left over from failures before it. Before this the backoff was
+        # only reset on a clean close, so after a backend restart the agent
+        # could sit out a full 30s. Measured on uptime rather than on "the
+        # hello went out", because a rejected token also gets that far -- and
+        # must keep backing off instead of retrying every second.
+        if time.monotonic() - started >= HEALTHY_CONNECTION_SECONDS:
+            backoff = 1
 
         print(f"Reconnecting in {backoff}s")
         await asyncio.sleep(backoff)
