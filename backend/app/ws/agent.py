@@ -10,9 +10,9 @@ from app.ws.protocol import accept_hello, receive_object
 
 logger = logging.getLogger("controlhub.ws")
 
-# An agent name ends up in every state key ("windows:mic.muted") and in the
-# item table's `target` column, so it is held to something that can't turn
-# into a surprise in either place.
+# An agent name becomes the prefix of every state key ("windows:mic.muted")
+# and is matched against the item table's `target` column, so it may not
+# contain the ':' that separates the two, and is kept short and printable.
 MAX_AGENT_NAME = 64
 
 
@@ -26,12 +26,12 @@ async def agent_ws(ws: WebSocket) -> None:
         return
 
     name = hello.get("agent") or "windows"
-    if not isinstance(name, str) or len(name) > MAX_AGENT_NAME:
+    if not isinstance(name, str) or len(name) > MAX_AGENT_NAME or ":" in name or not name.isprintable():
         logger.warning("Agent hello carried an unusable name; closing")
         await ws.close(code=4001)
         return
 
-    await hub.register_agent(name, ws)
+    hub.register_agent(name, ws)
     logger.info("Agent '%s' connected (version %s)", name, hello.get("version", "?"))
     await hub.broadcast_to_clients({"type": "agent_status", "agent": name, "status": "online"})
 

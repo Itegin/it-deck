@@ -62,11 +62,14 @@ async def receive_loop(
         except ValueError:
             print("Ignoring a frame that is not JSON")
             continue
-        if not isinstance(message, dict) or message.get("cmd") is None:
+        if not isinstance(message, dict):
             continue
-
-        cmd = message["cmd"]
+        cmd = message.get("cmd")
         req_id = message.get("req_id")
+        if cmd is None and req_id is None:
+            # Nothing asked, nothing to answer. A frame with a req_id but no
+            # cmd still gets its result below ("unknown command: None").
+            continue
         # The command and its id, not the whole frame: params can carry paths
         # and URLs, and one line per press is what makes agent.log readable.
         print(f"Received {cmd} ({req_id})")

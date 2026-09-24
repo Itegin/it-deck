@@ -217,8 +217,8 @@ def _switch_default_pair(primary: str, secondary: str) -> None:
     # list_devices' "is_default" reads out of the "Default" column.
     #
     # The timeout is deliberate, not decorative: this runs synchronously
-    # inside the agent's single receive loop (see _receive_loop in
-    # agent.py), so an unbounded subprocess call here would stall the
+    # inside the agent's single receive loop (see receive_loop in
+    # dispatch.py), so an unbounded subprocess call here would stall the
     # entire agent -- not just this command, but poll_loop's ticks and
     # every other message too -- if SoundVolumeView.exe ever wedges (a
     # device name that no longer matches anything popping a GUI dialog

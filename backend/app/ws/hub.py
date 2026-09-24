@@ -12,12 +12,27 @@ logger = logging.getLogger("controlhub.ws")
 CLIENT_SEND_TIMEOUT = 2.0
 
 
+# Closes in flight, held so the event loop's weak reference to each task is
+# not the only one (a task nobody references can be collected mid-run).
+_closing: set[asyncio.Task] = set()
+
+
 async def _close_quietly(ws: WebSocket, code: int = 1000) -> None:
     try:
         await ws.close(code=code)
     except Exception:
         # Already closed, or the transport is gone. Either way it is closed.
         pass
+
+
+def _close_in_background(ws: WebSocket) -> None:
+    # Never awaited inline: closing a socket whose peer is gone waits for a
+    # close handshake that will not come (up to the server's close timeout),
+    # and whoever awaited it -- a broadcast to every other phone, a press --
+    # would stall for that long.
+    task = asyncio.ensure_future(_close_quietly(ws))
+    _closing.add(task)
+    task.add_done_callback(_closing.discard)
 
 
 class ConnectionHub:
@@ -31,16 +46,16 @@ class ConnectionHub:
     def unregister_client(self, ws: WebSocket) -> None:
         self.clients.discard(ws)
 
-    async def register_agent(self, name: str, ws: WebSocket) -> None:
-        previous = self.agents.get(name)
+    def register_agent(self, name: str, ws: WebSocket) -> None:
+        # The newest connection wins. Typically this is a restarted agent
+        # whose old, half-open socket the backend has not noticed yet; that
+        # one is left for the server's own keepalive to reap rather than
+        # closed here, because the other way a name is taken twice -- two PCs
+        # both left on the default "windows" -- would then have them evict
+        # each other in a loop.
+        if name in self.agents and self.agents[name] is not ws:
+            logger.warning("Agent '%s' already registered; the new connection replaces it", name)
         self.agents[name] = ws
-        if previous is not None and previous is not ws:
-            # A restarted agent reconnects before the backend has noticed the
-            # old socket is dead (a killed process leaves a half-open TCP
-            # connection behind). The new one wins; the old one is closed so
-            # its handler task ends now instead of whenever TCP gives up.
-            logger.warning("Agent '%s' reconnected; closing its previous connection", name)
-            await _close_quietly(previous)
 
     def unregister_agent(self, name: str, ws: WebSocket) -> bool:
         """Remove `ws` as agent `name`. Returns whether it was the current one.
@@ -64,7 +79,7 @@ class ConnectionHub:
             except Exception:
                 logger.warning("Failed to send to client, dropping connection")
                 self.clients.discard(ws)
-                await _close_quietly(ws)
+                _close_in_background(ws)
 
     async def send_to_agent(self, name: str, message: dict) -> bool:
         ws = self.agents.get(name)
@@ -74,12 +89,14 @@ class ConnectionHub:
             await ws.send_json(message)
             return True
         except Exception:
-            # Closed, not unregistered: the socket's own handler (ws/agent.py)
-            # unregisters it in its finally and tells the clients it went
-            # offline, and doing it here would leave that handler with
-            # nothing to unregister and no reason to say so.
-            logger.warning("Failed to send to agent '%s', closing its connection", name)
-            await _close_quietly(ws)
+            # Out of the registry at once, so nothing else is routed to a
+            # dead socket and a phone connecting now is not told "online".
+            # The offline broadcast happens here too: the socket's own
+            # handler will find it already unregistered and stay quiet.
+            logger.warning("Failed to send to agent '%s', dropping connection", name)
+            if self.unregister_agent(name, ws):
+                await self.broadcast_to_clients({"type": "agent_status", "agent": name, "status": "offline"})
+            _close_in_background(ws)
             return False
 
 

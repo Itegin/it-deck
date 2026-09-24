@@ -122,10 +122,16 @@ it.
 **Context.** A restarted agent reconnects before the backend has noticed its
 old TCP connection is dead.
 
-**Decision.** Registering an agent name replaces and closes any previous
-socket under that name. Unregistering checks **identity**, so the old
-socket's late cleanup cannot remove the new one. `offline` is broadcast only
-when the current socket really leaves.
+**Decision.** Registering an agent name replaces any previous socket under
+that name. Unregistering checks **identity**, so the old socket's late
+cleanup cannot remove the new one. `offline` is broadcast only when the
+current socket really leaves, or when a send to it fails.
+
+The old socket is **not** closed actively. A half-open one is reaped by
+uvicorn's keepalive (20 s ping). Closing it would make two PCs left on the
+default name `windows` evict each other in a reconnect loop. Closes that do
+happen, of a failed phone or agent, run in the background, because awaiting
+a close to a dead peer stalls the caller for the whole close timeout.
 
 **History.** Before this audit, cleanup removed by name. After an agent
 restart, phones were told the agent was offline while it was connected.

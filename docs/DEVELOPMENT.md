@@ -415,8 +415,11 @@ not close the socket.
 → {"type": "state", "data": {"mic.muted": false, "speaker.volume": 34, "vpn.running": false}}
 ```
 
-- A second connection under the same agent name **replaces** the first. The
-  old socket is closed, and phones are **not** told "offline" in between.
+- A second connection under the same agent name **replaces** the first, and
+  phones are **not** told "offline" in between. The old socket is left for
+  uvicorn's keepalive to reap. Give every PC its own `AGENT_NAME`: with two
+  agents on one name, only the newer one receives commands, and both write
+  state into the same keys.
 - A result's extra keys ride along (`devices`, `apps`, `icon`).
 
 ### `/ws/client` (the phone)

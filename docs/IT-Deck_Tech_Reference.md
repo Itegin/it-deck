@@ -387,7 +387,9 @@ skipped, never fatal:
 The token is checked **before** hub registration, so a bad token never reaches
 the hub even for an instant. On success the backend broadcasts `agent_status`
 and registers the socket under `hello.agent` (default `"windows"`). One socket
-per agent name: a second registration replaces the first and **closes** it.
+per agent name: a second registration replaces the first (the old socket is
+left for the server's keepalive to reap, so two PCs on one name can't evict
+each other in a loop).
 Unregistering checks socket identity, so the replaced socket's late cleanup
 can't remove the new one, and `offline` is only broadcast when the current
 socket leaves. Before this, an agent restart told every phone the agent was

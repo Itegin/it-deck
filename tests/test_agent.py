@@ -105,10 +105,12 @@ def test_receive_loop_survives_bad_frames_and_answers_each_command():
         json.dumps({"cmd": "boom", "req_id": "a", "item_id": 3, "params": {}}),
         json.dumps({"cmd": "ok", "params": {"x": 2}}),  # no req_id at all
         json.dumps({"cmd": "ok", "req_id": "b", "params": {"x": 5}}),
+        json.dumps({"req_id": "c"}),  # a req_id with no cmd still gets an answer
     ])
     asyncio.run(receive_loop(ws, HANDLERS, on_shutdown))
 
-    assert [m["req_id"] for m in ws.sent] == ["a", None, "b"]
+    assert [m["req_id"] for m in ws.sent] == ["a", None, "b", "c"]
+    assert "unknown command" in ws.sent[3]["message"]
     assert ws.sent[0]["status"] == "error" and ws.sent[0]["item_id"] == 3
     assert ws.sent[2] == {"type": "result", "req_id": "b", "item_id": None, "status": "ok", "extra": 5}
     assert shutdowns == []

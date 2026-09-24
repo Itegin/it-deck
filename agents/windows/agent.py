@@ -54,6 +54,11 @@ EXIT_ALREADY_RUNNING = 3
 # call that created it.
 _singleton_handle = None
 
+# When the current connection opened (time.monotonic()), or None before it
+# has. main() reads it to tell a connection that worked from one that never
+# did -- see the backoff reset there.
+_opened_at = None
+
 
 def handle_agent_shutdown(params: dict) -> dict:
     # No-op on purpose: the actual exit happens in _shutdown() once this
@@ -88,7 +93,9 @@ async def _shutdown() -> None:
 
 
 async def run() -> None:
+    global _opened_at
     async with connect(SERVER_URL) as ws:
+        _opened_at = time.monotonic()
         await ws.send(json.dumps({
             "type": "hello",
             "agent": AGENT_NAME,
@@ -161,9 +168,10 @@ async def main() -> None:
         # mirrored in launcher.py.
         sys.exit(EXIT_ALREADY_RUNNING)
 
+    global _opened_at
     backoff = 1
     while True:
-        started = time.monotonic()
+        _opened_at = None
         try:
             await run()
         except asyncio.CancelledError:
@@ -191,10 +199,12 @@ async def main() -> None:
         # it (typically a backend restart) deserves a prompt retry, not the
         # delay left over from failures before it. Before this the backoff was
         # only reset on a clean close, so after a backend restart the agent
-        # could sit out a full 30s. Measured on uptime rather than on "the
+        # could sit out a full 30s. Measured from when the socket opened, not
+        # from the attempt: a connect that hangs until its own timeout is a
+        # failure however long it took. And on uptime rather than on "the
         # hello went out", because a rejected token also gets that far -- and
         # must keep backing off instead of retrying every second.
-        if time.monotonic() - started >= HEALTHY_CONNECTION_SECONDS:
+        if _opened_at is not None and time.monotonic() - _opened_at >= HEALTHY_CONNECTION_SECONDS:
             backoff = 1
 
         print(f"Reconnecting in {backoff}s")

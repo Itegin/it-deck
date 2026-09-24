@@ -75,21 +75,6 @@ SESSION_END_CHILD_GRACE = 1.0
 # gone by the time it starts -- so being killed during it costs nothing.
 SESSION_END_EXIT_DELAY = 0.05
 
-# The frozen exe is built --windowed, so it has NO console: sys.stdout and
-# sys.stderr are None and a bare print() would raise AttributeError. They are
-# pointed at a log file here instead, before anything prints.
-#
-# No console is a deliberate architectural choice, not a cosmetic one. A
-# console gave IT-Deck a *host process* -- conhost.exe, or WindowsTerminal.exe
-# when that is the system default -- and that host is a process the deck can
-# be asked to kill: Force Stop on the Terminal tile took the whole of IT-Deck
-# down with its target, twice, and an attempt to protect the host by walking
-# its ancestors did not fix it (OpenConsole.exe's parent is svchost, not the
-# Windows Terminal it belongs to, so the link isn't there to walk). Removing
-# the console removes the coupling entirely rather than guarding it. It also
-# removes the minimized-console stub that showed up as a stray rectangle on
-# the desktop, and the "restore it from the taskbar to press Ctrl+C" story
-# that the Quit button had already replaced.
 # A log past this size is rolled to <name>.1 when IT-Deck starts, so the three
 # logs together stay within a few tens of MB instead of growing for as long as
 # the PC does. At launch rather than mid-run: the children hold their files
@@ -109,6 +94,21 @@ def open_log(path: Path, **kwargs):
     return open(path, "a", encoding="utf-8", **kwargs)
 
 
+# The frozen exe is built --windowed, so it has NO console: sys.stdout and
+# sys.stderr are None and a bare print() would raise AttributeError. They are
+# pointed at a log file here instead, before anything prints.
+#
+# No console is a deliberate architectural choice, not a cosmetic one. A
+# console gave IT-Deck a *host process* -- conhost.exe, or WindowsTerminal.exe
+# when that is the system default -- and that host is a process the deck can
+# be asked to kill: Force Stop on the Terminal tile took the whole of IT-Deck
+# down with its target, twice, and an attempt to protect the host by walking
+# its ancestors did not fix it (OpenConsole.exe's parent is svchost, not the
+# Windows Terminal it belongs to, so the link isn't there to walk). Removing
+# the console removes the coupling entirely rather than guarding it. It also
+# removes the minimized-console stub that showed up as a stray rectangle on
+# the desktop, and the "restore it from the taskbar to press Ctrl+C" story
+# that the Quit button had already replaced.
 def _redirect_output_to_log() -> None:
     if not is_frozen():
         # A dev run has a real terminal and its output is the point.

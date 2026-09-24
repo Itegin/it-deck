@@ -370,7 +370,7 @@ export function createInspector(root, ctx) {
         checked: entry === state.entry,
         onChange: () => switchEntry(entry.id),
       }),
-      h("span", { class: "type-icon", html: ICONS[entry.icon] || CARD_GLYPHS[entry.id] || CARD_GLYPHS.custom }),
+      h("span", { class: "type-icon", html: hasEntry(ICONS, entry.icon) ? ICONS[entry.icon] : CARD_GLYPHS[entry.id] || CARD_GLYPHS.custom }),
       h("span", { class: "type-name", text: entryName(entry) }),
       h("span", { class: "type-desc", text: t(`type.${entry.id}.desc`) }),
     ]);
@@ -885,7 +885,7 @@ export function createInspector(root, ctx) {
           text: t(`icon.mode.${m}`),
           onClick: () => {
             if (m === mode) return;
-            if (m === "symbol") draft.icon = state.entry.icon && ICONS[state.entry.icon] ? state.entry.icon : "";
+            if (m === "symbol") draft.icon = hasEntry(ICONS, state.entry.icon) ? state.entry.icon : "";
             else if (m === "brand") draft.icon = `${BRAND_PREFIX}${Object.keys(BRAND_ICONS)[0]}`;
             else if (m === "text") draft.icon = ICON_TEXT;
             else draft.icon = ICON_IMAGE;

@@ -190,21 +190,31 @@ function populateWorkspaceSelect() {
 }
 
 // Only the newest loadItems() may draw: a save followed quickly by a move or a
-// compact starts overlapping fetches that can answer out of order.
+// compact starts overlapping fetches that can answer out of order. A call
+// that has been overtaken resolves with the newest load instead of on its
+// own, so a caller that awaits it (to focus the tile it just saved, say)
+// still continues against the deck as finally drawn.
 let loadSeq = 0;
+let latestLoad = Promise.resolve();
 
-async function loadItems() {
+function loadItems() {
   const seq = ++loadSeq;
+  latestLoad = fetchAndDraw(seq);
+  return latestLoad;
+}
+
+async function fetchAndDraw(seq) {
   let raw;
   try {
     const response = await fetch("/api/workspaces");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     raw = await response.json();
   } catch (err) {
-    if (seq === loadSeq) showToast(t("error.load", { detail: err.message }));
+    if (seq !== loadSeq) return latestLoad;
+    showToast(t("error.load", { detail: err.message }));
     return;
   }
-  if (seq !== loadSeq) return;
+  if (seq !== loadSeq) return latestLoad;
   workspaces = raw.map((w) => ({ ...w, items: w.items.map(normalizeItem) }));
   populateWorkspaceSelect();
   renderSetupCard();
