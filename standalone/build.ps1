@@ -72,6 +72,8 @@ if (Test-Path $iconPath) {
 
 $frontendSrc = Join-Path $repoRoot "frontend"
 $soundVolumeViewSrc = Join-Path $repoRoot "agents\windows\tools\SoundVolumeView.exe"
+# NirSoft asks for its package to go out complete: the readme travels with the exe.
+$soundVolumeViewReadme = Join-Path $repoRoot "agents\windows\tools\readme.txt"
 
 & $pyinstaller `
     --onefile `
@@ -81,6 +83,7 @@ $soundVolumeViewSrc = Join-Path $repoRoot "agents\windows\tools\SoundVolumeView.
     --paths (Join-Path $repoRoot "agents\windows") `
     --add-data "${frontendSrc};frontend" `
     --add-data "${soundVolumeViewSrc};tools" `
+    --add-data "${soundVolumeViewReadme};tools" `
     --distpath (Join-Path $root "dist") `
     --workpath (Join-Path $root "build") `
     --specpath $root `

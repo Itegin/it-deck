@@ -79,6 +79,7 @@ jobs:
             --paths "$ws\agents\windows" `
             --add-data "$ws\frontend;frontend" `
             --add-data "$ws\agents\windows\tools\SoundVolumeView.exe;tools" `
+            --add-data "$ws\agents\windows\tools\readme.txt;tools" `
             --add-data "$ws\agents\windows\icon.ico;." `
             --icon "$ws\agents\windows\icon.ico" `
             --distpath "$ws\standalone\dist" `

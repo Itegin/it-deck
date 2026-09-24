@@ -31,6 +31,10 @@ tiles, decks and tokens.
   decks, tokens, being easy on games and settings surviving updates.
 - CLAUDE.md gains the commands, the release rules and the conventions for
   logos, performance and the PC window.
+- **NirSoft's `readme.txt` ships with SoundVolumeView.** It is committed next
+  to the exe in `agents/windows/tools/` and bundled into `ITDeck.exe` by both
+  `build.ps1` and the release workflow, so the NirSoft package goes out
+  complete.
 
 ---
 

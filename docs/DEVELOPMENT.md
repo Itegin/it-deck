@@ -205,7 +205,7 @@ agents/windows/          the agent
   poller.py              state readers, 1 s loop (paused while nobody watches)
   handlers/              audio, process (launch/url/vpn/force stop), apps, screenshot,
                          input (hotkeys/media keys), power, clipboard, system (PC load)
-  tools/SoundVolumeView.exe  audio device switching (NirSoft)
+  tools/SoundVolumeView.exe  audio device switching (NirSoft; readme.txt ships with it)
 standalone/              launcher.py, build.ps1, requirements.txt
 tests/                   pytest (backend, ws, db, access, decks, agent, launcher,
                          release) + node --test (frontend, keep-in-step checks)

@@ -49,8 +49,10 @@ terms allow. Two consequences:
 
 - **IT-Deck cannot be sold, or be part of a paid product, while this file is
   bundled.** See "Before charging money" below.
-- The original download also contains a `readme.txt`. Adding it next to the
-  exe in `agents/windows/tools/` is the safe reading of "complete".
+- The original download also contains a `readme.txt`. It sits next to the
+  exe in `agents/windows/tools/` and is bundled into `ITDeck.exe` with it,
+  the safe reading of "complete". (The `.chm` help file is kept in the repo
+  but not bundled.)
 
 ## Used over the network, not bundled
 
