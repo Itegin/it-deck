@@ -24,6 +24,13 @@ tiles, decks and tokens.
   with its purple and teal glows. The card keeps one size across pages,
   Back stays in place (greyed on page 1, left of the main button), and a
   page turn changes only text.
+- Studio could not save anything once its saved agent token had non-Latin
+  letters in it (typed in the Russian layout): every save said "can't reach
+  IT-Deck". It now drops that token, says why, and asks again.
+- Closing the tutorial or What's new in the PC window revealed the main
+  screen in visible strips for a fraction of a second. The screen is now
+  rebuilt under a snapshot and appears in one frame; the rounded panels
+  and buttons also draw several times faster.
 
 ### Changed
 

@@ -798,6 +798,11 @@ _RADIUS_CONTROL = 10
 _RADIUS_BADGE = 7
 # Room around a button for its focus ring: 2px of ring, 1px of gap.
 _FOCUS_MARGIN = 3
+# Source sizes of the nine-slice images: about as big as the widgets get, so
+# ttk tiles them only a few times (see glass_images() in show_info_window).
+_PANEL_IMAGE = (512, 384)
+_CONTROL_IMAGE = (320, 56)
+_WELL_IMAGE = (480, 48)
 
 
 def _rounded_image(
@@ -1204,6 +1209,115 @@ def _apply_windows11_chrome(root) -> None:
         )
     except Exception:
         pass
+
+
+def _window_snapshot(root):
+    """What the window's client area shows right now, as a Pillow image.
+
+    Read from the window itself (PrintWindow with PW_RENDERFULLCONTENT, the
+    DWM copy), not from the screen: the launcher isn't DPI-aware, so a screen
+    grab would come back in physical pixels while Tk works in logical ones.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    from PIL import Image
+
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    user32.GetDC.restype = wintypes.HDC
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.GetDIBits.argtypes = [
+        wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT,
+    ]
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+
+    hwnd = root.winfo_id()
+    width, height = root.winfo_width(), root.winfo_height()
+    window_dc = user32.GetDC(hwnd)
+    memory_dc = gdi32.CreateCompatibleDC(window_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(window_dc, width, height)
+    previous = gdi32.SelectObject(memory_dc, bitmap)
+    try:
+        if not user32.PrintWindow(hwnd, memory_dc, 2):  # PW_RENDERFULLCONTENT
+            raise OSError("PrintWindow failed")
+        # BITMAPINFOHEADER: 32-bit, top-down (negative height), uncompressed.
+        header = (ctypes.c_int32 * 10)(40, width, -height, 1 | (32 << 16), 0, 0, 0, 0, 0, 0)
+        pixels = ctypes.create_string_buffer(width * height * 4)
+        if gdi32.GetDIBits(memory_dc, bitmap, 0, height, pixels, header, 0) != height:
+            raise OSError("GetDIBits failed")
+        return Image.frombuffer("RGB", (width, height), pixels, "raw", "BGRX", 0, 1)
+    finally:
+        gdi32.SelectObject(memory_dc, previous)
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(hwnd, window_dc)
+
+
+def _swap_behind_curtain(root, change) -> None:
+    """Run change() on the window out of sight, then show the result at once.
+
+    Taking an overlay off the main screen costs ~150 ms of work (the destroy,
+    then a repaint of every panel), and Windows puts each step on screen: the
+    main screen assembled itself in strips. Freezing redraw can't help -- Tk
+    paints after WM_PAINT, not during it. So a borderless window holding a
+    snapshot of the window as it is covers it first; everything happens
+    underneath (a separate top-level window doesn't clip this one's
+    painting), and dropping the cover shows the finished screen in one frame.
+    Anything failing here costs only the smoothness: change() always runs and
+    the cover always goes.
+    """
+    import tkinter as tk
+
+    curtain = None
+    try:
+        root.update_idletasks()
+        image = tk.PhotoImage(master=root, data=_png(_window_snapshot(root)))
+        curtain = tk.Toplevel(root, bd=0, highlightthickness=0)
+        curtain.overrideredirect(True)
+        # Invisible until its one image is painted: a new window otherwise
+        # shows its bare background first.
+        curtain.attributes("-alpha", 0.0)
+        curtain.update_idletasks()
+        # Windows fades new and closing windows in and out; on the cover
+        # that fade *is* the slow blend this is here to avoid.
+        import ctypes
+
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.windll.user32.GetParent(curtain.winfo_id()),
+            3,  # DWMWA_TRANSITIONS_FORCEDISABLED
+            ctypes.byref(ctypes.c_int(1)),
+            ctypes.sizeof(ctypes.c_int),
+        )
+        curtain.geometry(f"{root.winfo_width()}x{root.winfo_height()}+{root.winfo_rootx()}+{root.winfo_rooty()}")
+        cover = tk.Label(curtain, image=image, bd=0, highlightthickness=0)
+        cover.image = image
+        cover.pack()
+        curtain.update()
+        curtain.attributes("-alpha", 1.0)
+        curtain.update()
+    except Exception as exc:
+        print(f"Window: no curtain for the overlay swap: {exc}")
+        if curtain is not None:
+            curtain.destroy()
+            curtain = None
+    try:
+        change()
+        # update(), not update_idletasks(): Tk turns WM_PAINT into Expose
+        # events on the event queue, and only then schedules the redraws.
+        root.update()
+    finally:
+        if curtain is not None:
+            curtain.destroy()
 
 
 def hide_console() -> None:
@@ -2312,20 +2426,26 @@ def show_info_window(
         def glass_images() -> bool:
             """Rounded panels, buttons and fields, as ttk image elements.
 
-            Each is a small image stretched nine-slice style (ttk's
-            `border`), so a panel of any size costs one image, drawn once.
+            Each is one image stretched nine-slice style (ttk's `border`).
+            ttk fills the middle and the edges by *tiling*, and on Windows
+            every tile of a translucent image is a separate slow blend: a
+            48-px panel took ~500 tiles and the window painted itself in
+            visible strips for a second. So the images are drawn about as
+            big as the widgets get (a panel is a handful of tiles), while
+            `width`/`height` keep the size each widget asks for as small as
+            before.
             Returns False, leaving the flat styles above, if Pillow or the
             PNG load isn't available.
             """
             try:
-                panel = dict(width=48, height=48, radius=_RADIUS_PANEL)
+                panel = dict(width=_PANEL_IMAGE[0], height=_PANEL_IMAGE[1], radius=_RADIUS_PANEL)
                 photo("card", **panel, fill=g["surface"], outline=g["border"], edge=g["edge"])
                 # Studio's .setup-card: the accent wash inside an accent ring.
                 photo("notice", **panel, fill=g["accent_wash"], outline=g["accent"])
                 # Buttons carry a transparent margin: the focus ring (2px,
                 # just outside, like Studio's :focus-visible) lives in it, so
                 # focusing a button never changes its size.
-                ctl = dict(width=36, height=36, radius=_RADIUS_CONTROL, margin=_FOCUS_MARGIN)
+                ctl = dict(width=_CONTROL_IMAGE[0], height=_CONTROL_IMAGE[1], radius=_RADIUS_CONTROL, margin=_FOCUS_MARGIN)
                 for name, (fill, hover, _ink, _font, _pad) in buttons_spec.items():
                     base = name.split(".")[0]
                     line = None if base == "Accent" else g["border"]
@@ -2335,7 +2455,7 @@ def show_info_window(
                     photo(f"{base}-focus", **ctl, fill=fill, outline=line, ring=g["accent"])
                     photo(f"{base}-focus-hover", **ctl, fill=hover, outline=hover_line, ring=g["accent"])
                     photo(f"{base}-disabled", **ctl, fill=g["surface_raised"], outline=g["border"])
-                photo("well", width=32, height=32, radius=_RADIUS_CONTROL, fill=g["well"], outline=g["border"])
+                photo("well", width=_WELL_IMAGE[0], height=_WELL_IMAGE[1], radius=_RADIUS_CONTROL, fill=g["well"], outline=g["border"])
             except Exception as exc:
                 print(f"Window: flat look, rounded images unavailable: {exc}")
                 return False
@@ -2347,7 +2467,8 @@ def show_info_window(
             for name, key in (("Card.TFrame", "card"), ("Notice.TFrame", "notice")):
                 element = f"{key}.panel"
                 style.element_create(
-                    element, "image", images[key], border=_RADIUS_PANEL, padding=0, sticky="nsew"
+                    element, "image", images[key], border=_RADIUS_PANEL, padding=0, sticky="nsew",
+                    width=48, height=48,
                 )
                 style.layout(name, [(element, {"sticky": "nsew"})])
                 style.configure(name, background=g["bg"])
@@ -2368,6 +2489,8 @@ def show_info_window(
                     border=_RADIUS_CONTROL + _FOCUS_MARGIN,
                     padding=_FOCUS_MARGIN,
                     sticky="nsew",
+                    width=36,
+                    height=36,
                 )
                 style.layout(
                     name,
@@ -2382,7 +2505,8 @@ def show_info_window(
                 style.map(name, background=[], lightcolor=[], darkcolor=[])
 
             style.element_create(
-                "well.field", "image", images["well"], border=_RADIUS_CONTROL, padding=1, sticky="nsew"
+                "well.field", "image", images["well"], border=_RADIUS_CONTROL, padding=1, sticky="nsew",
+                width=32, height=32,
             )
             # Fields only ever sit on a panel. Mapped, not just configured:
             # clam maps a read-only entry's background to its own grey, and
@@ -3164,7 +3288,7 @@ def show_info_window(
                 if state["pending"] is not None:
                     root.after_cancel(state["pending"])
                 root.unbind("<Escape>")
-                overlay.destroy()
+                _swap_behind_curtain(root, overlay.destroy)
 
             # The wrap leaves a few px spare: a tk.Label's own padding and
             # border sit outside its wraplength, and a label exactly as wide
