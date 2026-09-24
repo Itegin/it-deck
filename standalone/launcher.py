@@ -631,11 +631,9 @@ def _line_buffer_stdio() -> None:
 
 def run_backend() -> int:
     _line_buffer_stdio()
-    if is_frozen():
-        os.environ.setdefault("ITDECK_FRONTEND_DIR", str(Path(sys._MEIPASS) / "frontend"))
-    else:
+    if not is_frozen():
         sys.path.insert(0, str(REPO_ROOT / "backend"))
-        os.environ.setdefault("ITDECK_FRONTEND_DIR", str(REPO_ROOT / "frontend"))
+    os.environ.setdefault("ITDECK_FRONTEND_DIR", str(frontend_dir()))
 
     import uvicorn
     from app.config import SERVER_PORT
@@ -763,6 +761,15 @@ _STRINGS = {
         "step2_body": "Every tile works out of the box except VPN: it doesn't know which program to launch yet. Open Studio on this PC and give it the path to your VPN client.",
         "open_studio": "Open Studio",
         "show_token": "Show agent token",
+        "new_pin": "New phone PIN",
+        "new_pin_confirm": "Replace the phone token with a new random PIN?\n\nEvery connected phone will ask for the new PIN once. You can also change both tokens in Studio \u2192 Access.",
+        "new_pin_done": "New PIN: {pin} \u2014 the link and QR code above are updated.",
+        "new_pin_failed": "Couldn't change it: {error}",
+        "autostart": "Start IT-Deck with Windows",
+        "autostart_failed": "Couldn't change the Windows start-up setting: {error}",
+        "whats_new_title": "What's new in IT-Deck {version}",
+        "whats_new_ok": "Got it",
+        "whats_new_all": "All changes",
         "token_hint": "Studio asks for this once:",
         "copy_token": "Copy",
         "step3_title": "When you're done here",
@@ -786,7 +793,8 @@ _STRINGS = {
             "   •  ITDeck.exe itself\n"
             "   •  the Desktop shortcut\n"
             "   •  settings, both tokens and your tile layout\n"
-            "   •  its Windows Firewall rules"
+            "   •  its Windows Firewall rules\n"
+            "   •  starting with Windows, if it was turned on"
         ),
         "uninstall_warning": "The deck on your phone stops working. This cannot be undone.",
         "uninstall_uac": (
@@ -831,6 +839,15 @@ _STRINGS = {
         "step2_body": "Все плитки работают сразу, кроме VPN: она пока не знает, какую программу запускать. Открой Studio на этом ПК и укажи путь до своего VPN-клиента.",
         "open_studio": "Открыть Studio",
         "show_token": "Показать токен агента",
+        "new_pin": "Новый PIN для телефона",
+        "new_pin_confirm": "Заменить токен телефона на новый случайный PIN?\n\nКаждый подключённый телефон один раз попросит новый PIN. Оба токена можно поменять и в Studio \u2192 Доступ.",
+        "new_pin_done": "Новый PIN: {pin} \u2014 ссылка и QR-код выше обновлены.",
+        "new_pin_failed": "Не получилось: {error}",
+        "autostart": "Запускать IT-Deck вместе с Windows",
+        "autostart_failed": "Не получилось изменить автозапуск: {error}",
+        "whats_new_title": "Что нового в IT-Deck {version}",
+        "whats_new_ok": "Понятно",
+        "whats_new_all": "Все изменения",
         "token_hint": "Studio спросит его один раз:",
         "copy_token": "Копировать",
         "step3_title": "Когда всё готово",
@@ -854,7 +871,8 @@ _STRINGS = {
             "   •  сам ITDeck.exe\n"
             "   •  ярлык на рабочем столе\n"
             "   •  настройки, оба токена и раскладка плиток\n"
-            "   •  правила брандмауэра Windows для него"
+            "   •  правила брандмауэра Windows для него\n"
+            "   •  автозапуск с Windows, если он был включён"
         ),
         "uninstall_warning": "Дека на телефоне перестанет работать. Отменить это нельзя.",
         "uninstall_uac": (
@@ -1285,13 +1303,14 @@ def spawn_uninstall_helper(*targets) -> None:
 def perform_uninstall(data_dir: Path, stop_children=None) -> None:
     """Remove every trace of IT-Deck from this PC, then exit.
 
-    The inventory, and it is the whole inventory -- IT-Deck writes nothing to
-    the registry, installs no service and registers no scheduled task:
+    The inventory, and it is the whole inventory -- IT-Deck installs no
+    service and registers no scheduled task:
 
     - `%LOCALAPPDATA%\\IT-Deck\\` — config.env with both tokens, the tile
       database, the logs
     - the Desktop shortcut the first launch created
     - the Windows Firewall rules that name this exe (see above)
+    - the "Start with Windows" Run value, if the person turned it on
     - the exe itself and its unpacked temp directory (via the helper above,
       because this process is holding both open)
 
@@ -1310,6 +1329,16 @@ def perform_uninstall(data_dir: Path, stop_children=None) -> None:
     # Before the teardown, so the consent prompt appears while the window the
     # user clicked in is still there to explain it.
     remove_firewall_rules(exe)
+
+    # Whatever copy it points at: an uninstalled IT-Deck must not try to
+    # start at the next logon.
+    try:
+        import winreg
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+            winreg.DeleteValue(key, AUTOSTART_VALUE)
+    except (OSError, ImportError):
+        pass  # it was never turned on
 
     if stop_children is not None:
         try:
@@ -1775,6 +1804,136 @@ def _update_check_worker(result_queue: queue.Queue) -> None:
     result_queue.put(version)
 
 
+# --- what's new after an update ---------------------------------------------
+
+# frontend/whats-new.json: [{"version": "0.5.6", "en": [...], "ru": [...]}],
+# newest first. One file for both surfaces -- this window reads it from the
+# bundled frontend, Studio fetches it like any static file.
+WHATS_NEW_FILENAME = "whats-new.json"
+# Which version's notes this PC has already been shown. A file of its own in
+# the data directory rather than a config.env key: config.env is the
+# person's to edit, and this is bookkeeping.
+WHATS_NEW_SEEN_FILENAME = "whats-new-seen.txt"
+# A person who skipped several updates gets the latest two, and the
+# "All changes" link for the rest -- a card, not a changelog.
+WHATS_NEW_MAX_VERSIONS = 2
+
+
+def frontend_dir() -> Path:
+    if is_frozen():
+        return Path(sys._MEIPASS) / "frontend"
+    return REPO_ROOT / "frontend"
+
+
+def load_whats_new(frontend: Path) -> list:
+    """The entries, newest first; [] if the file is missing or unreadable."""
+    try:
+        entries = json.loads((frontend / WHATS_NEW_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [e for e in entries if isinstance(e, dict) and e.get("version")]
+
+
+def whats_new_to_show(entries: list, current: str, seen: Optional[str]) -> list:
+    """The entries newer than `seen` and no newer than `current`, newest first.
+
+    Nothing newer than the running version: the file ships with the build,
+    and a development build ahead of its notes must not announce them.
+    `seen` None -- an install from before this feature -- counts as "seen
+    nothing", which the version cap keeps to a card, not a history lesson.
+    """
+    floor = _version_tuple(seen) if seen else ()
+    ceiling = _version_tuple(current)
+    picked = [e for e in entries if floor < _version_tuple(e["version"]) <= ceiling]
+    picked.sort(key=lambda e: _version_tuple(e["version"]), reverse=True)
+    return picked[:WHATS_NEW_MAX_VERSIONS]
+
+
+def read_whats_new_seen(data_dir: Path) -> Optional[str]:
+    try:
+        return (data_dir / WHATS_NEW_SEEN_FILENAME).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def mark_whats_new_seen(data_dir: Path, version: str) -> None:
+    try:
+        (data_dir / WHATS_NEW_SEEN_FILENAME).write_text(version, encoding="utf-8")
+    except OSError:
+        pass  # at worst the card shows once more
+
+
+# --- tokens: a new PIN from the window ----------------------------------------
+
+
+def new_pin(digits: int = 6) -> str:
+    """A random numeric PIN: easy to type on a phone, and URL-safe."""
+    import secrets
+
+    return "".join(secrets.choice("0123456789") for _ in range(digits))
+
+
+def change_tokens_via_backend(port: int, agent_token: str, **tokens) -> Optional[str]:
+    """Ask the local backend to change tokens (PUT /api/access).
+
+    Through the backend rather than writing config.env here, so there is one
+    code path for a change: the backend saves it, applies it at once and
+    disconnects phones on the old phone token -- exactly as when Studio does
+    it. The window then picks the new values up from config.env like any
+    other change. Returns an error message, or None on success.
+    """
+    body = json.dumps({key: value for key, value in tokens.items() if value}).encode("utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/access",
+        data=body,
+        method="PUT",
+        headers={"Content-Type": "application/json", "X-Agent-Token": agent_token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            response.read()
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
+# --- start with Windows -------------------------------------------------------
+
+AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_VALUE = "IT-Deck"
+
+
+def autostart_command(exe: Path) -> str:
+    return f'"{exe}"'
+
+
+def autostart_enabled(winreg, exe: Path) -> bool:
+    """Whether Windows starts *this* exe at logon.
+
+    A Run value that points at another copy (the exe was moved, or an older
+    download) is reported as off, so ticking the box repoints it here.
+    `winreg` is passed in so this is testable off Windows.
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, AUTOSTART_VALUE)
+    except OSError:
+        return False
+    return str(value).strip().lower() == autostart_command(exe).lower()
+
+
+def set_autostart(winreg, exe: Path, enabled: bool) -> None:
+    """Add or remove the per-user Run value. Per-user: no admin rights needed."""
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+        if enabled:
+            winreg.SetValueEx(key, AUTOSTART_VALUE, 0, winreg.REG_SZ, autostart_command(exe))
+        else:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_VALUE)
+            except OSError:
+                pass  # already off
+
+
 def show_info_window(
     dashboard_url: str,
     studio_url: str,
@@ -1789,6 +1948,10 @@ def show_info_window(
     on_start_agent=None,
     first_run: bool = False,
     client_token: str = "admin",
+    config_path: Optional[Path] = None,
+    port: Optional[int] = None,
+    whats_new: Optional[list] = None,
+    autostart=None,
 ) -> None:
     # A real GUI window, not another thing to read off the console: the
     # console fills with backend/agent noise (that's why it's redirected to
@@ -1813,8 +1976,21 @@ def show_info_window(
         import tkinter as tk
         from tkinter import ttk
 
-        s = _STRINGS[_detect_ui_lang()]
+        lang = _detect_ui_lang()
+        s = _STRINGS[lang]
         g = _GLASS
+
+        # The tokens as they are *now*. Studio (or the New PIN button) can
+        # change them while this window is open; poll_config() below keeps
+        # this, the link, the QR code and the shown token in step with
+        # config.env, and every button reads from here rather than from the
+        # values this window was opened with.
+        current = {
+            "dashboard_url": dashboard_url,
+            "agent_token": agent_token,
+            "client_token": client_token,
+        }
+        dashboard_base = dashboard_url.split("?token=")[0]
 
         root = tk.Tk()
         root.title(s["title"])
@@ -2155,7 +2331,7 @@ def show_info_window(
             dash_row,
             text=s["copy"],
             style="Accent.TButton",
-            command=lambda: copy_text(dashboard_url, dash_feedback),
+            command=lambda: copy_text(current["dashboard_url"], dash_feedback),
         ).pack(side="left")
         dash_feedback.pack(side="left", padx=(10, 0))
 
@@ -2171,6 +2347,63 @@ def show_info_window(
                 size=8,
                 wrap=300,
             ).pack(anchor="w", pady=(8, 0))
+
+        # A new random phone PIN in one click, for the person who shares
+        # their Wi-Fi and wants the default "admin" gone. Through the
+        # backend (change_tokens_via_backend), so phones on the old token are
+        # disconnected at once; the refresh below then redraws the link and
+        # the QR code from config.env.
+        pin_row = tk.Frame(right, bg=g["surface"])
+        pin_feedback = label(right, "", muted=True, size=8, wrap=300)
+        if config_path is not None and port is not None:
+            def request_new_pin() -> None:
+                from tkinter import messagebox
+
+                if not messagebox.askokcancel(s["title"], s["new_pin_confirm"], parent=root):
+                    return
+                pin = new_pin()
+                error = change_tokens_via_backend(port, current["agent_token"], client_token=pin)
+                if error:
+                    pin_feedback.configure(text=s["new_pin_failed"].format(error=error))
+                else:
+                    pin_feedback.configure(text=s["new_pin_done"].format(pin=pin))
+                    poll_config(reschedule=False)
+                fit_window()
+
+            pin_row.pack(fill="x", pady=(8, 0))
+            ttk.Button(pin_row, text=s["new_pin"], style="Mini.TButton", command=request_new_pin).pack(
+                side="left"
+            )
+            pin_feedback.pack(anchor="w", pady=(4, 0))
+
+        def refresh_link() -> None:
+            nonlocal qr
+            url_entry.configure(state="normal")
+            url_entry.delete(0, "end")
+            url_entry.insert(0, current["dashboard_url"])
+            url_entry.configure(state="readonly")
+            if qr is not None:
+                qr.destroy()
+                qr = draw_qr(step1, current["dashboard_url"])
+                if qr is not None:
+                    qr.pack(side="left", padx=(0, 12), before=right)
+
+        def poll_config(reschedule: bool = True) -> None:
+            # Cheap: a few lines read every two seconds, and only a change
+            # touches the widgets.
+            values = parse_config(config_path)
+            new_client = values.get("CLIENT_TOKEN") or current["client_token"]
+            new_agent = values.get("AGENT_TOKEN") or current["agent_token"]
+            if new_client != current["client_token"]:
+                current["client_token"] = new_client
+                current["dashboard_url"] = f"{dashboard_base}?token={new_client}"
+                refresh_link()
+            if new_agent != current["agent_token"]:
+                current["agent_token"] = new_agent
+                if token_revealed["on"]:
+                    reveal_token()
+            if reschedule:
+                root.after(AGENT_STATUS_POLL_MS, poll_config)
 
         # --- step 2: Studio --------------------------------------------------
 
@@ -2193,7 +2426,10 @@ def show_info_window(
         token_holder = tk.Frame(step2, bg=g["surface"])
         token_holder.pack(fill="x", pady=(8, 0))
 
+        token_revealed = {"on": False}
+
         def reveal_token() -> None:
+            token_revealed["on"] = True
             for child in token_holder.winfo_children():
                 child.destroy()
             label(token_holder, s["token_hint"], muted=True, size=8).pack(anchor="w")
@@ -2202,7 +2438,7 @@ def show_info_window(
             entry = ttk.Entry(
                 row, width=20, font=("Consolas", 9), style="Glass.TEntry", takefocus=False
             )
-            entry.insert(0, agent_token)
+            entry.insert(0, current["agent_token"])
             entry.configure(state="readonly")
             entry.pack(side="left")
             feedback = label(row, "", muted=True, size=8)
@@ -2210,7 +2446,7 @@ def show_info_window(
                 row,
                 text=s["copy_token"],
                 style="Mini.TButton",
-                command=lambda: copy_text(agent_token, feedback),
+                command=lambda: copy_text(current["agent_token"], feedback),
             ).pack(side="left", padx=(8, 0))
             feedback.pack(side="left", padx=(6, 0))
             # Same reason as the update notice: the window has an explicit
@@ -2323,6 +2559,39 @@ def show_info_window(
         # to Quit: those two are the buttons people press, and the one that
         # deletes the install has no business being a neighbour of the one
         # that ends the session.
+        # Off by default: starting with Windows is the person's call, not
+        # something an app should do to itself on first run.
+        if autostart is not None and is_frozen():
+            autostart_get, autostart_set = autostart
+            autostart_var = tk.BooleanVar(value=autostart_get())
+            autostart_feedback = label(step3, "", muted=True, size=8, wrap=460)
+
+            def toggle_autostart() -> None:
+                try:
+                    autostart_set(autostart_var.get())
+                    autostart_feedback.configure(text="")
+                except OSError as exc:
+                    autostart_var.set(autostart_get())
+                    autostart_feedback.configure(text=s["autostart_failed"].format(error=exc))
+                fit_window()
+
+            tk.Checkbutton(
+                step3,
+                text=s["autostart"],
+                variable=autostart_var,
+                command=toggle_autostart,
+                bg=g["surface"],
+                fg=g["text"],
+                activebackground=g["surface"],
+                activeforeground=g["text"],
+                selectcolor=g["surface_raised"],
+                font=("Segoe UI", 9),
+                anchor="w",
+                highlightthickness=0,
+                bd=0,
+            ).pack(anchor="w", pady=(10, 0))
+            autostart_feedback.pack(anchor="w")
+
         if on_uninstall is not None and is_frozen():
             ttk.Button(
                 step3, text=s["uninstall"], style="Mini.TButton", command=confirm_uninstall
@@ -2448,7 +2717,7 @@ def show_info_window(
                 key_title, key_body = tour_pages[page]
                 counter.configure(text=s["tour_step"].format(n=page + 1, total=len(tour_pages)))
                 title.configure(text=s[key_title])
-                body.configure(text=s[key_body].format(token=client_token))
+                body.configure(text=s[key_body].format(token=current["client_token"]))
                 last = page == len(tour_pages) - 1
                 next_button.configure(text=s["tour_done"] if last else s["tour_next"])
                 if page > 0:
@@ -2475,6 +2744,49 @@ def show_info_window(
         tour_button.configure(command=show_tour)
         if first_run:
             show_tour()
+
+        if config_path is not None:
+            root.after(AGENT_STATUS_POLL_MS, poll_config)
+
+        # --- what's new after an update ---------------------------------------
+        # The same overlay as the tour, once per version (run_launcher decides
+        # which entries, and has already marked them seen). A fresh install
+        # gets the tour instead: release notes mean nothing to a new user.
+        def show_whats_new(entries: list) -> None:
+            overlay = tk.Frame(root, bg=g["bg"])
+            overlay.place(x=0, y=0, relwidth=1, relheight=1)
+            box = tk.Frame(overlay, bg=g["surface"])
+            box.place(relx=0.5, rely=0.45, anchor="center", relwidth=0.86)
+            label(
+                box, s["whats_new_title"].format(version=entries[0]["version"]), bold=True, size=15, wrap=380
+            ).pack(anchor="w", padx=20, pady=(18, 8))
+            for index, entry in enumerate(entries):
+                if len(entries) > 1:
+                    label(box, entry["version"], muted=True, size=9).pack(
+                        anchor="w", padx=20, pady=(6 if index else 0, 2)
+                    )
+                for bullet in entry.get(lang) or entry.get("en") or []:
+                    label(box, f"\u2022  {bullet}", size=10, wrap=380).pack(anchor="w", padx=20, pady=1)
+            nav = tk.Frame(box, bg=g["surface"])
+            nav.pack(fill="x", padx=20, pady=(14, 18))
+
+            def close() -> None:
+                root.unbind("<Escape>")
+                overlay.destroy()
+
+            ok = ttk.Button(nav, text=s["whats_new_ok"], style="Accent.TButton", command=close)
+            ok.pack(side="right")
+            ttk.Button(
+                nav,
+                text=s["whats_new_all"],
+                style="Glass.TButton",
+                command=lambda: webbrowser.open(RELEASES_PAGE_URL),
+            ).pack(side="right", padx=(0, 8))
+            root.bind("<Escape>", lambda _event: close())
+            ok.focus_set()
+
+        if whats_new and not first_run:
+            show_whats_new(whats_new)
 
         root.mainloop()
 
@@ -2514,6 +2826,10 @@ def run_launcher() -> int:
         "CLIENT_TOKEN": client_token,
         "SERVER_PORT": str(port),
         "ITDECK_DATA_DIR": str(data_dir),
+        # Where Studio's Access dialog saves a changed token (see
+        # backend/app/api/access.py); the agent re-reads its token from the
+        # same file on every reconnect.
+        "ITDECK_CONFIG_FILE": str(data_dir / CONFIG_FILENAME),
     }
     agent_env = {
         **os.environ,
@@ -2522,6 +2838,7 @@ def run_launcher() -> int:
         "SERVER_IP": "127.0.0.1",
         "SERVER_PORT": str(port),
         "AGENT_NAME": "windows",
+        "ITDECK_CONFIG_FILE": str(data_dir / CONFIG_FILENAME),
     }
     for key in OPTIONAL_AGENT_KEYS:
         if config.get(key):
@@ -2729,6 +3046,29 @@ def run_launcher() -> int:
     # loop below owns every spawn, so it is the one that acts on it.
     agent_start_requested = threading.Event()
 
+    # Which "What's new" notes to show, decided and recorded now: shown once
+    # per version however the window is closed. A first run records the
+    # current version without showing anything -- the tour is its welcome.
+    whats_new = []
+    if first_run:
+        mark_whats_new_seen(data_dir, ITDECK_VERSION)
+    else:
+        whats_new = whats_new_to_show(
+            load_whats_new(frontend_dir()), ITDECK_VERSION, read_whats_new_seen(data_dir)
+        )
+        if whats_new:
+            mark_whats_new_seen(data_dir, ITDECK_VERSION)
+
+    autostart = None
+    if is_frozen():
+        import winreg
+
+        exe = Path(sys.executable)
+        autostart = (
+            lambda: autostart_enabled(winreg, exe),
+            lambda enabled: set_autostart(winreg, exe, enabled),
+        )
+
     show_info_window(
         dashboard_url,
         studio_url,
@@ -2743,6 +3083,10 @@ def run_launcher() -> int:
         on_start_agent=agent_start_requested.set,
         first_run=first_run,
         client_token=client_token,
+        config_path=data_dir / CONFIG_FILENAME,
+        port=port,
+        whats_new=whats_new,
+        autostart=autostart,
     )
     time.sleep(1.5)  # let the console block above actually be visible for a moment first
     hide_console()
