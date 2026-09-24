@@ -14,6 +14,9 @@ standalone mode is §10, tech debt is §12.
 - Studio could not save anything once its saved agent token had non-Latin
   letters in it (typed in the Russian layout): every save said "can't reach
   IT-Deck". It now drops that token, says why, and asks again.
+- Closing the tutorial or What's new in the PC window revealed the main
+  screen in visible strips, like a low-bitrate video. The window is now
+  frozen while the overlay goes and shown whole.
 
 ---
 

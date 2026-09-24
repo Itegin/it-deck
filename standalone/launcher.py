@@ -1206,6 +1206,38 @@ def _apply_windows11_chrome(root) -> None:
         pass
 
 
+def _repaint_at_once(root, change) -> None:
+    """Run change() with the window frozen, then show the result in one go.
+
+    Taking an overlay off the main screen exposes a dozen child windows, and
+    Windows paints them one after another: the screen assembled itself in
+    visible strips, like a low-bitrate video. WM_SETREDRAW off hides the
+    change until everything is laid out and drawn; the redraw then shows it
+    whole. Anything failing here only costs the smoothness, never the window:
+    redraw is always switched back on.
+    """
+    user32 = hwnd = None
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(root.winfo_id())
+        user32.SendMessageW(hwnd, 0x000B, 0, 0)  # WM_SETREDRAW, FALSE
+    except Exception:
+        hwnd = None
+    try:
+        change()
+        root.update_idletasks()
+    finally:
+        if hwnd:
+            user32.SendMessageW(hwnd, 0x000B, 1, 0)  # WM_SETREDRAW, TRUE
+            # RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW
+            user32.RedrawWindow(hwnd, None, None, 0x4 | 0x400 | 0x1 | 0x80 | 0x100)
+            # Tk answers WM_PAINT by queueing its redraws as idle work; run
+            # them now so the frame goes out complete.
+            root.update_idletasks()
+
+
 def hide_console() -> None:
     """Take the console off the desktop once startup is done.
 
@@ -3164,7 +3196,7 @@ def show_info_window(
                 if state["pending"] is not None:
                     root.after_cancel(state["pending"])
                 root.unbind("<Escape>")
-                overlay.destroy()
+                _repaint_at_once(root, overlay.destroy)
 
             # The wrap leaves a few px spare: a tk.Label's own padding and
             # border sit outside its wraplength, and a label exactly as wide
