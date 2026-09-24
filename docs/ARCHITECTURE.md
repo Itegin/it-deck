@@ -319,4 +319,9 @@ re-reads the file every 2 s to redraw the link and the QR code.
 - Changing Studio's palette fails CI until the window follows.
 - Without Pillow the same styles degrade to flat colours; the window never
   depends on the images.
+- Overlays (the tour, What's new) put Studio's page background (the two
+  pools, also tested) and the card into one image, drawn only on open or
+  resize. A page turn changes text, never geometry, so there is no relayout
+  and no stutter. Tk gets no animation: motion there costs frames for
+  nothing.
 

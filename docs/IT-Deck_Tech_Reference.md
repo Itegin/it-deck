@@ -1581,6 +1581,24 @@ and stretched by ttk image elements. `button_style(parent, kind)` gives each
 button a style whose background matches what it sits on, which the corners
 need. Without Pillow the window falls back to flat colours.
 
+The **tour and What's new overlays** (`open_overlay()`) sit on Studio's page
+background, not on flat black. `_ground_png()` paints `--color-bg` with the
+two pools from `themes.css` (`_STUDIO_POOLS`, verbatim, tested) and bakes the
+card into the same image. A ttk card would fill its corners with a flat
+colour, which shows as squares on a gradient. The card itself is nine-sliced
+from a small antialiased tile (`_nine_slice`); a full draw is about 24 ms and
+happens when the overlay opens, then again only after a window resize
+(debounced by 120 ms).
+
+The geometry holds still while the overlay is open:
+- the content is measured once against every page and fixed at the tallest;
+- Back is always packed, disabled on page 1, and sits to the left of the
+  main button;
+- the main button's width is the longer of its two labels.
+
+A page turn only swaps label text. Before this, each click resized the card
+and repacked buttons, and on Windows the relayout showed as a stutter.
+
 Since v0.5.0 the window also has a **first-run tour**: four pages laid over
 the finished window with `place()` (no second window — nothing in it can
 destroy the info window), shown by itself when `config.env` did not exist at

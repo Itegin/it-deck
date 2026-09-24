@@ -34,7 +34,7 @@ Python on that machine.
    run it. The first time, a short tour walks you through setup; after that
    this window stays open:
 
-   <img src="docs/screenshots/window.png" alt="The IT-Deck window: step 1 is a QR code and link for the phone, step 2 opens Studio, step 3 explains Minimize and Quit and offers to remove IT-Deck from the PC; Tutorial replays the first-run tour" width="518">
+   <img src="docs/screenshots/window.png" alt="The IT-Deck window, in Studio's dark glass style: a header saying IT-Deck is running, step 1 with a QR code, the link, Copy link and New phone PIN, step 2 opening Studio, step 3 explaining Minimize and Quit with Start IT-Deck with Windows; Tutorial replays the first-run tour" width="518">
 
 2. **Point your phone's camera at the QR code**, on the same Wi-Fi. That is
    the only required step — the token is in the link, and the phone keeps it.
@@ -96,17 +96,34 @@ A fresh install seeds eight, all wired to something real:
 | **VPN** | Launches your VPN client, lit while it runs — **needs a path first** |
 | **Close Agent** | Stops the agent; **Start the agent** in the IT-Deck window brings it back |
 
-Studio adds more: **Clock & weather** (the phone's own time and date
-plus the weather for a city you pick — Open-Meteo, no API key) and **Program
-on/off**, which starts a program or closes it if it is already running, plus
-the quick-launch tiles below.
+Studio adds more:
+
+| Tile | What it does |
+| --- | --- |
+| **Clock & weather** | The phone's own time and date, plus the weather for a city you pick (Open-Meteo, no API key) |
+| **PC load** | Live CPU and memory bars and network speed |
+| **Hotkey** | Presses a key combination on the PC, e.g. `ctrl+shift+m` to mute in Discord |
+| **Media key** | Play/pause, next, previous, stop, volume up or down |
+| **Power** | Lock, sleep, shut down or restart; asks before it acts |
+| **Send text** | Type on the phone, paste on the PC: the text lands on its clipboard |
+| **Program on/off** | Starts a program, or closes it if it is already running |
+
+Any tile can be set to **Ask before running**: the phone then shows Run /
+Cancel first. Some games and anti-cheat systems ignore simulated key presses,
+so a Hotkey tile may do nothing inside them.
 
 **Quick launch.** **Open a website** opens any address in the PC's browser
 (one-tap presets for Telegram Web, Discord, YouTube, ChatGPT and more), and
 **Open an app** picks a program straight from the PC's Start Menu. They go to
 the **quick-launch bar**: up to seven square buttons along the bottom of an
 upright phone, or down the left side of a sideways one. Icons can be a
-symbol, a logo, a few letters or the site's own icon.
+symbol, a logo, a few letters or the site's own icon. The logos cover popular
+services and games and launchers: Steam, Epic Games, Battle.net, EA,
+Ubisoft, GOG, Valorant, League of Legends, Counter-Strike, Dota 2, PUBG,
+Fortnite, Roblox and more. An installed game picks up its logo by itself.
+
+**Several decks.** With more than one deck, swipe sideways on the phone to
+move between them; the dots under the header show where you are.
 
 When the PC end goes away — the agent closed, or IT-Deck itself — every tile
 becomes a button that can't do anything, so the clock widget takes the whole
@@ -128,6 +145,24 @@ the grid or the quick-launch bar, and **Compact layout** closes the gaps.
 English or Russian, following the browser. The phone never edits the catalog.
 **Guide** in the top bar is a short illustrated how-to, and it opens by itself
 the first time.
+
+The rest of the top bar:
+- **Decks** saves the deck on screen to a file, adds a deck from a file, or
+  starts one from a template (**Streamer**, **Work**). A file always becomes
+  a *new* deck and never changes the one you have. Open only files you
+  trust: a tile can start programs on the PC.
+- **Access** shows and changes the two tokens (see below).
+- **What's new** lists the latest changes. A dot marks it until you have read
+  them.
+
+### Tokens
+
+Both are `admin` out of the box, which is fine on your own Wi-Fi. If you share
+the network, change them:
+- **New phone PIN** in the IT-Deck window makes a random 6-digit phone token.
+  The QR code updates, and phones on the old token ask for the new one once.
+- **Studio → Access** changes either token by hand, or makes a random PIN.
+  The change applies at once, with no restart.
 
 ### Configuring the VPN tile
 
@@ -155,6 +190,20 @@ is why it isn't the default.
 
 </details>
 
+## Easy on games
+
+IT-Deck is meant to sit next to a game without costing frames. While no phone
+has the deck open, the agent stops reading audio and process state
+altogether. The backend and the agent's own work run at below-normal
+priority, so a busy CPU goes to the game first; programs IT-Deck launches keep
+normal priority. The VPN check remembers the process instead of scanning the
+process list every second. Measured cost while a phone *is* open: about
+0.1 ms of work per second (details in
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#13-performance)).
+
+**Start IT-Deck with Windows** (step 3 of the window, off by default) starts
+it at sign-in.
+
 ## Updates
 
 The window checks the releases page once at startup and shows a **Download**
@@ -162,6 +211,11 @@ button if a newer version exists. One request, nothing about you is sent, and
 any failure is ignored silently. Turn it off with `UPDATE_CHECK=0` in
 `config.env`. Only the exe can be out of date — the phone loads the deck from
 whatever version is running.
+
+**Your settings survive updates.** Tiles, decks, tokens and the port live in
+`%LOCALAPPDATA%\IT-Deck`, not in the exe: replace the exe and everything is
+still there. After an update the window shows a short **What's new** card
+once.
 
 ## Removing it
 
@@ -183,7 +237,7 @@ that one on the phone.
 | --- | --- |
 | The QR code / link doesn't open on the phone | Try the other addresses the window lists under the link — a PC with a VPN, Hyper-V or WSL has several |
 | No address works | Windows Firewall — a cancelled prompt leaves **Block** rules for `itdeck.exe`. Delete them in the inbound rules, or make the network Private |
-| The phone asks for a token | Its stored one no longer matches. Open the freshly printed `?token=…` link once |
+| The phone asks for a token | The token changed (a new PIN, or Studio → Access). Type the new one, or scan the QR code again |
 | IT-Deck says the port is already in use | Another copy is already running. Quit it from its window, or end `ITDeck.exe` in Task Manager |
 | The VPN tile does nothing | It most likely has no path yet (see above). If it has one, check whether that program runs as administrator |
 | A tile that needs the PC does nothing, or the deck turns into a clock | The agent is down. After a crash it restarts itself; after **Close Agent**, press **Start the agent** in the window. `logs\agent.log` says why, `launcher.log` records the restarts |
@@ -206,7 +260,7 @@ that one on the phone.
 
 ## Status
 
-v0.5.6 — personal project, active development, API may change.
+v0.5.7 — personal project, active development, API may change.
 
 ## License
 

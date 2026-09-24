@@ -60,11 +60,39 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   `VPN_PROCESS_NAME` to the agent at spawn, so a new path lights the indicator
   only after a restart.
 
+## Conventions
+
+- **Performance is a feature** (it runs next to games): state is read only
+  while a Dashboard is connected (`watchers` frame); backend and agent run
+  below normal priority; no per-second process walks. The Tk window has no
+  animation and no per-frame redraw: an overlay page turn changes text,
+  never geometry.
+- **PC window = Studio's look.** `_STUDIO_TOKENS`/`_STUDIO_POOLS` are CSS
+  copied verbatim (tested). Rounded shapes are Pillow PNGs, nine-sliced by
+  ttk. A button's style comes from `button_style(parent, kind)`: ttk paints
+  the style background behind rounded corners, so it must match the parent.
+  Everything must still work flat, without Pillow.
+- **Logos** are Simple Icons paths only, one colour via `currentColor`.
+  Never hand-drawn, never a wordmark (unreadable at tile size).
+- **Licence** is PolyForm Noncommercial. A new dependency or bundled file
+  goes into `THIRD-PARTY-NOTICES.md`. SoundVolumeView and Open-Meteo's free
+  tier rule out anything paid; the notices list what to replace first.
+- Checks before a push: `ruff check .`, `pytest -q`,
+  `node --test tests/frontend.test.mjs`, `node --check` on changed JS.
+
+## Releases
+
+A `v*.*.*` tag only builds the exe (artifact). Publishing is a manual
+**Run workflow** and happens only when the user says so; never trigger it
+yourself. Internal milestone tags share one `whats-new.json` entry (≤5
+bullets, EN+RU, named for the public version); `scripts/check_release.py
+vX.Y.Z` must pass before tagging. Pushing tags from a cloud session is
+blocked (HTTP 403): the user pushes them.
+
 ## Deploy
 
 - **Standalone:** changes in `backend/`, `frontend/`, `agents/windows/` need
-  `standalone/build.ps1`. A `v*.*.*` tag only *builds* the exe (a CI artifact);
-  publishing is a manual workflow run -- see CONTRIBUTING.md "Releasing".
+  `standalone/build.ps1` (or a tag, see Releases; steps in CONTRIBUTING.md).
 - **Legacy (Athlon):** `ssh athlon ./deploy.sh` (backend, local build);
   `./check.sh` to verify. Frontend is a `git pull`, then Ctrl+Shift+R on the
   phone. Backend before frontend for themes; frontend first for the

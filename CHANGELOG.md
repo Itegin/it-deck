@@ -11,6 +11,29 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.7 — 2026-09-24
+
+**The public release.** It includes the internal milestones v0.5.2 to
+v0.5.6 below; an install on v0.5.1 updates straight to it and keeps its
+tiles, decks and tokens.
+
+### Fixed
+
+- The tutorial and What's new overlays showed an empty black window and
+  stuttered on every page turn. They now sit on Studio's own background,
+  with its purple and teal glows. The card keeps one size across pages,
+  Back stays in place (greyed on page 1, left of the main button), and a
+  page turn changes only text.
+
+### Changed
+
+- README (EN/RU) covers everything since v0.5.1: the new tiles, several
+  decks, tokens, being easy on games and settings surviving updates.
+- CLAUDE.md gains the commands, the release rules and the conventions for
+  logos, performance and the PC window.
+
+---
+
 ## v0.5.6 — 2026-09-24
 
 Internal milestone; published together with the rest as v0.5.7.
