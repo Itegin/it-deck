@@ -16,7 +16,6 @@ already makes HTTPS calls the same way from the frozen exe.
 
 import json
 import logging
-import os
 import threading
 import time
 import urllib.error
@@ -26,6 +25,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
+
+from app.auth import check_agent_token
 
 logger = logging.getLogger("controlhub.api")
 
@@ -50,10 +51,13 @@ STALE_SECONDS = 6 * 60 * 60
 
 # The weather endpoint is unauthenticated (the phone calls it and holds only
 # CLIENT_TOKEN), so the cache has to be bounded. Coordinates are snapped to this
-# grid *before* the upstream URL is built. That way a request never costs
-# more than one upstream fetch per grid cell per FRESH_SECONDS, and the entry
-# cap bounds outbound traffic as well as memory. 0.01 deg is ~1 km, finer than
-# the forecast model's own resolution.
+# grid *before* the upstream URL is built. That way repeated requests for one
+# place cost at most one upstream fetch per grid cell per FRESH_SECONDS, and
+# the entry cap bounds memory. It does not bound outbound traffic: every new
+# cell is a miss and a fetch, so a LAN caller sweeping coordinates could keep
+# the threadpool busy. Accepted for a single-user LAN app (see
+# docs/DEVELOPMENT.md, Security). 0.01 deg is ~1 km, finer than the forecast
+# model's own resolution.
 COORD_DECIMALS = 2
 MAX_CACHE_ENTRIES = 64
 
@@ -149,14 +153,6 @@ async def weather(
     return await run_in_threadpool(_get_weather, lat, lon)
 
 
-def _check_agent_token(x_agent_token: str | None) -> None:
-    # Same gate as items.py/workspaces.py/agents.py. Geocoding is Studio-only,
-    # and Studio already holds the agent token, so unlike weather there is no
-    # reason to leave this one open.
-    expected_token = os.environ.get("AGENT_TOKEN")
-    if not expected_token or x_agent_token != expected_token:
-        raise HTTPException(status_code=401, detail="missing or invalid X-Agent-Token")
-
 
 def _geocode(q: str, lang: str) -> list[dict]:
     query = urllib.parse.urlencode({"name": q, "count": 8, "language": lang, "format": "json"})
@@ -185,5 +181,7 @@ async def geocode(
     lang: str = Query("en", pattern=r"^[a-z]{2}$"),
     x_agent_token: str | None = Header(default=None),
 ) -> list[dict]:
-    _check_agent_token(x_agent_token)
+    # Gated, unlike weather: geocoding is Studio-only, and Studio already
+    # holds the agent token, so there is no reason to leave this one open.
+    check_agent_token(x_agent_token)
     return await run_in_threadpool(_geocode, q.strip(), lang)

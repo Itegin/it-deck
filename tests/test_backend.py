@@ -117,3 +117,42 @@ def test_guide_pictures_are_webp(client):
     response = client.get("/img/guide/en/add-tile.webp")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"
+
+
+def test_explicit_null_placement_is_a_400_not_a_500(client):
+    tile = next(i for i in workspace(client)["items"] if i["kind"] == "action")
+    response = client.put(f"/api/items/{tile['id']}", json={"width": None}, headers=TOKEN)
+    assert response.status_code == 400, response.text
+    assert "width" in response.json()["detail"]
+    # The nullable ones can still be cleared.
+    cleared = client.put(f"/api/items/{tile['id']}", json={"icon": None}, headers=TOKEN)
+    assert cleared.status_code == 200, cleared.text
+
+
+@pytest.mark.parametrize("params", ["[1]", "3", '"text"', "null"])
+def test_params_must_be_a_json_object(client, params):
+    tile = next(i for i in workspace(client)["items"] if i["kind"] == "action")
+    response = client.put(f"/api/items/{tile['id']}", json={"params": params}, headers=TOKEN)
+    assert response.status_code == 400
+
+
+def test_item_writes_need_the_token(client):
+    tile = workspace(client)["items"][0]
+    assert client.put(f"/api/items/{tile['id']}", json={"label": "x"}).status_code == 401
+    assert client.put(
+        f"/api/items/{tile['id']}", json={"label": "x"}, headers={"X-Agent-Token": "test-tokeN"}
+    ).status_code == 401
+    assert client.delete(f"/api/items/{tile['id']}").status_code == 401
+
+
+def test_access_log_masks_the_client_token():
+    import logging
+
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0,
+        '%s - "%s %s HTTP/%s" %d', ("1.2.3.4:5", "GET", "/?token=s3cret&x=1", "1.1", 200), None,
+    )
+    for log_filter in logging.getLogger("uvicorn.access").filters:
+        log_filter.filter(record)
+    line = record.getMessage()
+    assert "s3cret" not in line and "token=***&x=1" in line

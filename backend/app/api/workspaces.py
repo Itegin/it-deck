@@ -1,11 +1,11 @@
 import itertools
 import logging
-import os
 import sqlite3
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from app.auth import check_agent_token
 from app.db import get_connection
 from app.ws.hub import hub
 
@@ -19,17 +19,6 @@ class WorkspaceCreate(BaseModel):
     grid_cols: int = 3
     grid_rows: int = 5
 
-
-def _check_agent_token(x_agent_token: str | None) -> None:
-    # Same shared-secret gate as backend/app/api/items.py, applied here too:
-    # this surface controls what workspaces exist, which drives what the
-    # agent will execute, so it gets the same gate as the item catalog.
-    expected_token = os.environ.get("AGENT_TOKEN")
-    # "not expected_token" guards against AGENT_TOKEN being unset entirely:
-    # without it, a missing env var (None) would equal a missing header
-    # (None) and silently let an unauthenticated request through.
-    if not expected_token or x_agent_token != expected_token:
-        raise HTTPException(status_code=401, detail="missing or invalid X-Agent-Token")
 
 
 def _pack_items(items: list[dict], grid_cols: int) -> list[tuple[int, int, int]]:
@@ -71,7 +60,7 @@ def _pack_items(items: list[dict], grid_cols: int) -> list[tuple[int, int, int]]
 
 @router.post("/api/workspaces/{workspace_id}/compact")
 async def compact_workspace(workspace_id: int, x_agent_token: str | None = Header(None)) -> list[dict]:
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
 
     conn = get_connection()
     try:
@@ -120,7 +109,7 @@ async def compact_workspace(workspace_id: int, x_agent_token: str | None = Heade
 
 @router.post("/api/workspaces")
 async def create_workspace(workspace: WorkspaceCreate, x_agent_token: str | None = Header(None)) -> dict:
-    _check_agent_token(x_agent_token)
+    check_agent_token(x_agent_token)
 
     conn = get_connection()
     try:

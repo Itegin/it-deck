@@ -1,15 +1,8 @@
 import logging
 import mimetypes
 import os
-
-# Without force=True, uvicorn's own dictConfig (which sets
-# disable_existing_loggers) wins and app loggers stay silent.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    force=True,
-)
-logging.getLogger("controlhub").setLevel(logging.INFO)
+import re
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
@@ -40,16 +33,50 @@ from app.models import get_workspaces_with_items
 from app.ws.agent import agent_ws
 from app.ws.client import client_ws
 
-# Load before anything reads os.environ (agent.py checks AGENT_TOKEN on
-# each connection, not just at import time, but this keeps env setup in
-# one place at process start).
+# Without force=True, uvicorn's own dictConfig (which sets
+# disable_existing_loggers) wins and app loggers stay silent. Placed after the
+# imports rather than before them: no module logs at import time, and a
+# logger only needs a handler by the time it is first used.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    force=True,
+)
+logging.getLogger("controlhub").setLevel(logging.INFO)
+
+
+class _RedactTokens(logging.Filter):
+    """Mask `token=` query values in uvicorn's access log.
+
+    The Dashboard link the launcher prints is /?token=<CLIENT_TOKEN>, so
+    every phone that opens it wrote the secret into backend.log in clear.
+    The request itself is unchanged; only its log line is.
+    """
+
+    _PATTERN = re.compile(r"(token=)[^&\s]*", re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                self._PATTERN.sub(r"\1***", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        return True
+
+
+# On the logger object, which uvicorn's dictConfig reconfigures (level,
+# handlers) but never strips of filters -- so this holds whether uvicorn
+# configures logging before importing the app (Docker's CLI) or after
+# (the standalone launcher's uvicorn.run).
+logging.getLogger("uvicorn.access").addFilter(_RedactTokens())
+
+# Load before anything reads os.environ (the token checks read it on every
+# request, not just at import time, but this keeps env setup in one place at
+# process start).
 load_dotenv()
 
-app = FastAPI()
 
-
-@app.on_event("startup")
-def on_startup() -> None:
+def run_startup_migrations() -> None:
     init_db()
     seed_if_empty()
     fixup_remove_placeholder_tiles()
@@ -72,6 +99,15 @@ def on_startup() -> None:
     # of them used to write -- running it earlier would let the same startup
     # break the row again.
     fixup_widget_types()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    run_startup_migrations()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/health")
@@ -119,6 +155,8 @@ FRONTEND_DIR = os.environ.get("ITDECK_FRONTEND_DIR", "frontend")
 # Registered here so the answer no longer depends on the machine.
 mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
+
+
 class RevalidatedStaticFiles(StaticFiles):
     """The frontend, served with Cache-Control: no-cache.
 

@@ -14,6 +14,11 @@ def get_connection() -> sqlite3.Connection:
     # sqlite3 defaults FK enforcement to off per-connection; item.workspace_id's
     # ON DELETE CASCADE only fires if this is set on every connection that writes.
     conn.execute("PRAGMA foreign_keys = ON")
+    # NORMAL only fsyncs at WAL checkpoints, not every commit; safe under WAL
+    # (survives app crashes) and far faster than FULL for a local single-user
+    # app. Per connection like foreign_keys: set once in init_db() it only
+    # ever applied to that one connection.
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -23,10 +28,8 @@ def init_db() -> None:
     try:
         # WAL lets the UI (reader) and agent actions (writer) hit the db at the
         # same time instead of blocking each other behind sqlite's default lock.
+        # Persistent: stored in the database file, so once is enough.
         conn.execute("PRAGMA journal_mode=WAL")
-        # NORMAL only fsyncs at WAL checkpoints, not every commit; safe under WAL
-        # (survives app crashes) and far faster than FULL for a local single-user app.
-        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS workspace (
