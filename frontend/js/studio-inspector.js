@@ -832,6 +832,15 @@ export function createInspector(root, ctx) {
           ]),
         ]),
       ]),
+      // Open-Meteo's data is CC BY 4.0: the credit and the licence link are
+      // a condition of using it, so they sit where the weather is set up.
+      h("p", { class: "field-hint" }, [
+        `${t("city.credit")} `,
+        h("a", { href: "https://open-meteo.com/", target: "_blank", rel: "noopener noreferrer", text: "Open-Meteo.com" }),
+        " (",
+        h("a", { href: "https://creativecommons.org/licenses/by/4.0/", target: "_blank", rel: "noopener noreferrer", text: "CC BY 4.0" }),
+        ")",
+      ]),
     ]);
   }
 

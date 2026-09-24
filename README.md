@@ -206,4 +206,15 @@ that one on the phone.
 
 ## Status
 
-v0.5.5 — personal project, active development, API may change.
+v0.5.6 — personal project, active development, API may change.
+
+## License
+
+Free for personal and other non-commercial use under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): use it, read the code,
+change it, share it. Commercial use needs the author's permission.
+
+What IT-Deck bundles or talks to (Python packages, NirSoft SoundVolumeView,
+Open-Meteo, the Simple Icons logos) is listed with its terms in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). Brand logos are their
+owners' trademarks, used only to show which app a tile opens.

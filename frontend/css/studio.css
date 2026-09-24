@@ -169,6 +169,13 @@ body.studio {
   font-size: 13px;
 }
 
+/* A link inside a hint (the weather credit): the accent, underlined, so it
+   reads as a link in both modes rather than as the UA's default blue. */
+.field-hint a {
+  color: var(--color-accent);
+  text-underline-offset: 2px;
+}
+
 .input,
 .studio select,
 .studio textarea {

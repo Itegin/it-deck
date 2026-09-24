@@ -173,6 +173,7 @@ const STRINGS = {
     "city.current": "Showing weather for {city} ({lat}, {lon})",
     "city.notSet": "No city yet. The widget shows only the time.",
     "city.manual": "Enter coordinates yourself",
+    "city.credit": "Weather data by",
 
     "bar.guide": "Guide",
     "bar.news": "What's new",
@@ -492,6 +493,7 @@ const STRINGS = {
     "city.current": "Погода для: {city} ({lat}, {lon})",
     "city.notSet": "Город не выбран, виджет покажет только время.",
     "city.manual": "Ввести координаты вручную",
+    "city.credit": "Данные о погоде:",
 
     "bar.guide": "Гайд",
     "bar.news": "Что нового",
