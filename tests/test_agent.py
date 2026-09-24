@@ -191,3 +191,59 @@ def test_agent_token_is_reread_from_config_env(tmp_path, monkeypatch):
 
     monkeypatch.setenv("ITDECK_CONFIG_FILE", str(tmp_path / "missing.env"))
     assert current_token("from-env") == "from-env"
+
+
+# --- keyboard, power and clipboard tiles (their Windows calls stubbed) --------
+
+
+def test_parse_keys_understands_chords_and_names():
+    from handlers.input import parse_keys
+
+    assert parse_keys("ctrl+shift+m") == [0x11, 0x10, ord("M")]
+    assert parse_keys(" Control + Alt + Del ") == [0x11, 0x12, 0x2E]
+    assert parse_keys("win+5") == [0x5B, ord("5")]
+    assert parse_keys("f13") == [0x7C]
+    assert parse_keys("media_play_pause") == [0xB3]
+
+
+@pytest.mark.parametrize("bad", ["", "ctrl+", "ctrl+shift", "ctrl+ctrl+a", "hyper+x", "f25", "a+b+c+d+e+f", None])
+def test_parse_keys_refuses_what_it_cannot_press(bad):
+    from handlers.input import parse_keys
+
+    with pytest.raises(ValueError):
+        parse_keys(bad)
+
+
+def test_key_handlers_send_or_explain(monkeypatch):
+    from handlers import input as keys
+
+    sent = []
+    monkeypatch.setattr(keys, "_send", sent.append)
+    assert keys.handle_send_keys({"keys": "ctrl+shift+m"})["status"] == "ok"
+    assert keys.handle_media_key({"key": "next"})["status"] == "ok"
+    assert sent == [[0x11, 0x10, ord("M")], [0xB0]]
+    assert "Unknown key" in keys.handle_send_keys({"keys": "ctrl+nope"})["message"]
+    assert keys.handle_media_key({"key": "rewind"})["status"] == "error"
+
+
+def test_power_answers_first_and_acts_after(monkeypatch):
+    from handlers import power
+
+    scheduled = []
+    monkeypatch.setattr(power, "_schedule", scheduled.append)
+    assert power.handle_power({"action": "shutdown"}) == {"status": "ok"}
+    assert scheduled and scheduled[0] is power.ACTIONS["shutdown"]
+    assert power.handle_power({"action": "format_c"})["status"] == "error"
+    assert len(scheduled) == 1  # the refused one scheduled nothing
+
+
+def test_clipboard_checks_the_text(monkeypatch):
+    from handlers import clipboard
+
+    got = []
+    monkeypatch.setattr(clipboard, "_set_clipboard", got.append)
+    assert clipboard.handle_clipboard_set({"value": "hello"})["status"] == "ok"
+    assert got == ["hello"]
+    for bad in ("", "   ", None, 42, "x" * (clipboard.MAX_CHARS + 1)):
+        assert clipboard.handle_clipboard_set({"value": bad})["status"] == "error"
+    assert got == ["hello"]

@@ -25,6 +25,9 @@ from handlers.process import (
     handle_open_url,
     handle_process_toggle,
 )
+from handlers.clipboard import handle_clipboard_set
+from handlers.input import handle_media_key, handle_send_keys
+from handlers.power import handle_power
 from handlers.screenshot import handle_screenshot
 from poller import poll_loop
 
@@ -81,6 +84,10 @@ HANDLERS = {
     "process_toggle": handle_process_toggle,
     "force_stop": handle_force_stop,
     "agent_shutdown": handle_agent_shutdown,
+    "send_keys": handle_send_keys,
+    "media_key": handle_media_key,
+    "power": handle_power,
+    "clipboard_set": handle_clipboard_set,
 }
 
 
