@@ -10,6 +10,7 @@ import winerror
 from dotenv import load_dotenv
 from websockets.asyncio.client import connect
 
+from config_file import current_token
 from dispatch import receive_loop
 from handlers.apps import handle_fetch_icon, handle_list_apps
 from handlers.audio import (
@@ -127,7 +128,7 @@ async def run() -> None:
             "type": "hello",
             "agent": AGENT_NAME,
             "version": "0.1.0",
-            "token": AGENT_TOKEN,
+            "token": current_token(AGENT_TOKEN),
         }))
         print(f"Connected to {SERVER_URL}")
 

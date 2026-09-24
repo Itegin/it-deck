@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
+from app.api.access import router as access_router
 from app.api.agents import router as agents_router
 from app.api.items import router as items_router
 from app.api.screenshot import router as screenshot_router
@@ -144,6 +145,7 @@ app.include_router(workspaces_router)
 app.include_router(agents_router)
 app.include_router(settings_router)
 app.include_router(widgets_router)
+app.include_router(access_router)
 
 
 # Starlette matches routes in registration order, so a catch-all mount at "/"

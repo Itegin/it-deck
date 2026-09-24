@@ -176,3 +176,18 @@ def test_process_watch_rescans_rarely_while_the_process_is_absent(monkeypatch):
     # Known PID: checked directly, no more walks.
     assert watch.running("vpn.exe") is True
     assert len(scans) == 3
+
+
+def test_agent_token_is_reread_from_config_env(tmp_path, monkeypatch):
+    from config_file import current_token
+
+    monkeypatch.delenv("ITDECK_CONFIG_FILE", raising=False)
+    assert current_token("from-env") == "from-env"
+
+    config = tmp_path / "config.env"
+    config.write_text("# comment\nCLIENT_TOKEN=phone\nAGENT_TOKEN=changed-in-studio\n")
+    monkeypatch.setenv("ITDECK_CONFIG_FILE", str(config))
+    assert current_token("from-env") == "changed-in-studio"
+
+    monkeypatch.setenv("ITDECK_CONFIG_FILE", str(tmp_path / "missing.env"))
+    assert current_token("from-env") == "from-env"

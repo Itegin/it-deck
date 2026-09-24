@@ -25,12 +25,12 @@ async def _close_quietly(ws: WebSocket, code: int = 1000) -> None:
         pass
 
 
-def _close_in_background(ws: WebSocket) -> None:
+def _close_in_background(ws: WebSocket, code: int = 1000) -> None:
     # Never awaited inline: closing a socket whose peer is gone waits for a
     # close handshake that will not come (up to the server's close timeout),
     # and whoever awaited it -- a broadcast to every other phone, a press --
     # would stall for that long.
-    task = asyncio.ensure_future(_close_quietly(ws))
+    task = asyncio.ensure_future(_close_quietly(ws, code))
     _closing.add(task)
     task.add_done_callback(_closing.discard)
 
@@ -96,6 +96,15 @@ class ConnectionHub:
         self.watching = active
         for name in list(self.agents):
             await self.send_to_agent(name, self.watchers_frame())
+
+    def close_all_clients(self, code: int) -> None:
+        """Disconnect every Dashboard, e.g. after the phone token changed.
+
+        Each socket's own handler unregisters it (and pauses the agents'
+        polling once the last one is gone), exactly as for any disconnect.
+        """
+        for ws in list(self.clients):
+            _close_in_background(ws, code)
 
     async def broadcast_to_clients(self, message: dict) -> None:
         # Copy to a list first: a client disconnecting mid-broadcast would
