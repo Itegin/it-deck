@@ -14,7 +14,9 @@ import { renderPreview, markSelection, DOCK_MAX } from "./studio-preview.js";
 import { createInspector } from "./studio-inspector.js";
 import { cleanPath, detectEntry, vpnNeedsPath } from "./tile-catalog.js";
 import { ICONS } from "./render.js";
-import { initGuide } from "./studio-guide.js";
+import { initGuide, isFirstVisit } from "./studio-guide.js";
+import { initAccess } from "./studio-access.js";
+import { initWhatsNew } from "./studio-whats-new.js";
 
 const grid = document.getElementById("preview-grid");
 const previewDock = document.getElementById("preview-dock");
@@ -95,6 +97,17 @@ async function getAgentToken() {
     }
   }
   return agentToken;
+}
+
+// A new token set from the Access dialog: the old one stopped working the
+// moment the backend applied the change.
+function rememberAgentToken(token) {
+  agentToken = token;
+  try {
+    localStorage.setItem(AGENT_TOKEN_STORAGE_KEY, token);
+  } catch (e) {
+    // The in-memory value still serves this page load.
+  }
 }
 
 function forgetAgentToken() {
@@ -538,7 +551,16 @@ modeSelect.addEventListener("change", async () => {
 });
 
 applyStaticStrings();
+// Read before initGuide(), which marks the first visit as seen.
+const firstVisit = isFirstVisit();
 initGuide(document.getElementById("guide-dialog"), document.getElementById("guide-btn"));
+initWhatsNew(document.getElementById("whats-new-dialog"), document.getElementById("whats-new-btn"), { firstVisit });
+initAccess(document.getElementById("access-dialog"), document.getElementById("access-btn"), {
+  request: api,
+  currentAgentToken: () => agentToken,
+  onAgentToken: rememberAgentToken,
+  showToast,
+});
 loadItems();
 // Independent of loadItems: a settings read must not take the deck down with
 // it, or the other way round.

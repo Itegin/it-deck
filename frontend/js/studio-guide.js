@@ -8,6 +8,7 @@
 // of Studio itself exists per language (img/guide/<lang>/); one that shows no
 // Studio text (the PC window, the themes) is shared.
 
+import { el } from "./dom.js";
 import { LANG, t } from "./studio-i18n.js";
 
 const SEEN_KEY = "itdeck:studio-guide-seen";
@@ -22,23 +23,21 @@ const SECTIONS = [
   { id: "trouble", steps: 4, img: null },
 ];
 
-function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value === undefined || value === null) continue;
-    if (key === "class") node.className = value;
-    else if (key === "text") node.textContent = value;
-    else if (key.startsWith("on")) node.addEventListener(key.slice(2).toLowerCase(), value);
-    else node.setAttribute(key, value);
-  }
-  node.append(...children.filter(Boolean));
-  return node;
-}
-
 function imagePaths(section) {
   return [].concat(section.img || []).map((name) =>
     section.shared ? `/img/guide/${name}` : `/img/guide/${LANG}/${name}`,
   );
+}
+
+// Whether this browser has opened Studio before (the guide opens by itself
+// on the first visit and marks it seen). Read before initGuide() runs, by
+// anything that wants to stay quiet for a newcomer -- the What's new chip.
+export function isFirstVisit() {
+  try {
+    return localStorage.getItem(SEEN_KEY) !== "1";
+  } catch (e) {
+    return false;
+  }
 }
 
 export function initGuide(dialog, openButton) {
