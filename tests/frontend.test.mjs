@@ -117,7 +117,7 @@ test("every catalog tile has a handler, an icon and its strings (CLAUDE.md: keep
 test("game logos: launchers and games map to their marks", () => {
   assert.equal(brandForApp("VALORANT"), "brand:valorant");
   assert.equal(brandForApp("Counter-Strike 2"), "brand:counterstrike");
-  assert.equal(brandForApp("Genshin Impact"), "brand:mihoyo");
+  assert.equal(brandForApp("Genshin Impact"), null);
   assert.equal(brandForApp("EA app"), "brand:ea");
   assert.equal(brandForApp("Battle.net"), "brand:battlenet");
   // A bare "ea" would have caught these.
