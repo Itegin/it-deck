@@ -18,3 +18,11 @@ services:
       - ./data:/app/data
       - ./frontend:/app/frontend
     restart: unless-stopped
+    # Docker's json-file driver keeps every line forever by default. The
+    # backend logs one line per state change and per command, so a year on a
+    # home server adds up; three 10 MB files is weeks of history.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -45,22 +45,30 @@ logging.basicConfig(
 logging.getLogger("controlhub").setLevel(logging.INFO)
 
 
-class _RedactTokens(logging.Filter):
-    """Mask `token=` query values in uvicorn's access log.
+class _AccessLogFilter(logging.Filter):
+    """Tidy uvicorn's access log: mask tokens, drop health probes.
 
     The Dashboard link the launcher prints is /?token=<CLIENT_TOKEN>, so
-    every phone that opens it wrote the secret into backend.log in clear.
+    every phone that opened it wrote the secret into backend.log in clear.
     The request itself is unchanged; only its log line is.
+
+    /health is polled by Docker's HEALTHCHECK every 30 s (and by deploy.sh
+    and check.sh); a successful probe says nothing a reader needs, and would
+    otherwise be most of the log. A failing one still gets through.
     """
 
-    _PATTERN = re.compile(r"(token=)[^&\s]*", re.IGNORECASE)
+    _TOKEN = re.compile(r"(token=)[^&\s]*", re.IGNORECASE)
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.args, tuple):
-            record.args = tuple(
-                self._PATTERN.sub(r"\1***", arg) if isinstance(arg, str) else arg
-                for arg in record.args
-            )
+        args = record.args
+        if not isinstance(args, tuple):
+            return True
+        # uvicorn's access record: (client, method, path, http_version, status)
+        if len(args) >= 5 and args[2] == "/health" and args[4] == 200:
+            return False
+        record.args = tuple(
+            self._TOKEN.sub(r"\1***", arg) if isinstance(arg, str) else arg for arg in args
+        )
         return True
 
 
@@ -68,7 +76,7 @@ class _RedactTokens(logging.Filter):
 # handlers) but never strips of filters -- so this holds whether uvicorn
 # configures logging before importing the app (Docker's CLI) or after
 # (the standalone launcher's uvicorn.run).
-logging.getLogger("uvicorn.access").addFilter(_RedactTokens())
+logging.getLogger("uvicorn.access").addFilter(_AccessLogFilter())
 
 # Load before anything reads os.environ (the token checks read it on every
 # request, not just at import time, but this keeps env setup in one place at

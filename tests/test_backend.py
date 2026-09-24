@@ -156,3 +156,17 @@ def test_access_log_masks_the_client_token():
         log_filter.filter(record)
     line = record.getMessage()
     assert "s3cret" not in line and "token=***&x=1" in line
+
+
+def test_access_log_drops_successful_health_probes():
+    import logging
+
+    def passes(status):
+        record = logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 0,
+            '%s - "%s %s HTTP/%s" %d', ("1.2.3.4:5", "GET", "/health", "1.1", status), None,
+        )
+        return all(f.filter(record) for f in logging.getLogger("uvicorn.access").filters)
+
+    assert not passes(200)
+    assert passes(500)

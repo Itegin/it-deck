@@ -48,11 +48,12 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Both sockets are persistent and only carry traffic when state
-        # actually changes, so an idle PC sends nothing for long stretches.
+        # Both sockets are persistent. The agent's socket carries a state
+        # frame every second, but the phone's only carries traffic when a
+        # value actually changes, so it can sit idle for long stretches.
         # nginx's 60s default would close an idle socket and leave the
-        # agent's reconnect/backoff loop flapping instead of surfacing a
-        # clear failure.
+        # reconnect/backoff loop flapping instead of surfacing a clear
+        # failure.
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
