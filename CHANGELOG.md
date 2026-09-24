@@ -11,6 +11,32 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.4 — 2026-09-24
+
+Internal milestone; published together with later work as v0.5.6.
+
+### Added
+
+- **Hotkey tile.** It presses a key combination on the PC, such as
+  `ctrl+shift+m` for Discord's mute, `alt+tab` or `win+d`. Some games and
+  anti-cheat systems ignore synthetic keys by design.
+- **Media key tile:** play/pause, next, previous, stop, volume up/down, for
+  whatever is playing.
+- **Power tile:** lock, sleep, restart or shut down. It asks "Run?" on the
+  phone first.
+- **Send text tile.** Type on the phone and it lands on the PC's clipboard,
+  ready to paste (up to 100,000 characters).
+- **"Ask before running"** is an option for any tile, under More settings in
+  Studio. It is on by default for Power, Program on/off and Close agent, so
+  a mis-tap can no longer stop the VPN (tech debt #21).
+
+### Tests
+
+- A new check ties every Studio tile type to an agent command, an icon and
+  its strings, so a tile can't ship half-wired.
+
+---
+
 ## v0.5.3 — 2026-09-24
 
 Internal milestone; published together with later work as v0.5.6.

@@ -2166,9 +2166,10 @@ Ordered roughly by how likely each is to bite.
     route (§10.5, `_rank_address`). Root cause, confirmed live, was not
     Hyper-V but *this app's own VPN tile*: a running VPN owns the default
     route, so the UDP trick returned the tunnel's `172.16.0.1/30`.
-21. **`process_toggle` has no confirmation.** Correct state (§10.4) removes the
-    trap where the tile misreported "off" and a tap killed a running VPN, but a
-    genuine mis-tap still kills it. There is no undo and no confirm step.
+21. ~~**`process_toggle` has no confirmation.**~~ **Fixed:** "Ask before
+    running" (`params.confirm`) shows Run / Cancel on the phone first, and is
+    on by default for new Program on/off, Power and Close agent tiles.
+    Existing tiles are unchanged until the option is ticked in Studio.
 22. ~~**Unknown `cmd` values on `/ws/client` are silently dropped.**~~
     **Fixed:** answered with an error result to the asking socket (§5).
 23. **A stray white rectangle was reported on the desktop during real use.**
