@@ -11,6 +11,34 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.3 — 2026-09-24
+
+Internal milestone; published together with later work as v0.5.6.
+
+### Added
+
+- **Change the tokens without editing files.**
+  - Studio → **Access** shows the phone token and changes either token. It
+    has a **Random PIN** button.
+  - The IT-Deck window gets a **New phone PIN** button.
+  - Changes apply immediately. Phones on the old token are signed out and
+    ask for the new one once; Studio switches to its new token by itself;
+    the window's link and QR code update within two seconds.
+  - A legacy Docker install shows the tokens read-only; they live in `.env`
+    on the server.
+- **"What's new" after an update.**
+  - The IT-Deck window shows a short card once per version: "Got it" and
+    "All changes".
+  - Studio has a quiet **What's new** button with a dot until it has been
+    opened.
+  - New installs see the tour instead. The phone never shows it.
+  - The notes live in `frontend/whats-new.json`, and a release is refused
+    without an entry for its version.
+- **Start with Windows**: a checkbox in the IT-Deck window, off by default.
+  Uninstall removes it.
+
+---
+
 ## v0.5.2 — 2026-09-24
 
 Internal milestone; published together with later work as v0.5.6.

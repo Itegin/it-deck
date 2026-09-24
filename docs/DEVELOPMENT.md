@@ -306,6 +306,7 @@ whose `data-state-key` changed.
 | `POST /api/agents/{name}/list_devices\|list_apps\|fetch_icon` | `X-Agent-Token` | Studio asks the agent, 5 s budget |
 | `GET /api/widgets/weather` | none (phone) | Open-Meteo proxy with snapped-coordinate cache |
 | `GET /api/widgets/geocode` | `X-Agent-Token` | city search for Studio |
+| `GET/PUT /api/access` | `X-Agent-Token` | Studio's Access dialog: read the phone token, change either token (standalone only; `409` on Docker) |
 | `POST /api/screenshot` | `X-Agent-Token` | retained, unused |
 | `/ws/agent`, `/ws/client` | hello token | see §7 |
 
@@ -510,6 +511,7 @@ simply fixed.
 | `OUTPUT_DEVICE_PRIMARY/SECONDARY` | agent | none | Audio Switch fallback pair |
 | `ITDECK_DATA_DIR` | backend, launcher | `/app/data` (Docker), `%LOCALAPPDATA%\IT-Deck` | DB, logs, screenshots |
 | `ITDECK_FRONTEND_DIR` | backend | `frontend` (cwd-relative) | the launcher passes an absolute path |
+| `ITDECK_CONFIG_FILE` | backend, agent | standalone: `%LOCALAPPDATA%\IT-Deck\config.env`; unset on Docker | where a token changed in Studio is saved; the agent re-reads its token from it on every reconnect |
 
 - **Standalone** reads `config.env`, **load-if-exists**. It is written once
   and never regenerated, because that would break the phone's saved URL. Edit
@@ -736,8 +738,18 @@ inside the container.
   feature.
 - **Standalone defaults both tokens to `admin`.** It is a deliberate
   convenience for a single-user home network (CLAUDE.md). Anyone on the same
-  Wi-Fi who knows this can use Studio. On a shared network, set strong values
-  in `config.env`.
+  Wi-Fi who knows this can use Studio. On a shared network, change them. There
+  are three ways to do it:
+  - **Studio → Access**: either token, with a "Random PIN" button;
+  - **the IT-Deck window**: "New phone PIN";
+  - **by hand** in `config.env`.
+
+  A change applies at once, without a restart:
+  - `PUT /api/access` writes `config.env` line by line (comments and other
+    keys are kept) and updates the backend's environment;
+  - a new phone token disconnects every phone with `4001`, and each asks for
+    the new token once;
+  - the agent picks up a new Studio token on its next connect.
 - **`open_url` allowlist** (`agents/windows/handlers/process.py`):
   - allowed schemes: http(s), discord, tg, steam, spotify, zoommtg, slack,
     ms-settings;
