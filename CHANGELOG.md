@@ -7,6 +7,92 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## Unreleased
+
+A full audit of backend, agent, frontend, launcher and infrastructure. No
+feature was removed and nothing changes for a deck that was already working;
+the fixes are for the situations below. Details: `docs/ARCHITECTURE.md` and
+the Tech Reference §3, §5, §12.
+
+### Bug fixes
+
+- **An agent that restarted was reported offline while it was connected.**
+  The old connection's cleanup removed the new one, so every tap answered
+  "agent offline" until the next restart.
+- **A tile named "Spotify" (or "Lights", "Sleep PC") was deleted on every
+  start, and one named "Camera" was turned into a mic button.** Old startup
+  clean-ups matched on the name alone.
+- **Deleted or renamed built-in tiles came back on restart** (Headphones,
+  Audio Switch, Screenshot, VPN, Close Agent). Each built-in insert now runs
+  once per database.
+- **Tiles looked live while the agent was away** after any Studio edit. The
+  grey "offline" look now survives a redraw.
+- **The phone could take up to 30 s to reconnect** after being picked up.
+  It now reconnects as soon as the page is visible again or the network
+  returns.
+- **After a backend restart, the agent could wait 30 s to reconnect.** It
+  now retries after 1 s when the connection had been working.
+- **One bad message could drop the agent's connection**, e.g. an
+  unparseable site address for a site icon. Every command now gets an
+  answer, error or not.
+- **A PC with no microphone sent no state at all.** One failing reading
+  used to throw away the whole update; each value is now read on its own.
+- Failed sends to the agent are answered "agent offline" at once instead of
+  after a 5 s timeout. Unknown commands get an error reply instead of none.
+- Editing a tile with an empty width or height returned a server error
+  instead of a clear message.
+- With browser storage blocked, the deck did not load at all.
+- Uninstall left files and firewall rules behind, and no desktop shortcut
+  was made, when the Windows user name contained an apostrophe.
+- The deck works behind the HTTPS proxy from the Ansible playbook (the
+  WebSocket used `ws://` on an `https://` page).
+
+### Security
+
+- The phone can no longer send arbitrary agent commands through the
+  long-press override; only Force Stop is accepted.
+- The client token no longer appears in `backend.log` (the dashboard link
+  carries it as `?token=`).
+- Tokens are compared in constant time, in one place (`backend/app/auth.py`).
+- A tile's settings must be a JSON object; other JSON is refused on save.
+
+### Performance
+
+- `backend.log` no longer gets a line every second from the agent's state
+  updates (tens of MB a day). The launcher rolls each log to `.1` past 5 MB.
+- The SQLite `synchronous=NORMAL` setting now applies to every connection,
+  not just the first.
+
+### Refactoring
+
+- Both WebSocket endpoints share one handshake and frame reader
+  (`backend/app/ws/protocol.py`); the agent's command dispatch is its own
+  pure module (`agents/windows/dispatch.py`).
+- Startup uses FastAPI's `lifespan` instead of the deprecated `on_event`.
+- New `schema_migration` table (additive) records one-time data fixes.
+
+### Infrastructure
+
+- Docker: a `HEALTHCHECK`, a `.dockerignore`, and log rotation in
+  `docker-compose.yml`. Successful health probes are not logged.
+- `check.sh` updated for the quieter log.
+- `.bat`/`.ps1` files check out with Windows line endings.
+- The legacy Scheduled Task no longer stops the agent after 72 hours.
+
+### Tests
+
+- New: the WebSocket endpoints (including the reconnect race), the startup
+  fixups on scratch databases, agent dispatch, input validation, and a check
+  that the theme lists agree everywhere they are copied. 31 → 54 Python
+  tests, 5 → 6 frontend tests.
+
+### Documentation
+
+- New `docs/DEVELOPMENT.md` (quick start, architecture, protocol, debugging,
+  extension recipes) and `docs/ARCHITECTURE.md` (decision records).
+
+---
+
 ## v0.5.1 — 2026-09-24
 
 ### Fixed

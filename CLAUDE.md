@@ -8,7 +8,9 @@ Legacy: backend in Docker on Athlon, frontend bind-mounted.
 
 Details (schema, API, protocol, tiles, themes, agent, standalone §10, tech debt
 §12) are in [`docs/IT-Deck_Tech_Reference.md`](docs/IT-Deck_Tech_Reference.md).
-Read it before touching those areas. History: [`CHANGELOG.md`](CHANGELOG.md).
+Read it before touching those areas. How-to and extension recipes:
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md); decisions:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). History: [`CHANGELOG.md`](CHANGELOG.md).
 
 Version: `ITDECK_VERSION` in `standalone/launcher.py`. Bump it in the same
 commit as the tag. Public name is IT-Deck; internal identifiers (`controlhub`
@@ -27,11 +29,13 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
 
 - **Startup fixups in `db.py` must be guarded on the value they upgrade from.**
   They run on every start, and a bare `WHERE label=...` reverts Studio edits.
+  One-shot inserts go through `_already_applied`/`_mark_applied`.
 - **Keep in step:** `tile-catalog.js` ↔ agent `HANDLERS` ↔ `WIDGETS`
   (`js/widgets/index.js`) ↔ `ICONS` (`render.js`) + `BRAND_ICONS`
   (`brand-icons.js`, no Russian services) ↔ db.py seeds. The agent's
   `OPEN_URL_SCHEMES` ↔ the catalog's `URL_SCHEMES`; backend `DOCK_MAX` ↔
-  `studio-preview.js` `DOCK_MAX`. Theme slugs:
+  `studio-preview.js` `DOCK_MAX`. `ALLOWED_OVERRIDES` (`ws/client.py`) ↔ the
+  long-press menu in `app.js`. Theme slugs:
   `settings.py`, `theme.js`, `index.html` boot script, `themes.css`.
 - **Widgets** (`kind=widget`): `mount(tile,item)` returns `destroy()`, and
   `render.js`/Studio preview call `destroyWidgets()` before wiping the grid.
