@@ -751,7 +751,7 @@ inside the container.
 | VPN state from a remembered PID, rescanned every 3 s when absent | no process-list walk every second |
 | Static files with `no-cache` + ETag | an update applies on reload at 304 cost |
 | The PC window follows `config.env` by its mtime: one `stat()` per 2 s | the file is read only when a token changed |
-| The window's rounded look is a few tiny images drawn once, stretched nine-slice | no canvas redraws, no per-frame work |
+| The window's rounded look is a few images drawn once at near widget size, stretched nine-slice | no canvas redraws, no per-frame work, a panel is one tile instead of hundreds; ~0.2 s more at window start |
 
 **Measured** (v0.5.6, Linux container, Python 3.11; Windows numbers are
 estimates, not measurements):

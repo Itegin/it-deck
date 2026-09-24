@@ -134,7 +134,8 @@ state snapshot every second.
 | `js/api.js` | REST fetches plus per-item `params` JSON parsing. Tags each failure kind (`unreachable`, `status`, `badReply`, `badParams`). |
 | `js/ws.js` | Client WebSocket: connect/reconnect with backoff (1 s → 30 s), `sendExecute`, `sendSetValue`, manual `req_id` generation, and the in-flight bookkeeping that turns raw result frames into per-tile `pending`/`ok`/`error` phases. |
 | `js/render.js` | Every DOM write: grid, quick-launch bar and tiles, the icon table and `tileIconFor()` (glyph / brand logo / text / site-icon image), the WCAG ink calculation, the last reported state (`knownState`, re-applied after every render — the backend only sends changes), the volume slider's pointer + keyboard handling, live state → colour/fill/subtitle, command-feedback classes, the workspace selector, the error state. |
-| `js/studio.js` | Studio controller: loading, the agent token dialog + `api()` helper (drops the token on any 401), workspace/mode pickers, compaction, the VPN setup card. |
+| `js/studio.js` | Studio controller: loading, the agent token dialog + `api()` helper (drops the token on any 401, and before sending one that isn't printable ASCII -- typed in another keyboard layout, it would make `fetch()` throw and read as "can't reach IT-Deck"), workspace/mode pickers, compaction, the VPN setup card. |
+| `js/token-check.js` | `headerSafeToken()`, the check above, apart from the DOM so node tests can reach it. |
 | `js/studio-inspector.js` | Studio's editor panel, generated from the catalog (type cards, setup fields, appearance, size, "More settings" JSON for unmanaged keys). |
 | `js/studio-preview.js` | Studio's deck preview: real `.tile` markup + live widgets, `+` free cells, drag-to-move. |
 | `js/studio-i18n.js` | Studio EN/RU strings by `navigator.language`; keys must exist in both. |
@@ -1577,7 +1578,12 @@ panel like Studio's top bar. The steps are rounded panels with the accent
 number badge. The update notice is Studio's setup card (accent ring). Buttons
 are `.btn` / `.btn-primary` / `.btn-danger` with the accent focus ring. The
 rounded shapes are images made by `_rounded_png()` (Pillow, 4x supersampled)
-and stretched by ttk image elements. Every button is made by
+and stretched by ttk image elements. ttk *tiles* an element's middle and
+edges, and on Windows every tile of a translucent image is a separate slow
+blend, so the sources are drawn about as big as the widgets
+(`_PANEL_IMAGE`, `_CONTROL_IMAGE`, `_WELL_IMAGE`): a panel is one tile each
+way instead of hundreds. The element's `width`/`height` keep the size each
+widget asks for small. The cost is ~0.2 s more before the window appears. Every button is made by
 `glass_button(parent, kind, ...)`, which derives its style from `parent` so the
 style background (what shows around the rounded corners) matches what the
 button sits on. Without Pillow the window falls back to flat colours.
@@ -1599,6 +1605,18 @@ The geometry holds still while the overlay is open:
 
 A page turn only swaps label text. Before this, each click resized the card
 and repacked buttons, and on Windows the relayout showed as a stutter.
+
+**Closing an overlay** goes through `_swap_behind_curtain()`. Destroying it and
+repainting the main screen is ~150 ms of work, and Windows shows every step:
+the screen assembled itself in strips. Freezing redraw (`WM_SETREDRAW`)
+doesn't help, because Tk paints after `WM_PAINT`, through its event queue. So
+a borderless top-level holding a snapshot of the window (`_window_snapshot()`,
+`PrintWindow` from the window's own DC, not a screen grab: the launcher isn't
+DPI-aware) covers it, invisible until painted and with DWM's fade turned off.
+The overlay goes and the screen repaints underneath (a separate top-level
+doesn't clip this one's painting), then the cover is dropped: one frame.
+Without Pillow or `PrintWindow` the swap still happens, just uncovered; the
+cover always comes off, even if the swap fails (both tested).
 
 Since v0.5.0 the window also has a **first-run tour**: four pages laid over
 the finished window with `place()` (no second window — nothing in it can

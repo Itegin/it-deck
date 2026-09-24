@@ -311,7 +311,11 @@ re-reads the file every 2 s to redraw the link and the QR code.
   `base.css`/`themes.css`/`studio.css`.
 - Rounded shapes are Pillow-drawn PNGs loaded with `PhotoImage(data=…)`
   (no ImageTk). ttk image elements stretch them nine-slice, so each shape
-  is drawn once whatever its size.
+  is drawn once whatever its size. The sources are near widget size: ttk
+  tiles the middle, and a small source meant hundreds of slow translucent
+  blends per panel on Windows.
+- An overlay closes under a snapshot cover (`_swap_behind_curtain()`), so the
+  main screen appears in one frame instead of being painted in strips.
 - A button's style background is whatever it sits on (`glass_button()`
   derives it from the parent), because ttk fills a widget's rectangle before
   drawing the image.

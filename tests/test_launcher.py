@@ -227,3 +227,74 @@ def test_nine_slice_keeps_corners_and_fills_the_middle():
     assert big.crop((0, 0, 16, 16)).tobytes() == tile.crop((0, 0, 16, 16)).tobytes()
     assert big.crop((284, 104, 300, 120)).tobytes() == tile.crop((32, 32, 48, 48)).tobytes()
     assert big.getpixel((150, 60))[:3] == (0x20, 0x20, 0x20)
+
+
+def test_nine_slice_sources_cover_a_panel_in_few_tiles():
+    # ttk tiles the middle and edges of an image element, and on Windows each
+    # tile of a translucent image is a separate slow blend: 48-px sources
+    # meant hundreds of tiles per panel and a window that painted itself in
+    # visible strips. A step panel (~490 x 260) must take one tile each way.
+    panel_w, panel_h = launcher._PANEL_IMAGE
+    assert panel_w - 2 * launcher._RADIUS_PANEL >= 490 - 2 * launcher._RADIUS_PANEL
+    assert panel_h - 2 * launcher._RADIUS_PANEL >= 260 - 2 * launcher._RADIUS_PANEL
+    edge = launcher._RADIUS_CONTROL + launcher._FOCUS_MARGIN
+    assert launcher._CONTROL_IMAGE[0] - 2 * edge >= 200  # the widest button's middle
+    assert launcher._WELL_IMAGE[0] - 2 * launcher._RADIUS_CONTROL >= 400  # the link field
+
+
+class _FakeRoot:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def update_idletasks(self):
+        self.calls.append("idle")
+
+    def update(self):
+        self.calls.append("update")
+
+
+def test_overlay_swap_still_happens_without_a_cover(monkeypatch):
+    # No snapshot (no Pillow, PrintWindow refused, not Windows): the overlay
+    # still goes and the screen is still brought up to date -- only the
+    # one-frame cut is lost.
+    pytest.importorskip("tkinter")
+
+    def no_snapshot(_root):
+        raise OSError("PrintWindow failed")
+
+    monkeypatch.setattr(launcher, "_window_snapshot", no_snapshot)
+    calls = []
+    launcher._swap_behind_curtain(_FakeRoot(calls), lambda: calls.append("change"))
+    # update(), not only update_idletasks(): Tk's redraws wait on the event queue.
+    assert calls[-2:] == ["change", "update"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the cover is a Windows window")
+def test_overlay_cover_always_comes_off():
+    tk = pytest.importorskip("tkinter")
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    try:
+        root.geometry("300x200")
+        tk.Label(root, text="main screen").pack()
+        overlay = tk.Frame(root, bg="black")
+        overlay.place(x=0, y=0, relwidth=1, relheight=1)
+        root.update()
+
+        def toplevels():
+            return [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
+
+        launcher._swap_behind_curtain(root, overlay.destroy)
+        assert not overlay.winfo_exists()
+        assert toplevels() == []
+
+        def broken():
+            raise RuntimeError("change failed")
+
+        with pytest.raises(RuntimeError):
+            launcher._swap_behind_curtain(root, broken)
+        assert toplevels() == []  # a failed change never leaves the window covered
+    finally:
+        root.destroy()
