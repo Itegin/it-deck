@@ -1570,6 +1570,17 @@ steps**, not a list of facts:
 3. **When you're done here** -- what Minimize and Quit actually do, and where
    the logs are.
 
+Since v0.5.6 the window is **dressed as Studio** (ARCHITECTURE ADR-17):
+Studio's dark Liquid Glass tokens in `_STUDIO_TOKENS`, composited by
+`_studio_palette()` and checked against the CSS by a test. The header is a
+panel like Studio's top bar. The steps are rounded panels with the accent
+number badge. The update notice is Studio's setup card (accent ring). Buttons
+are `.btn` / `.btn-primary` / `.btn-danger` with the accent focus ring. The
+rounded shapes are images made by `_rounded_png()` (Pillow, 4x supersampled)
+and stretched by ttk image elements. `button_style(parent, kind)` gives each
+button a style whose background matches what it sits on, which the corners
+need. Without Pillow the window falls back to flat colours.
+
 Since v0.5.0 the window also has a **first-run tour**: four pages laid over
 the finished window with `place()` (no second window — nothing in it can
 destroy the info window), shown by itself when `config.env` did not exist at

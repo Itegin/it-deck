@@ -37,7 +37,8 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   `OPEN_URL_SCHEMES` ↔ the catalog's `URL_SCHEMES`; backend `DOCK_MAX` ↔
   `studio-preview.js` `DOCK_MAX`. `ALLOWED_OVERRIDES` (`ws/client.py`) ↔ the
   long-press menu in `app.js`. Theme slugs:
-  `settings.py`, `theme.js`, `index.html` boot script, `themes.css`.
+  `settings.py`, `theme.js`, `index.html` boot script, `themes.css`. The PC
+  window's `_STUDIO_TOKENS` (launcher.py) copy Studio's CSS (tested).
 - **Widgets** (`kind=widget`): `mount(tile,item)` returns `destroy()`, and
   `render.js`/Studio preview call `destroyWidgets()` before wiping the grid.
   Colours only via `currentColor`.

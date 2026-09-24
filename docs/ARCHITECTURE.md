@@ -297,3 +297,26 @@ re-reads the file every 2 s to redraw the link and the QR code.
   Import needs the Studio token, and the dialog says to import only trusted
   files.
 
+## ADR-17 The PC window borrows Studio's tokens, and a test holds it to them
+
+**Context.**
+- The Tk window and Studio looked like two different products.
+- A hand-picked "similar" palette drifts the first time Studio changes.
+
+**Decision.**
+- `launcher._STUDIO_TOKENS` holds Studio's dark Liquid Glass tokens copied
+  verbatim. `_studio_palette()` composites them into opaque colours (Tk has
+  no alpha or blur).
+- `tests/test_launcher.py` reads every token back from
+  `base.css`/`themes.css`/`studio.css`.
+- Rounded shapes are Pillow-drawn PNGs loaded with `PhotoImage(data=…)`
+  (no ImageTk). ttk image elements stretch them nine-slice, so each shape
+  is drawn once whatever its size.
+- A button's style background is whatever it sits on (`button_style()`),
+  because ttk fills a widget's rectangle before drawing the image.
+
+**Consequences.**
+- Changing Studio's palette fails CI until the window follows.
+- Without Pillow the same styles degrade to flat colours; the window never
+  depends on the images.
+

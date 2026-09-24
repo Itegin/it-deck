@@ -73,6 +73,9 @@ users. To publish:
 1. Bump `ITDECK_VERSION` and give the version its entry in
    `frontend/whats-new.json`. That is the short "What's new" card users see
    after updating. Commit, then tag `vX.Y.Z` and push the tag.
+   Internal milestones share one entry: when publishing v0.5.7, the entry
+   written as `0.5.6` becomes `0.5.7` (plus anything new), since users jump
+   from 0.5.1 straight to it.
 2. Check it: `python scripts/check_release.py vX.Y.Z`.
 3. GitHub → Actions → **Build ITDeck.exe (tag) / publish a release** → *Run
    workflow* with the tag. This publishes the release with the exe, and the

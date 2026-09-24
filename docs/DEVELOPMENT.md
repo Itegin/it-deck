@@ -750,6 +750,19 @@ inside the container.
 | Backend process and agent thread below normal priority | games keep their frame rate when the CPU is contended |
 | VPN state from a remembered PID, rescanned every 3 s when absent | no process-list walk every second |
 | Static files with `no-cache` + ETag | an update applies on reload at 304 cost |
+| The PC window follows `config.env` by its mtime: one `stat()` per 2 s | the file is read only when a token changed |
+| The window's rounded look is a few tiny images drawn once, stretched nine-slice | no canvas redraws, no per-frame work |
+
+**Measured** (v0.5.6, Linux container, Python 3.11; Windows numbers are
+estimates, not measurements):
+
+| What | Cost |
+|---|---|
+| One agent state tick: CPU, RAM, network and cached VPN readers | ~0.1 ms, once a second, only while a phone is open (~0.01 % of one core) |
+| VPN process rescan while the VPN is off | ~2 ms per 80 processes, every 3 s (on Windows with ~300 processes, estimated under 10 ms) |
+| Backend idle / agent idle (RSS) | ~52 MB / ~30 MB here; the exe's two children on Windows, estimated 150-250 MB together |
+| GPU on the PC | none: the Tk window is static; Liquid Glass blur only runs in a browser tab that is open (Studio or a PC Dashboard) |
+| Phone | no timers beyond the clock (aligned to the second) and the 10-min weather refresh; the only endless animations are the clock colon (an opacity step) and the "pending" pulse, which ends within 5 s |
 
 ---
 

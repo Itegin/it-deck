@@ -11,9 +11,40 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.6 — 2026-09-24
+
+Internal milestone; published together with the rest as v0.5.7.
+
+### Added
+
+- **The PC window looks like Studio.** Studio's own dark Liquid Glass tokens
+  (a test reads them back from the CSS), with rounded panels, buttons and
+  fields drawn as antialiased images, Studio's accent badge, setup-card
+  update notice, `.btn` styles and focus ring. Without Pillow it falls back
+  to flat colours.
+- **Game and launcher logos:** Valorant, League of Legends, Riot Games,
+  Counter-Strike, Dota 2, PUBG, Fortnite, Roblox, Rockstar Games, FACEIT,
+  Epic Games, Battle.net, EA, Ubisoft, GOG and PlayStation. Installed games
+  pick them up by name.
+- **`LICENSE`** (PolyForm Noncommercial 1.0.0) and
+  **`THIRD-PARTY-NOTICES.md`**, which lists what is bundled or used and on
+  what terms, plus what would have to change before charging money. Both
+  are attached to a published release.
+- The weather widget's setup credits Open-Meteo (CC BY 4.0), as its data
+  licence requires.
+
+### Changed
+
+- The window follows `config.env` by its modification time: one `stat()`
+  every 2 s instead of a read and parse.
+- `docs/DEVELOPMENT.md` §13 has measured costs: an agent state tick is about
+  0.1 ms once a second while a phone is open.
+
+---
+
 ## v0.5.5 — 2026-09-24
 
-Internal milestone; published together with the rest as v0.5.6.
+Internal milestone; published together with the rest as v0.5.7.
 
 ### Added
 
@@ -42,7 +73,7 @@ Internal milestone; published together with the rest as v0.5.6.
 
 ## v0.5.4 — 2026-09-24
 
-Internal milestone; published together with later work as v0.5.6.
+Internal milestone; published together with later work as v0.5.7.
 
 ### Added
 
@@ -68,7 +99,7 @@ Internal milestone; published together with later work as v0.5.6.
 
 ## v0.5.3 — 2026-09-24
 
-Internal milestone; published together with later work as v0.5.6.
+Internal milestone; published together with later work as v0.5.7.
 
 ### Added
 
@@ -96,7 +127,7 @@ Internal milestone; published together with later work as v0.5.6.
 
 ## v0.5.2 — 2026-09-24
 
-Internal milestone; published together with later work as v0.5.6.
+Internal milestone; published together with later work as v0.5.7.
 
 A full audit of the backend, agent, frontend, launcher and infrastructure. No
 feature was removed. Nothing changes for a deck that was already working; the
