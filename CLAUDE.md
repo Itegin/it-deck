@@ -69,7 +69,7 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   never geometry.
 - **PC window = Studio's look.** `_STUDIO_TOKENS`/`_STUDIO_POOLS` are CSS
   copied verbatim (tested). Rounded shapes are Pillow PNGs, nine-sliced by
-  ttk. A button's style comes from `button_style(parent, kind)`: ttk paints
+  ttk. Buttons come only from `glass_button(parent, kind, ...)`: ttk paints
   the style background behind rounded corners, so it must match the parent.
   Everything must still work flat, without Pillow.
 - **Logos** are Simple Icons paths only, one colour via `currentColor`.

@@ -1577,9 +1577,10 @@ panel like Studio's top bar. The steps are rounded panels with the accent
 number badge. The update notice is Studio's setup card (accent ring). Buttons
 are `.btn` / `.btn-primary` / `.btn-danger` with the accent focus ring. The
 rounded shapes are images made by `_rounded_png()` (Pillow, 4x supersampled)
-and stretched by ttk image elements. `button_style(parent, kind)` gives each
-button a style whose background matches what it sits on, which the corners
-need. Without Pillow the window falls back to flat colours.
+and stretched by ttk image elements. Every button is made by
+`glass_button(parent, kind, ...)`, which derives its style from `parent` so the
+style background (what shows around the rounded corners) matches what the
+button sits on. Without Pillow the window falls back to flat colours.
 
 The **tour and What's new overlays** (`open_overlay()`) sit on Studio's page
 background, not on flat black. `_ground_png()` paints `--color-bg` with the

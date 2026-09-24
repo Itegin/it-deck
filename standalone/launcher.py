@@ -897,6 +897,11 @@ _STUDIO_POOLS = (
 _POOL_RE = re.compile(
     r"radial-gradient\((\d+)% (\d+)% at (\d+)% (\d+)%, (rgba\([^)]*\)) 0%, rgba\([^)]*\) 100%\)"
 )
+# Parsed once: (rx%, ry%, cx%, cy%, (r, g, b, a)), painted bottom first.
+_POOLS = tuple(
+    (int(m[1]), int(m[2]), int(m[3]), int(m[4]), _css_rgba(m[5]))
+    for m in (_POOL_RE.fullmatch(css) for css in reversed(_STUDIO_POOLS))
+)
 
 
 def _ground_image(width: int, height: int):
@@ -910,13 +915,11 @@ def _ground_image(width: int, height: int):
     from PIL import Image
 
     ground = Image.new("RGB", (width, height), _GLASS["bg"])
-    for css in reversed(_STUDIO_POOLS):
-        rx_pct, ry_pct, cx_pct, cy_pct, color = _POOL_RE.fullmatch(css).groups()
-        r, g, b, a = _css_rgba(color)
-        rx = max(1, round(width * int(rx_pct) / 100))
-        ry = max(1, round(height * int(ry_pct) / 100))
-        cx = round(width * int(cx_pct) / 100)
-        cy = round(height * int(cy_pct) / 100)
+    for rx_pct, ry_pct, cx_pct, cy_pct, (r, g, b, a) in _POOLS:
+        rx = max(1, round(width * rx_pct / 100))
+        ry = max(1, round(height * ry_pct / 100))
+        cx = round(width * cx_pct / 100)
+        cy = round(height * cy_pct / 100)
         # Pillow's radial_gradient is 0 at the centre of its 256px square and
         # 255 at the *corner* (radius ~181), so x sqrt(2) makes it reach 255
         # at radius 128, the inscribed circle -- then clamped. Inverted and
@@ -2419,6 +2422,13 @@ def show_info_window(
 
         derived_styles: set = set()
 
+        def glass_button(parent, kind: str, **options) -> "ttk.Button":
+            """A Studio button of `kind` (Glass, Accent, Danger, Mini) on
+            `parent`. The only way buttons are made here: the style has to
+            be derived from the very widget the button sits on, and taking
+            both from one argument makes getting that wrong impossible."""
+            return ttk.Button(parent, style=button_style(parent, kind), **options)
+
         # --- small helpers -------------------------------------------------
 
         def label(parent, text, muted=False, bold=False, size=9, wrap=None):
@@ -2477,11 +2487,11 @@ def show_info_window(
 
         def badge(parent, number: str) -> tk.Label:
             # Studio's .setup-icon: the accent square with the dark ink.
-            common = dict(text=number, font=("Segoe UI Semibold", 9), fg=g["accent_ink"], bd=0)
+            common = dict(font=("Segoe UI Semibold", 9), fg=g["accent_ink"], bd=0)
             if rounded:
                 image = photo("badge", width=22, height=22, radius=_RADIUS_BADGE, fill=g["accent"])
-                return tk.Label(parent, image=image, compound="center", bg=parent.cget("bg"), **common)
-            return tk.Label(parent, text=f" {number} ", bg=g["accent"], **{k: v for k, v in common.items() if k != "text"})
+                return tk.Label(parent, text=number, image=image, compound="center", bg=parent.cget("bg"), **common)
+            return tk.Label(parent, text=f" {number} ", bg=g["accent"], **common)
 
         def card(number: str, title: str) -> tk.Frame:
             """One numbered step: a Studio panel with a badge and a title."""
@@ -2553,7 +2563,7 @@ def show_info_window(
         status_dot.pack(side="left", padx=(0, 6))
         label(header, s["running"], bold=True, size=12).pack(side="left")
         label(header, f"v{ITDECK_VERSION}", muted=True, size=9).pack(side="right")
-        tour_button = ttk.Button(header, text=s["tour_again"], style=button_style(header, "Mini"))
+        tour_button = glass_button(header, "Mini", text=s["tour_again"])
         tour_button.pack(side="right", padx=(0, 10))
 
         # A dot that is always green is decoration pretending to be status.
@@ -2577,8 +2587,8 @@ def show_info_window(
                 # the button must not stay greyed out forever.
                 root.after(10000, lambda: start_agent_button.configure(text=s["start_agent"], state="normal"))
 
-            start_agent_button = ttk.Button(
-                agent_warning, text=s["start_agent"], style=button_style(agent_warning, "Mini"), command=start_agent
+            start_agent_button = glass_button(
+                agent_warning, "Mini", text=s["start_agent"], command=start_agent
             )
             start_agent_button.pack(side="right", padx=(8, 0))
 
@@ -2590,15 +2600,19 @@ def show_info_window(
             status_dot.configure(fg=g["ok"] if alive else g["warn"])
             if alive and start_agent_button is not None:
                 start_agent_button.configure(text=s["start_agent"], state="normal")
+            # "Shown" means packed, not mapped: winfo_ismapped() is False for
+            # everything in a minimised window, and read that way the warning
+            # was re-packed and the window re-fitted every two seconds while
+            # IT-Deck sat minimised with the agent down.
             if alive:
-                if agent_warning.winfo_ismapped():
+                if agent_warning.winfo_manager():
                     # Shrink back too, not just hide: fit_window() is the only
                     # thing that resizes an explicitly-sized window, so
                     # without this the window keeps the taller geometry after
                     # the agent recovers.
                     agent_warning.pack_forget()
                     fit_window()
-            elif not agent_warning.winfo_ismapped():
+            elif not agent_warning.winfo_manager():
                 agent_warning.pack(fill="x", padx=PAD, pady=(0, 10), after=header_panel)
                 fit_window()
             root.after(AGENT_STATUS_POLL_MS, poll_agent)
@@ -2613,16 +2627,16 @@ def show_info_window(
         update_bar, update_row = panel(root, notice=True)
         update_text = label(update_row, "", size=9)
         update_text.pack(side="left")
-        ttk.Button(
-            update_row,
+        glass_button(
+            update_row, "Accent",
             text=s["update_download"],
-            style=button_style(update_row, "Accent"),
             command=lambda: webbrowser.open(RELEASES_PAGE_URL),
         ).pack(side="right")
 
         def show_update(version: str) -> None:
             update_text.configure(text=s["update_available"].format(version=version))
-            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=header_panel)
+            above = agent_warning if agent_warning.winfo_manager() else header_panel
+            update_bar.pack(fill="x", padx=PAD, pady=(0, 10), after=above)
             # The window already has an explicit geometry by the time this
             # runs, so it will NOT grow on its own -- packing a new block into
             # a fixed-height window pushes the footer buttons off the bottom
@@ -2669,10 +2683,9 @@ def show_info_window(
         dash_row = tk.Frame(right, bg=g["surface"])
         dash_row.pack(fill="x")
         dash_feedback = label(dash_row, "", muted=True)
-        ttk.Button(
-            dash_row,
+        glass_button(
+            dash_row, "Accent",
             text=s["copy"],
-            style=button_style(dash_row, "Accent"),
             command=lambda: copy_text(current["dashboard_url"], dash_feedback),
         ).pack(side="left")
         dash_feedback.pack(side="left", padx=(10, 0))
@@ -2713,7 +2726,7 @@ def show_info_window(
                 fit_window()
 
             pin_row.pack(fill="x", pady=(8, 0))
-            ttk.Button(pin_row, text=s["new_pin"], style=button_style(pin_row, "Mini"), command=request_new_pin).pack(
+            glass_button(pin_row, "Mini", text=s["new_pin"], command=request_new_pin).pack(
                 side="left"
             )
             pin_feedback.pack(anchor="w", pady=(4, 0))
@@ -2730,6 +2743,9 @@ def show_info_window(
                 if qr is not None:
                     qr.pack(side="left", anchor="n", padx=(0, 14), before=right)
 
+        # (mtime, size, inode): Windows file times have a coarse tick, and
+        # two quick rewrites (Studio changing both tokens) can share one.
+        # os.replace always brings a new file, so the inode tells them apart.
         config_stamp = {"mtime": None}
 
         def poll_config(reschedule: bool = True) -> None:
@@ -2740,7 +2756,8 @@ def show_info_window(
             # one tick, not the whole refresh (the stamp is only kept once
             # the read succeeded, so the next tick tries again).
             try:
-                mtime = config_path.stat().st_mtime_ns
+                info = config_path.stat()
+                mtime = (info.st_mtime_ns, info.st_size, info.st_ino)
             except OSError:
                 mtime = None  # no file: nothing to follow (a silent no-op, as before)
             if mtime is not None and (mtime != config_stamp["mtime"] or not reschedule):
@@ -2771,10 +2788,9 @@ def show_info_window(
 
         studio_row = tk.Frame(step2, bg=g["surface"])
         studio_row.pack(fill="x")
-        ttk.Button(
-            studio_row,
+        glass_button(
+            studio_row, "Glass",
             text=s["open_studio"],
-            style=button_style(studio_row, "Glass"),
             command=lambda: webbrowser.open(studio_url),
         ).pack(side="left")
 
@@ -2801,10 +2817,9 @@ def show_info_window(
             entry.configure(state="readonly")
             entry.pack(side="left")
             feedback = label(row, "", muted=True, size=8)
-            ttk.Button(
-                row,
+            glass_button(
+                row, "Mini",
                 text=s["copy_token"],
-                style=button_style(row, "Mini"),
                 command=lambda: copy_text(current["agent_token"], feedback),
             ).pack(side="left", padx=(8, 0))
             feedback.pack(side="left", padx=(6, 0))
@@ -2813,8 +2828,8 @@ def show_info_window(
             # clips the footer instead of growing the window.
             fit_window()
 
-        ttk.Button(
-            token_holder, text=s["show_token"], style=button_style(token_holder, "Mini"), command=reveal_token
+        glass_button(
+            token_holder, "Mini", text=s["show_token"], command=reveal_token
         ).pack(anchor="w")
 
         # --- step 3: what the two buttons do ---------------------------------
@@ -2868,8 +2883,8 @@ def show_info_window(
                 dialog.grab_release()
                 dialog.destroy()
 
-            cancel_button = ttk.Button(
-                buttons, text=s["cancel"], style=button_style(buttons, "Glass"), command=close
+            cancel_button = glass_button(
+                buttons, "Glass", text=s["cancel"], command=close
             )
             cancel_button.pack(side="left")
 
@@ -2883,8 +2898,8 @@ def show_info_window(
                 # in os._exit, so nothing comes back.
                 threading.Thread(target=on_uninstall, daemon=True).start()
 
-            go_button = ttk.Button(
-                buttons, text=s["uninstall_go"], style=button_style(buttons, "Danger"), command=run_uninstall
+            go_button = glass_button(
+                buttons, "Danger", text=s["uninstall_go"], command=run_uninstall
             )
             go_button.pack(side="right")
 
@@ -2952,8 +2967,8 @@ def show_info_window(
             autostart_feedback.pack(anchor="w")
 
         if on_uninstall is not None and is_frozen():
-            ttk.Button(
-                step3, text=s["uninstall"], style=button_style(step3, "Mini"), command=confirm_uninstall
+            glass_button(
+                step3, "Mini", text=s["uninstall"], command=confirm_uninstall
             ).pack(anchor="w", pady=(10, 0))
 
         # --- footer ----------------------------------------------------------
@@ -2978,10 +2993,10 @@ def show_info_window(
             on_quit()
             root.destroy()
 
-        ttk.Button(buttons, text=s["close"], style=button_style(buttons, "Glass"), command=root.iconify).pack(
+        glass_button(buttons, "Glass", text=s["close"], command=root.iconify).pack(
             side="left"
         )
-        ttk.Button(buttons, text=s["quit"], style=button_style(buttons, "Glass"), command=quit_itdeck).pack(
+        glass_button(buttons, "Glass", text=s["quit"], command=quit_itdeck).pack(
             side="right"
         )
 
@@ -3071,19 +3086,36 @@ def show_info_window(
             card_w = min(width - 2 * PAD, 470)
             state = {"size": None, "pending": None, "image": None, "height": 0}
 
+            def overlay_size() -> tuple:
+                w, h = overlay.winfo_width(), overlay.winfo_height()
+                if w > 1:
+                    return w, h
+                # Not mapped yet (the first-run tour opens before mainloop):
+                # winfo_width/height still say 1, but geometry() already holds
+                # the size fit_window() gave the window -- which may be less
+                # than it asked for on a small screen.
+                match = re.match(r"(\d+)x(\d+)", root.geometry())
+                if match and int(match.group(1)) > 1:
+                    return int(match.group(1)), int(match.group(2))
+                return root.winfo_reqwidth(), root.winfo_reqheight()
+
             def draw() -> None:
                 state["pending"] = None
-                w, h = overlay.winfo_width(), overlay.winfo_height()
-                if w <= 1:  # not mapped yet: the window's own size
-                    w, h = max(root.winfo_width(), root.winfo_reqwidth()), max(root.winfo_height(), root.winfo_reqheight())
+                w, h = overlay_size()
                 if state["size"] == (w, h):
                     return
                 state["size"] = (w, h)
-                card_h = state["height"] + 2 * overlay_pad_y
+                # Never taller than the window: the buttons are packed first
+                # at the bottom, so on a small screen the text is what gives,
+                # never Next/OK.
+                card_h = min(state["height"] + 2 * overlay_pad_y, h - 2 * PAD)
                 x = (w - card_w) // 2
                 y = max(PAD, round(h * 0.45 - card_h / 2))
                 content.place(
-                    x=x + overlay_pad_x, y=y + overlay_pad_y, width=card_w - 2 * overlay_pad_x, height=state["height"]
+                    x=x + overlay_pad_x,
+                    y=y + overlay_pad_y,
+                    width=card_w - 2 * overlay_pad_x,
+                    height=card_h - 2 * overlay_pad_y,
                 )
                 if rounded:
                     try:
@@ -3116,6 +3148,18 @@ def show_info_window(
                 draw()
                 overlay.bind("<Configure>", on_configure)
 
+            def refit() -> None:
+                """After a page turn: grow once if the page no longer fits.
+
+                Pages are measured on open, but the tour quotes the phone
+                token, and Studio can change that while the tour is open.
+                """
+                content.update_idletasks()
+                if content.winfo_reqheight() > state["height"]:
+                    state["height"] = content.winfo_reqheight()
+                    state["size"] = None
+                    draw()
+
             def close() -> None:
                 if state["pending"] is not None:
                     root.after_cancel(state["pending"])
@@ -3125,7 +3169,9 @@ def show_info_window(
             # The wrap leaves a few px spare: a tk.Label's own padding and
             # border sit outside its wraplength, and a label exactly as wide
             # as the card's content clips its last letters.
-            return SimpleNamespace(content=content, wrap=card_w - 2 * overlay_pad_x - 8, finish=finish, close=close)
+            return SimpleNamespace(
+                content=content, wrap=card_w - 2 * overlay_pad_x - 8, finish=finish, refit=refit, close=close
+            )
 
         def show_tour() -> None:
             state = {"page": 0}
@@ -3161,21 +3207,21 @@ def show_info_window(
                     return
                 state["page"] = max(0, page)
                 render_page(state["page"])
+                ov.refit()
                 next_button.focus_set()
 
-            ttk.Button(nav, text=s["tour_skip"], style=button_style(nav, "Mini"), command=ov.close).pack(side="left")
+            glass_button(nav, "Mini", text=s["tour_skip"], command=ov.close).pack(side="left")
             # Wide enough for the longer of its two labels, so it doesn't
             # change size on the last page.
-            next_button = ttk.Button(
-                nav,
-                style=button_style(nav, "Accent"),
+            next_button = glass_button(
+                nav, "Accent",
                 width=max(len(s["tour_next"]), len(s["tour_done"])),
                 command=lambda: go(1),
             )
             next_button.pack(side="right")
             # Packed after Next with side="right": it lands to Next's left,
             # where Back belongs.
-            back_button = ttk.Button(nav, text=s["tour_back"], style=button_style(nav, "Glass"), command=lambda: go(-1))
+            back_button = glass_button(nav, "Glass", text=s["tour_back"], command=lambda: go(-1))
             back_button.pack(side="right", padx=(0, 8))
             # On root: focus sits on the Next button, so an overlay binding
             # would never see the key.
@@ -3208,12 +3254,11 @@ def show_info_window(
                 for bullet in entry.get(lang) or entry.get("en") or []:
                     label(box, f"\u2022  {bullet}", size=10, wrap=ov.wrap).pack(anchor="w", pady=1)
 
-            ok = ttk.Button(nav, text=s["whats_new_ok"], style=button_style(nav, "Accent"), command=ov.close)
+            ok = glass_button(nav, "Accent", text=s["whats_new_ok"], command=ov.close)
             ok.pack(side="right")
-            ttk.Button(
-                nav,
+            glass_button(
+                nav, "Glass",
                 text=s["whats_new_all"],
-                style=button_style(nav, "Glass"),
                 command=lambda: webbrowser.open(RELEASES_PAGE_URL),
             ).pack(side="right", padx=(0, 8))
             root.bind("<Escape>", lambda _event: ov.close())

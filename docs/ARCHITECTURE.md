@@ -312,8 +312,9 @@ re-reads the file every 2 s to redraw the link and the QR code.
 - Rounded shapes are Pillow-drawn PNGs loaded with `PhotoImage(data=…)`
   (no ImageTk). ttk image elements stretch them nine-slice, so each shape
   is drawn once whatever its size.
-- A button's style background is whatever it sits on (`button_style()`),
-  because ttk fills a widget's rectangle before drawing the image.
+- A button's style background is whatever it sits on (`glass_button()`
+  derives it from the parent), because ttk fills a widget's rectangle before
+  drawing the image.
 
 **Consequences.**
 - Changing Studio's palette fails CI until the window follows.
