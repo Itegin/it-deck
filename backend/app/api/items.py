@@ -59,7 +59,7 @@ NULLABLE_FIELDS = frozenset({"icon", "color", "state_key"})
 
 
 
-def _validate_params_json(params: str) -> None:
+def validate_params_json(params: str) -> None:
     # A malformed params string would crash every future handler that
     # tries to json.loads() it (backend _handle_execute, frontend
     # fetchWorkspaces) -- reject it here, at the one place items are
@@ -78,7 +78,7 @@ def _validate_params_json(params: str) -> None:
         raise HTTPException(status_code=400, detail="params must be a JSON object")
 
 
-def _validate_placement(
+def validate_placement(
     conn: sqlite3.Connection,
     workspace_id: int,
     row: int,
@@ -101,7 +101,7 @@ def _validate_placement(
     # Nothing checked this before, so Studio could write it and only the deck
     # would ever show it. Checked here rather than in the frontend because
     # this is the one place items are actually written -- the same reasoning
-    # _validate_params_json above already states.
+    # validate_params_json above already states.
     if dock:
         _validate_dock_placement(conn, workspace_id, row, col, width, height, item_id, kind)
         return
@@ -209,11 +209,11 @@ def get_item_endpoint(item_id: int, x_agent_token: str | None = Header(None)) ->
 @router.post("/api/items")
 async def create_item(item: ItemCreate, x_agent_token: str | None = Header(None)) -> dict:
     check_agent_token(x_agent_token)
-    _validate_params_json(item.params)
+    validate_params_json(item.params)
 
     conn = get_connection()
     try:
-        _validate_placement(
+        validate_placement(
             conn, item.workspace_id, item.row, item.col, item.width, item.height,
             dock=item.dock, kind=item.kind,
         )
@@ -262,7 +262,7 @@ async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None 
     if nulled:
         raise HTTPException(status_code=400, detail=f"these fields can't be null: {', '.join(nulled)}")
     if "params" in fields:
-        _validate_params_json(fields["params"])
+        validate_params_json(fields["params"])
 
     if not fields:
         raise HTTPException(status_code=400, detail="no fields to update")
@@ -282,7 +282,7 @@ async def update_item(item_id: int, item: ItemUpdate, x_agent_token: str | None 
         placement = {key: existing[key] for key in ("workspace_id", "row", "col", "width", "height", "dock", "kind")}
         placement.update({key: fields[key] for key in placement if key in fields})
         placement["dock"] = bool(placement["dock"])
-        _validate_placement(conn, item_id=item_id, **placement)
+        validate_placement(conn, item_id=item_id, **placement)
 
         try:
             conn.execute(f"UPDATE item SET {set_clause} WHERE id = ?", values)
