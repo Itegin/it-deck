@@ -83,6 +83,33 @@ HANDLERS = {
 }
 
 
+# Win32 THREAD_PRIORITY_BELOW_NORMAL.
+_THREAD_PRIORITY_BELOW_NORMAL = -1
+
+
+def _yield_to_foreground_apps() -> None:
+    """Run this thread -- the poller and every handler -- below normal priority.
+
+    So a game or anything else the person is actually using always wins the
+    CPU when both want it; the agent's work is a few reads a second and can
+    wait a few milliseconds. The *thread* rather than the process on purpose:
+    Windows hands a below-normal process class down to the programs it
+    starts, and everything a tile launches (a game included) must start at
+    normal priority. Launches run on their own worker threads, which start at
+    normal priority, and child processes take the process class, not this
+    thread's.
+
+    Best effort: failing to lower it changes nothing else.
+    """
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetThreadPriority(kernel32.GetCurrentThread(), _THREAD_PRIORITY_BELOW_NORMAL)
+    except Exception as exc:
+        print(f"Could not lower the agent's priority: {exc}")
+
+
 async def _shutdown() -> None:
     # Brief pause so the "ok" result actually reaches the wire before we go.
     # os._exit() rather than sys.exit()/returning cleanly: anything unwinding
@@ -107,6 +134,22 @@ async def run() -> None:
         async def send_state(snapshot: dict) -> None:
             await ws.send(json.dumps({"type": "state", "data": snapshot}))
 
+        # Set = someone is looking at the deck, so poll. Starts set: an older
+        # backend never sends the notice, and must see the agent poll exactly
+        # as it always has.
+        watched = asyncio.Event()
+        watched.set()
+
+        def on_watchers(active: bool) -> None:
+            if active == watched.is_set():
+                return
+            if active:
+                print("A Dashboard is connected -- reading state again")
+                watched.set()
+            else:
+                print("No Dashboard connected -- pausing state reads")
+                watched.clear()
+
         # Both run for the lifetime of this connection, and whichever ends
         # first ends the other: a closed socket stops the receive loop and
         # makes the poller's next send raise, and either way the survivor is
@@ -115,8 +158,8 @@ async def run() -> None:
         # Deliberately not asyncio.TaskGroup: that needs Python 3.11, and a
         # legacy agent may run on any interpreter comtypes supports.
         tasks = [
-            asyncio.ensure_future(receive_loop(ws, HANDLERS, _shutdown)),
-            asyncio.ensure_future(poll_loop(send_state)),
+            asyncio.ensure_future(receive_loop(ws, HANDLERS, _shutdown, on_watchers)),
+            asyncio.ensure_future(poll_loop(send_state, watched)),
         ]
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -169,6 +212,8 @@ async def main() -> None:
         sys.exit(EXIT_ALREADY_RUNNING)
 
     global _opened_at
+    _yield_to_foreground_apps()
+
     backoff = 1
     while True:
         _opened_at = None

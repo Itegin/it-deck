@@ -6,8 +6,9 @@ import json
 import pytest
 
 from dispatch import receive_loop, run_handler
+from handlers import process
 from handlers.apps import _is_private_host, handle_fetch_icon
-from handlers.process import validate_url
+from handlers.process import ProcessWatch, validate_url
 
 
 @pytest.mark.parametrize("url", [
@@ -119,3 +120,59 @@ def test_receive_loop_survives_bad_frames_and_answers_each_command():
 def test_fetch_icon_refuses_an_unparseable_url_instead_of_raising():
     assert handle_fetch_icon({"url": "http://[x"})["status"] == "error"
     assert handle_fetch_icon({"url": "ftp://example.com"})["status"] == "error"
+
+
+def test_receive_loop_hands_watcher_notices_to_the_callback():
+    seen = []
+
+    async def on_shutdown():
+        pass
+
+    ws = FakeSocket([
+        json.dumps({"type": "watchers", "active": False}),
+        json.dumps({"type": "watchers", "active": True}),
+    ])
+    asyncio.run(receive_loop(ws, HANDLERS, on_shutdown, seen.append))
+    assert seen == [False, True]
+    assert ws.sent == []  # a notice is not a command: nothing to answer
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_process_watch_rescans_rarely_while_the_process_is_absent(monkeypatch):
+    scans = []
+    running = {"pid": None}
+    monkeypatch.setattr(process, "find_process", lambda name: scans.append(name) or running["pid"])
+    clock = FakeClock()
+    watch = ProcessWatch(rescan_seconds=3, clock=clock)
+
+    assert watch.running("") is False and scans == []  # no name, no walk
+    assert watch.running("VPN.exe") is False
+    assert watch.running("VPN.exe") is False  # same second: no second walk
+    assert scans == ["vpn.exe"]
+    clock.now += 3
+    assert watch.running("vpn.exe") is False
+    assert len(scans) == 2
+
+    # Started by the deck: rescan_soon() makes the very next tick look.
+    running["pid"] = 4242
+    watch.rescan_soon()
+
+    class Alive:
+        def __init__(self, pid):
+            assert pid == 4242
+
+        def name(self):
+            return "VPN.EXE"
+
+    monkeypatch.setattr(process.psutil, "Process", Alive)
+    assert watch.running("vpn.exe") is True
+    # Known PID: checked directly, no more walks.
+    assert watch.running("vpn.exe") is True
+    assert len(scans) == 3

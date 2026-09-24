@@ -2559,9 +2559,17 @@ def run_launcher() -> int:
     # terminal windows flashing onto the desktop at every launch. Their output
     # already goes to the log files opened above.
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # Below normal priority, so a game (or anything else in the foreground)
+    # always wins the CPU when both want it; the backend's work -- relaying a
+    # press, diffing a state tick -- can wait a few milliseconds. The whole
+    # process is safe to lower because it starts nothing. The agent does start
+    # things (every program a tile launches inherits a below-normal class from
+    # its parent), so it lowers only its own thread instead -- see
+    # agents/windows/agent.py's _yield_to_foreground_apps().
+    below_normal = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
     backend_proc = subprocess.Popen(
         self_invocation("backend"), env=backend_env, stdout=backend_log,
-        stderr=subprocess.STDOUT, creationflags=no_window,
+        stderr=subprocess.STDOUT, creationflags=no_window | below_normal,
     )
     assign_to_child_job(child_job, backend_proc)
 

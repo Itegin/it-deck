@@ -1,7 +1,7 @@
 import asyncio
 
 from handlers.audio import get_default_output_name, get_muted, get_volume
-from handlers.process import get_watched_process_name, is_process_running
+from handlers.process import VPN_WATCH, get_watched_process_name
 
 POLL_INTERVAL_SECONDS = 1
 
@@ -19,7 +19,9 @@ READERS = {
     # params on the first press. get_watched_process_name() is the single
     # place that knows which of the two applies -- see handlers/process.py's
     # resolve_toggle_target().
-    "vpn.running": lambda: is_process_running(get_watched_process_name()),
+    # Through VPN_WATCH rather than a full process walk every tick; see
+    # ProcessWatch for how it stays just as current.
+    "vpn.running": lambda: VPN_WATCH.running(get_watched_process_name()),
 }
 
 
@@ -47,9 +49,21 @@ def read_snapshot(readers: dict, last_errors: dict) -> dict:
     return snapshot
 
 
-async def poll_loop(send_state_callback) -> None:
+async def poll_loop(send_state_callback, active: "asyncio.Event | None" = None) -> None:
+    """Send the state snapshot every second while `active` is set.
+
+    `active` is cleared while no Dashboard is connected (the backend says so;
+    see ConnectionHub.sync_watchers): nobody would see the values, so the
+    audio and process reads stop entirely until one connects. The first tick
+    after that runs at once, so the phone that just connected gets fresh
+    values rather than whatever the backend held from before the pause.
+    None means "always active", which is also what happens against a backend
+    that never sends the notice.
+    """
     last_errors: dict = {}
     while True:
+        if active is not None and not active.is_set():
+            await active.wait()
         snapshot = read_snapshot(READERS, last_errors)
         # Sent unconditionally every tick; the backend (app.state.update_state)
         # is what dedupes into change-only broadcasts, so no diffing here.

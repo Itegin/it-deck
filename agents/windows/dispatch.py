@@ -13,7 +13,7 @@ as the agent going offline.
 
 import json
 import traceback
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
 
 def run_handler(handlers: dict, message: dict) -> dict:
@@ -54,8 +54,14 @@ async def receive_loop(
     ws,
     handlers: dict,
     on_shutdown: Callable[[], Awaitable[None]],
+    on_watchers: Optional[Callable[[bool], None]] = None,
 ) -> None:
-    """Answer every command that arrives on `ws` until it closes."""
+    """Answer every command that arrives on `ws` until it closes.
+
+    `on_watchers` gets the backend's {"type": "watchers", "active": bool}
+    notice: whether any Dashboard is connected, which decides whether the
+    poller has anyone to report to.
+    """
     async for raw in ws:
         try:
             message = json.loads(raw)
@@ -63,6 +69,10 @@ async def receive_loop(
             print("Ignoring a frame that is not JSON")
             continue
         if not isinstance(message, dict):
+            continue
+        if message.get("type") == "watchers":
+            if on_watchers is not None:
+                on_watchers(bool(message.get("active")))
             continue
         cmd = message.get("cmd")
         req_id = message.get("req_id")

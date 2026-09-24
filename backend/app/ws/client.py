@@ -44,6 +44,9 @@ async def client_ws(ws: WebSocket) -> None:
         # the loop even starts -- still guarantees unregister_client runs.
         hub.register_client(ws)
         logger.info("Client connected")
+        # First, so a paused agent starts reading state again while this
+        # socket is still being sent its snapshot.
+        await hub.sync_watchers()
         # A newly connected client has missed every diff broadcast so far, so it
         # needs the full state once up front before it can rely on diffs alone.
         await ws.send_json({"type": "state", "data": get_state()})
@@ -87,6 +90,7 @@ async def client_ws(ws: WebSocket) -> None:
     finally:
         hub.unregister_client(ws)
         logger.info("Client disconnected")
+        await hub.sync_watchers()
 
 
 def _error(req_id, item_id, text: str) -> dict:

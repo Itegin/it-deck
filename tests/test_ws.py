@@ -138,7 +138,7 @@ def test_a_reconnecting_agent_is_not_reported_offline(client):
 
             # A press still reaches the new agent...
             ws.send_json({"cmd": "execute", "item_id": item_id, "req_id": "r-race"})
-            command = new.receive_json()
+            command = recv_until(new, lambda m: "cmd" in m)
             assert command["req_id"] == "r-race"
             new.send_json({"type": "result", "req_id": "r-race", "item_id": item_id, "status": "ok"})
 
@@ -154,6 +154,25 @@ def test_a_reconnecting_agent_is_not_reported_offline(client):
         assert "windows" not in hub.agents
     finally:
         ws.__exit__(None, None, None)
+
+
+def test_agents_are_told_whether_anyone_is_watching(client):
+    watchers = lambda m: m.get("type") == "watchers"  # noqa: E731
+    with client.websocket_connect("/ws/agent") as agent:
+        agent.send_json(AGENT_HELLO)
+        # No Dashboard connected: the agent may pause its state reads.
+        assert recv_until(agent, watchers)["active"] is False
+
+        ws = open_client(client)
+        assert recv_until(agent, watchers)["active"] is True
+        second = open_client(client)
+        ws.__exit__(None, None, None)
+        # One viewer is still there, so no pause yet...
+        second.send_json({"cmd": "bogus", "req_id": "sync"})
+        recv_until(second, lambda m: m.get("req_id") == "sync")
+        second.__exit__(None, None, None)
+        # ...and the next notice the agent gets is the pause, not a stray resume.
+        assert recv_until(agent, watchers)["active"] is False
 
 
 def test_a_repeated_req_id_does_not_time_out_the_newer_command():

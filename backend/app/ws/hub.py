@@ -39,6 +39,9 @@ class ConnectionHub:
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
         self.agents: dict[str, WebSocket] = {}
+        # What the agents were last told about whether any Dashboard is
+        # connected. See sync_watchers().
+        self.watching = False
 
     def register_client(self, ws: WebSocket) -> None:
         self.clients.add(ws)
@@ -69,6 +72,30 @@ class ConnectionHub:
             del self.agents[name]
             return True
         return False
+
+    def watchers_frame(self) -> dict:
+        return {"type": "watchers", "active": bool(self.clients)}
+
+    async def sync_watchers(self) -> None:
+        """Tell every agent when the deck gains its first viewer or loses its last.
+
+        The agent's poller reads the PC's audio and VPN state once a second
+        purely so a phone can show it. With no Dashboard connected (phone or
+        a PC browser -- both are /ws/client) nobody is looking, so the agent
+        pauses the poll until one connects. Commands are unaffected: they
+        travel on the agent's receive loop, which never pauses, so Studio's
+        queries and every tile press keep working either way.
+
+        Only transitions are sent. An agent older than this message ignores
+        it (its receive loop skips frames without a cmd) and simply keeps
+        polling, as before.
+        """
+        active = bool(self.clients)
+        if active == self.watching:
+            return
+        self.watching = active
+        for name in list(self.agents):
+            await self.send_to_agent(name, self.watchers_frame())
 
     async def broadcast_to_clients(self, message: dict) -> None:
         # Copy to a list first: a client disconnecting mid-broadcast would

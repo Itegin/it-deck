@@ -1,6 +1,7 @@
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -54,24 +55,80 @@ def resolve_toggle_target(params: dict) -> tuple[str, str]:
 
 def is_process_running(name: str) -> bool:
     if not name:
-        # poll_loop asks this once a second, and on a standalone install the
-        # watched name is "" until the VPN tile has a path set in Studio --
-        # so without this the agent walked every process on the machine every
-        # second to answer a question that cannot match. proc.name() is
-        # basename() of a real exe path and can never be empty, so an empty
-        # target provably matches nothing.
+        # On a standalone install the watched name is "" until the VPN tile
+        # has a path set in Studio, and walking every process to answer a
+        # question that cannot match is pure waste: proc.name() is basename()
+        # of a real exe path and can never be empty.
         return False
+    return find_process(name) is not None
+
+
+class ProcessWatch:
+    """Whether one named process is running, answered cheaply once a second.
+
+    is_process_running() walks every process on the machine (a few hundred on
+    Windows), and the poller used to do that every second for the VPN tile.
+    This keeps the answer almost as fresh for a fraction of the cost:
+
+    - while the process runs, its PID is remembered and checking it is one
+      lookup, not a walk;
+    - while it doesn't, the walk runs every `rescan_seconds` instead of every
+      tick. A process started by the deck itself doesn't wait for that:
+      start_process() and kill_process() call rescan_soon().
+    """
+
+    def __init__(self, rescan_seconds: float = 3.0, clock=time.monotonic) -> None:
+        self._rescan_seconds = rescan_seconds
+        self._clock = clock
+        self._name = ""
+        self._pid = None
+        self._next_scan = 0.0
+
+    def rescan_soon(self) -> None:
+        self._next_scan = 0.0
+
+    def running(self, name: str) -> bool:
+        if not name:
+            return False
+        target = name.lower()
+        if target != self._name:
+            self._name, self._pid, self._next_scan = target, None, 0.0
+
+        if self._pid is not None:
+            try:
+                if psutil.Process(self._pid).name().lower() == target:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            # Gone (or the PID now belongs to something else): look again now.
+            self._pid, self._next_scan = None, 0.0
+
+        now = self._clock()
+        if now < self._next_scan:
+            return False
+        self._next_scan = now + self._rescan_seconds
+        self._pid = find_process(target)
+        return self._pid is not None
+
+
+def find_process(name: str):
+    """The PID of a running process called `name` (case-insensitive), or None."""
     target = name.lower()
     for proc in psutil.process_iter():
         try:
             if proc.name().lower() == target:
-                return True
+                return proc.pid
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             # Process exited mid-scan, or is a protected/system process we
             # can't query -- neither means "not the one we're looking for",
             # so skip it rather than let one flaky process fail the scan.
             continue
-    return False
+    return None
+
+
+# The VPN tile's watcher, shared by the poller (which asks every second) and
+# the launch/kill paths below (which tell it to look again).
+VPN_WATCH = ProcessWatch()
 
 
 # How long a launch may block the caller before it is left to finish on its
@@ -190,6 +247,9 @@ def start_process(path: str, args: str = "") -> None:
     worker = threading.Thread(target=launch, daemon=True)
     worker.start()
     worker.join(timeout=_LAUNCH_BUDGET_SECONDS)
+    # Whatever was just started may be the watched VPN client; let the
+    # next poll tick look rather than wait out the rescan interval.
+    VPN_WATCH.rescan_soon()
     if failure:
         raise failure[0]
     if needs_elevation:
