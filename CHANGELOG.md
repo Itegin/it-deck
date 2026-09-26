@@ -11,6 +11,34 @@ standalone mode is §10, tech debt is §12.
 
 ---
 
+## v0.5.8 — 2026-09-26
+
+### Added
+
+- **Decks can be managed.** Studio's Decks dialog lists every deck in the
+  phone's order, with ↑/↓, Rename, Download and Delete on each. Deleting asks
+  in the row itself, naming the deck and its tile count, and the last deck
+  can't be deleted. "Empty deck" adds a blank one with the current grid and
+  goes straight to naming it. Before this, a deck added from a template or a
+  file could never be removed.
+- **Swiping between decks can be turned off** ("On the phone" in the Decks
+  dialog), for anyone whose thumb keeps changing the deck by accident. The
+  dots still switch. It is one server setting, so it applies to every phone.
+
+### Changed
+
+- **The deck dots take no room.** They sat in a row of their own under the
+  header and took 28px of height from every deck; they now sit in the empty
+  strip above the first row of tiles, which get that height back.
+- A phone that reconnects (after sleep, say) reloads its decks and the swipe
+  setting, so nothing changed in Studio meanwhile is missed.
+- A phone whose deck was deleted moves to the deck that took its place,
+  instead of showing the deck picker.
+- A new deck whose name is taken gets numbered (`New deck (2)`), as an
+  import already did, and its grid size is bounded like a deck file's.
+
+---
+
 ## v0.5.7 — 2026-09-24
 
 **The public release.** It includes the internal milestones v0.5.2 to
