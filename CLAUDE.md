@@ -74,9 +74,11 @@ loggers, `controlhub.db`, repo folder) stay `controlhub` on purpose. Phases are
   Everything must still work flat, without Pillow.
 - **Logos** are Simple Icons paths only, one colour via `currentColor`.
   Never hand-drawn, never a wordmark (unreadable at tile size).
-- **Licence** is PolyForm Noncommercial. A new dependency or bundled file
-  goes into `THIRD-PARTY-NOTICES.md`. SoundVolumeView and Open-Meteo's free
-  tier rule out anything paid; the notices list what to replace first.
+- **Licence** is PolyForm Noncommercial, for good: IT-Deck stays free and
+  there is no paid edition to prepare for (commercial use only by agreement
+  with the author). A new dependency or bundled file goes into
+  `THIRD-PARTY-NOTICES.md`, and its terms must allow free non-commercial
+  redistribution.
 - Checks before a push: `ruff check .`, `pytest -q`,
   `node --test tests/frontend.test.mjs`, `node --check` on changed JS.
 
