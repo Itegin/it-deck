@@ -1,7 +1,8 @@
 # Third-party notices
 
 IT-Deck itself is under the PolyForm Noncommercial License 1.0.0 (see
-[`LICENSE`](LICENSE)). This file lists what it is built from or talks to that
+[`LICENSE`](LICENSE)): free, and non-commercial for good. Commercial use
+only by agreement with the author. This file lists what it is built from or talks to that
 belongs to someone else, under which terms, and what each of those terms
 means for how IT-Deck may be distributed.
 
@@ -47,8 +48,8 @@ product**, and asks that the distribution package goes out complete and
 unmodified. IT-Deck ships it unmodified and free of charge, which those
 terms allow. Two consequences:
 
-- **IT-Deck cannot be sold, or be part of a paid product, while this file is
-  bundled.** See "Before charging money" below.
+- **Anyone given commercial rights to IT-Deck by the author has to leave
+  this file out**: NirSoft's terms don't follow IT-Deck's licence.
 - The original download also contains a `readme.txt`. It sits next to the
   exe in `agents/windows/tools/` and is bundled into `ITDeck.exe` with it,
   the safe reading of "complete". (The `.chm` help file is kept in the repo
@@ -75,20 +76,3 @@ Some well-known games are not in Simple Icons (Xbox, Minecraft, Overwatch,
 Apex Legends, Genshin Impact at the time of writing), usually because the
 owner asked for removal. They are not redrawn by hand. Wordmark-only logos
 (miHoYo's, for one) are left out because a word can't be read at tile size.
-
-## Before charging money for IT-Deck
-
-Being non-commercial, IT-Deck is fine as it is. A paid edition, paid
-features or ads would first need these three changes:
-
-1. **Replace SoundVolumeView.** Enumerate and switch audio devices directly
-   through the Windows Core Audio API. `pycaw`/`comtypes` are already
-   bundled, and switching the default device uses the undocumented
-   `IPolicyConfig` interface, which is how other open-source tools do it.
-2. **Weather.** Move to an Open-Meteo paid plan, or to a provider whose
-   terms allow commercial use, and keep the attribution.
-3. **Drop the Google favicon fallback.** The site's own
-   `apple-touch-icon.png` and `/favicon.ico` are already tried after it.
-
-The logos need no change for a paid product. Charging for them as a
-feature ("pay for brand logos") would stop being nominative use, so don't.

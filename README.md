@@ -269,7 +269,8 @@ v0.5.8 — personal project, active development, API may change.
 
 Free for personal and other non-commercial use under the
 [PolyForm Noncommercial License 1.0.0](LICENSE): use it, read the code,
-change it, share it. Commercial use needs the author's permission.
+change it, share it. IT-Deck stays free; there is no paid version. Commercial
+use only by agreement with the author: [get in touch](https://github.com/Itegin).
 
 What IT-Deck bundles or talks to (Python packages, NirSoft SoundVolumeView,
 Open-Meteo, the Simple Icons logos) is listed with its terms in

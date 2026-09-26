@@ -36,6 +36,10 @@ standalone mode is §10, tech debt is §12.
   instead of showing the deck picker.
 - A new deck whose name is taken gets numbered (`New deck (2)`), as an
   import already did, and its grid size is bounded like a deck file's.
+- **IT-Deck stays free and non-commercial for good.** The licence is
+  unchanged (PolyForm Noncommercial); the notes on what a paid edition would
+  need are gone from `THIRD-PARTY-NOTICES.md`, and the README says commercial
+  use is by agreement with the author only.
 
 ---
 
