@@ -1,4 +1,4 @@
-import { fetchWorkspaces } from "./api.js";
+import { fetchWorkspaces, fetchSettings } from "./api.js";
 import { renderWorkspace, renderWorkspaceSelector, renderError, renderDeckDots, markDeckEntrance, updateTileState, setAgentOffline, setConnectionDown, setTileCommandState, getTileMeta } from "./render.js";
 import { sendExecute, sendSetValue, onCommandState, onStateChange, onAgentStatus, onConnectionChange, onWorkspaceUpdate, onSettingsUpdate, onAuthError } from "./ws.js";
 import { initTheme, applyTheme, applyMode } from "./theme.js";
@@ -137,6 +137,10 @@ function describeCommandFailure(itemId, message) {
 let deckList = [];
 let currentDeckId = null;
 
+// Studio's "Switch decks by swiping". On until the server says otherwise, as
+// it was before the setting existed; the dots switch decks either way.
+let deckSwipeEnabled = true;
+
 function loadWorkspace(workspace) {
   itemsById = new Map(workspace.items.map((item) => [item.id, item]));
   currentDeckId = workspace.id;
@@ -157,6 +161,19 @@ function showDeck(target, index) {
   saveWorkspace(target.id);
   loadWorkspace(target);
   markDeckEntrance(index > from ? 1 : -1);
+}
+
+// The next surviving deck after `goneId` in the old order, else the nearest
+// one before it; null when this phone never saw that deck in a list.
+function successorOf(oldList, goneId, newList) {
+  const index = oldList.findIndex((w) => String(w.id) === goneId);
+  if (index < 0) {
+    return null;
+  }
+  const byId = new Map(newList.map((w) => [w.id, w]));
+  const candidates = [...oldList.slice(index + 1), ...oldList.slice(0, index).reverse()];
+  const hit = candidates.find((w) => byId.has(w.id));
+  return hit ? byId.get(hit.id) : null;
 }
 
 function switchDeck(step) {
@@ -190,6 +207,7 @@ async function init() {
     if (seq !== initSeq) {
       return;
     }
+    const previousDeckList = deckList;
     deckList = workspaces;
 
     if (!workspaces.length) {
@@ -210,6 +228,15 @@ async function init() {
       if (workspace) {
         saveWorkspace(workspace.id);
       }
+    }
+
+    // A deck was chosen here once but is gone: deleted in Studio, possibly
+    // while it was on screen (the delete's workspace_update lands here). The
+    // choice was already made, so this is no first visit and no picker: the
+    // deck that took its place in the order, or the first one.
+    if (!workspace && savedId !== null) {
+      workspace = successorOf(previousDeckList, savedId, workspaces) || workspaces[0];
+      saveWorkspace(workspace.id);
     }
 
     // One deck and no choice saved yet: show the deck, not a menu offering a
@@ -236,7 +263,21 @@ async function init() {
 
 init();
 
-attachDeckSwipe(document.getElementById("deck"), switchDeck);
+attachDeckSwipe(document.getElementById("deck"), switchDeck, { isEnabled: () => deckSwipeEnabled });
+
+// Read here rather than in init(), which re-runs on every Studio save; after
+// this, settings_update frames keep it current (and a reconnect re-reads it). A failed read leaves
+// swiping on, which is what the deck did before the setting existed.
+function readDeckSwipe() {
+  fetchSettings()
+    .then((settings) => {
+      if (settings.deck_swipe !== undefined) {
+        deckSwipeEnabled = settings.deck_swipe !== false;
+      }
+    })
+    .catch(() => {});
+}
+readDeckSwipe();
 
 document.getElementById("switch-workspace-link").addEventListener("click", (event) => {
   event.preventDefault();
@@ -265,7 +306,22 @@ onAgentStatus(({ agent, status }) => setAgentOffline(agent, status === "offline"
 // Nothing is greyed out here -- with the socket down the deck has no way to
 // know what the agent is doing, and greying tiles would claim it does. The
 // clock takeover is the whole response (see updateClockTakeover).
-onConnectionChange((up) => setConnectionDown(!up));
+// A socket that comes back after being down has missed every frame in
+// between: a deck deleted or re-added in Studio (SQLite reuses the ids, so a
+// stale tile could now name a different command) or swiping turned off. It
+// catches up with one refetch of each, only on the way back up -- the first
+// connect has init() and readDeckSwipe() above already.
+let connectionWasDown = false;
+onConnectionChange((up) => {
+  setConnectionDown(!up);
+  if (!up) {
+    connectionWasDown = true;
+  } else if (connectionWasDown) {
+    connectionWasDown = false;
+    init();
+    readDeckSwipe();
+  }
+});
 // Studio Mode edits arrive as a bare signal, not the changed data itself --
 // refetching and fully re-rendering is simplest and cheap enough here
 // (edits are infrequent), same as init()'s own first load.
@@ -294,6 +350,9 @@ onSettingsUpdate((settings) => {
   }
   if (settings.theme !== undefined) {
     applyTheme(settings.theme);
+  }
+  if (settings.deck_swipe !== undefined) {
+    deckSwipeEnabled = settings.deck_swipe !== false;
   }
 });
 

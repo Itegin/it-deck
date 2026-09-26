@@ -18,10 +18,19 @@ router = APIRouter()
 
 
 class WorkspaceCreate(BaseModel):
-    name: str
-    grid_cols: int = 3
-    grid_rows: int = 5
+    # The same bounds as a deck file: a 0 would make compaction's placement
+    # scan spin forever, and nothing else stops one arriving here.
+    name: str = Field(min_length=1, max_length=200)
+    grid_cols: int = Field(default=3, ge=1, le=50)
+    grid_rows: int = Field(default=5, ge=1, le=50)
 
+
+class WorkspaceRename(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class WorkspaceOrder(BaseModel):
+    ids: list[int]
 
 
 def _pack_items(items: list[dict], grid_cols: int) -> list[tuple[int, int, int]]:
@@ -116,6 +125,9 @@ async def create_workspace(workspace: WorkspaceCreate, x_agent_token: str | None
 
     conn = get_connection()
     try:
+        # Studio's "Empty deck" always asks for "New deck"; the second one
+        # becomes "New deck (2)" rather than a twin the picker can't tell apart.
+        name = _free_name(conn, workspace.name.strip() or "Deck")
         try:
             cur = conn.execute(
                 """
@@ -126,7 +138,7 @@ async def create_workspace(workspace: WorkspaceCreate, x_agent_token: str | None
                     ?, ?
                 )
                 """,
-                (workspace.name, workspace.grid_cols, workspace.grid_rows),
+                (name, workspace.grid_cols, workspace.grid_rows),
             )
         except sqlite3.IntegrityError as e:
             raise HTTPException(status_code=400, detail=f"invalid workspace: {e}")
@@ -139,9 +151,97 @@ async def create_workspace(workspace: WorkspaceCreate, x_agent_token: str | None
     finally:
         conn.close()
 
-    logger.info("Workspace created: id=%s name=%s", new_id, workspace.name)
+    logger.info("Workspace created: id=%s name=%s", new_id, name)
     await hub.broadcast_to_clients({"type": "workspace_update"})
     return dict(row)
+
+
+# ── Managing decks ───────────────────────────────────────────────────────────
+# Studio's Decks dialog: rename, reorder, delete. A phone remembers its deck by
+# id (app.js), so none of these ever re-creates a deck under a new id -- a
+# rename or a move leaves every phone on the deck it was showing.
+
+
+@router.put("/api/workspaces/order")
+async def reorder_workspaces(order: WorkspaceOrder, x_agent_token: str | None = Header(None)) -> dict:
+    """Set the order decks are swiped through: `ids` is every deck, first to last."""
+    check_agent_token(x_agent_token)
+    conn = get_connection()
+    try:
+        existing = {row["id"] for row in conn.execute("SELECT id FROM workspace")}
+        # Exactly the decks there are, each once. A list from a Studio that
+        # missed a deck added elsewhere would otherwise leave two decks
+        # sharing a position.
+        if len(order.ids) != len(existing) or set(order.ids) != existing:
+            raise HTTPException(status_code=409, detail="the deck list has changed; reload and try again")
+        for position, workspace_id in enumerate(order.ids):
+            conn.execute("UPDATE workspace SET position = ? WHERE id = ?", (position, workspace_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info("Workspaces reordered: %s", order.ids)
+    await hub.broadcast_to_clients({"type": "workspace_update"})
+    return {"ids": order.ids}
+
+
+@router.patch("/api/workspaces/{workspace_id}")
+async def rename_workspace(
+    workspace_id: int, rename: WorkspaceRename, x_agent_token: str | None = Header(None)
+) -> dict:
+    check_agent_token(x_agent_token)
+    name = rename.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="a deck needs a name")
+    conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM workspace WHERE id = ?", (workspace_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        # Two decks with one name look like one in the picker and the dots'
+        # labels. Refused rather than numbered like an import: the person is
+        # typing this name, so they get to choose another.
+        clash = conn.execute(
+            "SELECT 1 FROM workspace WHERE name = ? AND id != ?", (name, workspace_id)
+        ).fetchone()
+        if clash:
+            raise HTTPException(status_code=409, detail=f"there is already a deck called {name!r}")
+        conn.execute("UPDATE workspace SET name = ? WHERE id = ?", (name, workspace_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info("Workspace renamed: id=%s name=%s", workspace_id, name)
+    await hub.broadcast_to_clients({"type": "workspace_update"})
+    return {"id": workspace_id, "name": name}
+
+
+@router.delete("/api/workspaces/{workspace_id}")
+async def delete_workspace(workspace_id: int, x_agent_token: str | None = Header(None)) -> dict:
+    """Delete a deck and every tile on it. The last deck can't go."""
+    check_agent_token(x_agent_token)
+    conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM workspace WHERE id = ?", (workspace_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        # A backend with no decks shows the phone an error screen, and
+        # seed_if_empty() would put the demo deck back on the next start.
+        (count,) = conn.execute("SELECT COUNT(*) FROM workspace").fetchone()
+        if count <= 1:
+            raise HTTPException(status_code=409, detail="the last deck can't be deleted")
+        (tiles,) = conn.execute(
+            "SELECT COUNT(*) FROM item WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        # Tiles go with it through item.workspace_id's ON DELETE CASCADE
+        # (get_connection turns foreign keys on). Positions keep their gap;
+        # only their order matters.
+        conn.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info("Workspace deleted: id=%s tiles=%s", workspace_id, tiles)
+    await hub.broadcast_to_clients({"type": "workspace_update"})
+    return {"id": workspace_id, "items": tiles}
 
 
 # ── Export / import ──────────────────────────────────────────────────────────

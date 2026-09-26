@@ -326,8 +326,10 @@ whose `data-state-key` changed.
 | `GET /api/workspaces` | none | the catalog (the phone reads it) |
 | `POST/PUT/DELETE /api/items[/{id}]`, `GET /api/items/{id}` | `X-Agent-Token` | Studio CRUD; validates JSON-object params, placement, dock rules |
 | `POST /api/workspaces`, `POST /api/workspaces/{id}/compact` | `X-Agent-Token` | new deck, pack tiles |
+| `PATCH`/`DELETE /api/workspaces/{id}`, `PUT /api/workspaces/order` | `X-Agent-Token` | rename, delete (never the last deck), reorder |
 | `GET /api/workspaces/{id}/export`, `POST /api/workspaces/import` | `X-Agent-Token` | a deck as a file (`{"format": "itdeck-deck", "version": 1, …}`); import always creates a new deck, validated all-or-nothing |
 | `GET /api/settings`, `PUT /api/settings/theme\|mode` | none (deliberate) | shared theme / light-dark |
+| `PUT /api/settings/deck-swipe` | `X-Agent-Token` | whether a swipe switches decks (Studio's Decks dialog) |
 | `POST /api/agents/{name}/list_devices\|list_apps\|fetch_icon` | `X-Agent-Token` | Studio asks the agent, 5 s budget |
 | `GET /api/widgets/weather` | none (phone) | Open-Meteo proxy with snapped-coordinate cache |
 | `GET /api/widgets/geocode` | `X-Agent-Token` | city search for Studio |

@@ -235,22 +235,36 @@ body.has-dock:not(.deck-takeover) #grid {
   touch-action: pan-y pinch-zoom;
 }
 
+/* Laid over the strip between the header and the first row of tiles -- the
+   grid's own top padding, which is empty anyway -- so they cost the tiles no
+   height at all. As a row of their own they took 28px from every deck.
+   Exactly --grid-pad tall, never more: any taller and a dot would sit on the
+   top edge of a tile and take its taps. */
+#workspace-header {
+  position: relative;
+}
+
 .deck-dots {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  height: 12px;
   display: flex;
   justify-content: center;
-  gap: 2px;
-  padding-top: 4px;
-  flex: 0 0 auto;
 }
 
 .deck-dots[hidden] {
   display: none;
 }
 
-/* A 24px target around an 8px dot: small to look at, not to hit. */
+/* A 28px-wide strip around a 6px dot. Only 12px tall (the gap it lives in),
+   so the target is wide rather than square; a swipe and "Switch deck" are
+   there for anyone who misses it. */
 .deck-dot {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 100%;
   padding: 0;
   border: 0;
   background: none;
@@ -261,8 +275,8 @@ body.has-dock:not(.deck-takeover) #grid {
 
 .deck-dot::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--color-text-muted);
   opacity: 0.45;

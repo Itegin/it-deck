@@ -1149,8 +1149,193 @@ body.studio {
   gap: 6px;
 }
 
+/* Wider than the other dialogs: a deck row carries its name plus five
+   buttons on one line, and at 520px they wrapped under the name on every
+   row (the Russian labels are the long ones). */
 .decks-dialog {
-  width: min(520px, calc(100vw - 32px));
+  width: min(680px, calc(100vw - 32px));
+}
+
+/* One change at a time (studio-decks.js run()): the buttons stop answering
+   until the backend has, without a flicker of disabled styling for a
+   request that usually takes a few milliseconds. */
+.decks-dialog.is-busy .decks-section button {
+  pointer-events: none;
+}
+
+/* Compact buttons for rows that hold several. Still 32px high: Studio is
+   used with a mouse, and these are never the only way to do something. */
+.btn-sm {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.btn-icon {
+  min-width: 32px;
+  padding: 0;
+  font-size: 15px;
+}
+
+/* The one filled red button, and only inside a confirm that has already
+   named what goes: #fff on #dc2626 is 4.8:1, on light mode's #b91c1c 6.5:1. */
+.btn-danger-solid {
+  background: var(--color-alert);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.btn-danger-solid:hover {
+  background: var(--color-alert);
+  filter: brightness(1.08);
+}
+
+/* ── The deck list ── */
+
+.deck-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+  gap: 6px;
+}
+
+.deck-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 8px 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--studio-hairline);
+  background: var(--studio-card);
+}
+
+.deck-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+/* The deck's place in the swipe order, which is what ↑/↓ change. */
+.deck-index {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--studio-well);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck-text {
+  display: grid;
+  min-width: 0;
+}
+
+.deck-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deck-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* The deck in the preview: a quiet accent word, not a second badge colour. */
+.deck-editing {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.deck-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.deck-row.is-editing {
+  border-color: var(--color-accent);
+}
+
+.deck-rename-wrap {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 100%;
+}
+
+.deck-rename {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.deck-rename .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 10px;
+}
+
+.deck-row.is-confirming {
+  border-color: var(--color-alert-text);
+}
+
+.deck-confirm {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--studio-hairline);
+}
+
+.decks-dialog .deck-confirm-title {
+  margin: 0;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.deck-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.decks-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.decks-dialog .decks-subtitle {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* Narrow windows: the buttons go under the name, full width, rather than
+   squeezing it to an ellipsis. */
+@media (max-width: 520px) {
+  .deck-actions {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
 }
 
 .decks-section {

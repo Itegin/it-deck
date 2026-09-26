@@ -98,10 +98,10 @@ state snapshot every second.
 | `ws/agent.py` | `/ws/agent` — hello/token check *before* hub registration, result fan-out (cancel timer → resolve future → broadcast), state ingestion with agent-name namespacing. |
 | `ws/client.py` | `/ws/client` — initial full-state push, then `execute` / `set_value` dispatch, each with a 5-second timeout started only after the command actually reached an agent. |
 | `api/items.py` | Token-gated item CRUD. Validates `params` parses as JSON (`validate_params_json`) **and** validates grid placement (`validate_placement`). Every mutation broadcasts `workspace_update`. |
-| `api/workspaces.py` | Token-gated `POST /api/workspaces` and `POST /api/workspaces/{id}/compact`. `_pack_items()` is a pure placement pass, kept DB-free so it can be exercised directly. |
+| `api/workspaces.py` | Token-gated deck writes: create, compact, rename (`PATCH`), reorder (`PUT /api/workspaces/order`), delete, export/import. `_pack_items()` is a pure placement pass, kept DB-free so it can be exercised directly. |
 | `api/screenshot.py` | Token-gated `POST /api/screenshot` — PNG ≤ 10 MB written beside the DB under `data/screenshots/`, named from the server clock. **Retained but called by nothing** (see §12). |
 | `api/agents.py` | Token-gated request/response proxies to a connected agent, one shared `_ask_agent()`: `list_devices` (audio devices), `list_apps` (Start Menu programs) and `fetch_icon` (a site's icon). Replies verbatim, 5-second budget. **There is no agent-status endpoint** (agent status travels over the WebSocket only). |
-| `api/settings.py` | `GET /api/settings`, `PUT /api/settings/theme`. Holds the canonical `THEMES` allowlist. The one write endpoint with no token. |
+| `api/settings.py` | `GET /api/settings`, `PUT /api/settings/theme\|mode` (no token) and `PUT /api/settings/deck-swipe` (token). Holds the canonical `THEMES` allowlist. |
 
 ### `agents/windows/`
 
@@ -145,9 +145,9 @@ state snapshot every second.
 | `img/guide/` | Guide pictures: shared ones at the top, Studio screenshots per language in `en/` and `ru/`. Bundled into the exe with the rest of `frontend/`. |
 | `js/tile-catalog.js` | What tile types exist and what each needs configured. Must agree with agent `HANDLERS`, `WIDGETS`, `ICONS` and db.py seeds. |
 | `js/widgets/` | Widget tiles: `index.js` registry (`mount(tile,item,ctx) -> destroy`, `ctx.onState` for live agent state), `clock-weather.js`, `pc-stats.js`. |
-| `js/swipe.js` | Horizontal swipe on the deck → next/previous deck (touch and pen only). |
+| `js/swipe.js` | Horizontal swipe on the deck → next/previous deck (touch and pen only), unless Studio has turned the `deck_swipe` setting off. |
 | `js/dom.js` | `el()`, the element builder Studio's dialogs share. |
-| `js/studio-access.js`, `js/studio-whats-new.js`, `js/studio-decks.js` | Studio's Access (tokens), What's new and Decks (export/import/templates) dialogs. |
+| `js/studio-access.js`, `js/studio-whats-new.js`, `js/studio-decks.js` | Studio's Access (tokens), What's new and Decks dialogs. Decks manages them: reorder, rename, download, delete (inline confirm; not the last one), add (empty, file, template), and the swipe setting. |
 | `whats-new.json`, `templates/*.json` | The "What's new" notes (one entry per public version) and the deck templates. |
 | `css/widgets.css`, `css/studio.css` | Widget layout (currentColor only, container queries); Studio's glass panels and forms. |
 | `js/theme.js` | Fetch/PUT the theme, cycle it, apply it to `<html data-theme>`; derives the display label from the slug; re-validates every value against the allowlist before it reaches the DOM. |
@@ -335,14 +335,18 @@ Every endpoint in `backend/app/` and `backend/app/api/**`.
 | --- | --- | --- | --- |
 | `GET /health` | none | — | `{"status": "ok"}` |
 | `GET /api/workspaces` | **none** | — | `[{id, name, position, grid_cols, grid_rows, items: [item, …]}]` — every column of every item, `params` still a JSON **string** |
-| `GET /api/settings` | **none** | — | `{"theme": "flat"\|"pastel"\|"glossy"\|"liquid-glass", "mode": "auto"\|"light"\|"dark"}` — both keys always present; an unknown *stored* value logs a warning and serves that key's default (`flat` / `auto`) |
+| `GET /api/settings` | **none** | — | `{"theme": "flat"\|"pastel"\|"glossy"\|"liquid-glass", "mode": "auto"\|"light"\|"dark", "deck_swipe": true\|false}` — every key always present; an unknown *stored* value logs a warning and serves that key's default (`flat` / `auto`) |
 | `PUT /api/settings/theme` | **none** | `{"theme": "<slug>"}` | `{"theme": "<slug>"}`; `422` if not in the allowlist. Broadcasts `settings_update` |
 | `PUT /api/settings/mode` | **none** | `{"mode": "auto"\|"light"\|"dark"}` | `{"mode": "<value>"}`; `422` otherwise. Broadcasts `settings_update`. Written by Studio's "Deck background" picker; unauthenticated for the same reason the theme is (§7) |
 | `GET /api/items/{id}` | `X-Agent-Token` | — | The item row, or `404` |
 | `POST /api/items` | `X-Agent-Token` | `ItemCreate` (`workspace_id`, `row`, `col`, `width`=1, `height`=1, `label`, `icon?`, `color`=`#2a2f38`, `kind`, `type`, `target`=`windows`, `params`=`"{}"`, `state_key?`, `dock`=false) | The created row. `400` on bad params JSON, bad placement, or FK failure. Broadcasts `workspace_update` |
 | `PUT /api/items/{id}` | `X-Agent-Token` | `ItemUpdate` — every field optional, `exclude_unset` so *omitted* ≠ *explicit null* | The updated row. Placement is re-checked against the **merged** rectangle, not just the submitted fields. `400` if nothing to update. Broadcasts `workspace_update` |
 | `DELETE /api/items/{id}` | `X-Agent-Token` | — | `{"status": "ok"}`, or `404`. Broadcasts `workspace_update` |
-| `POST /api/workspaces` | `X-Agent-Token` | `{"name", "grid_cols"=3, "grid_rows"=5}` | The created workspace; `position` is assigned server-side. Broadcasts `workspace_update` |
+| `PUT /api/settings/deck-swipe` | `X-Agent-Token` | `{"enabled": bool}` | `{"deck_swipe": bool}`. Stored as `on`/`off` (default `on`). Broadcasts `settings_update` with only that key. Token-gated: only Studio writes it |
+| `POST /api/workspaces` | `X-Agent-Token` | `{"name", "grid_cols"=3, "grid_rows"=5}` (1–200 chars, grid 1–50) | The created workspace; `position` is assigned server-side, a taken name becomes `Name (2)`. Broadcasts `workspace_update` |
+| `PATCH /api/workspaces/{id}` | `X-Agent-Token` | `{"name"}` (trimmed, 1–200) | `{id, name}`. `404` missing, `409` another deck has that name, `422` blank. Broadcasts `workspace_update` |
+| `PUT /api/workspaces/order` | `X-Agent-Token` | `{"ids": [every deck id, first to last]}` | `{ids}`; rewrites `position`. `409` unless it is exactly every deck once. Broadcasts `workspace_update` |
+| `DELETE /api/workspaces/{id}` | `X-Agent-Token` | — | `{id, items}` (tiles removed by the FK cascade). `404` missing, `409` if it is the last deck. Broadcasts `workspace_update`; a phone showing it moves to the next deck in the old order (`successorOf` in `app.js`) |
 | `POST /api/workspaces/{id}/compact` | `X-Agent-Token` | — | The full re-packed item list. `404` if the workspace is missing. Broadcasts `workspace_update` |
 | `POST /api/screenshot` | `X-Agent-Token` | `multipart/form-data`, `file` — must declare `image/png`, ≤ 10 MB | `{"status":"ok","filename":"YYYYmmdd_HHMMSS.png"}`; `400` wrong type, `413` too large. Filename comes from the **server clock**, never from `file.filename` |
 | `POST /api/agents/{agent_name}/list_devices` | `X-Agent-Token` | — | The agent's reply **verbatim**: `{"status":"ok","devices":[{name,id,direction,is_default,is_active}]}`. `404` agent offline, `504` no reply in 5 s |
@@ -2252,6 +2256,12 @@ Ordered roughly by how likely each is to bite.
     snapped cache bounds memory, not upstream traffic: a LAN caller sweeping
     coordinates can keep threadpool workers busy on Open-Meteo fetches.
     Accepted for a home LAN.
+27. **Deck and tile ids can be reused.** `workspace` and `item` use a plain
+    `INTEGER PRIMARY KEY`, so after a deck is deleted SQLite may hand its ids
+    to the next deck or tiles created. A phone that slept through the delete
+    could send a stale tile's id. It refetches on every reconnect (`app.js`,
+    `connectionWasDown`), which closes the window it would matter in;
+    `AUTOINCREMENT` would mean rebuilding both tables at startup.
 
 ---
 

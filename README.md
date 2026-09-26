@@ -124,7 +124,9 @@ Ubisoft, GOG, Valorant, League of Legends, Counter-Strike, Dota 2, PUBG,
 Fortnite, Roblox and more. An installed game picks up its logo by itself.
 
 **Several decks.** With more than one deck, swipe sideways on the phone to
-move between them; the dots under the header show where you are.
+move between them; the dots under the header show where you are and switch
+with a tap. Studio's **Decks** dialog reorders, renames, downloads and
+deletes them, adds new ones, and can turn swiping off.
 
 When the PC end goes away — the agent closed, or IT-Deck itself — every tile
 becomes a button that can't do anything, so the clock widget takes the whole
@@ -261,7 +263,7 @@ that one on the phone.
 
 ## Status
 
-v0.5.7 — personal project, active development, API may change.
+v0.5.8 — personal project, active development, API may change.
 
 ## License
 

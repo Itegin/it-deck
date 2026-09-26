@@ -573,10 +573,12 @@ initAccess(document.getElementById("access-dialog"), document.getElementById("ac
 });
 initDecks(document.getElementById("decks-dialog"), document.getElementById("decks-btn"), {
   request: api,
+  workspaces: () => workspaces,
   currentWorkspace,
-  // Straight to the new deck: it is what the person just asked for.
-  onImported: async (id) => {
-    await loadItems();
+  reload: loadItems,
+  // Shows that deck in the preview, as picking it in the bar does (which
+  // also closes an editor open on another deck's tile).
+  selectWorkspace: (id) => {
     workspaceSelect.value = String(id);
     workspaceSelect.dispatchEvent(new Event("change"));
   },
