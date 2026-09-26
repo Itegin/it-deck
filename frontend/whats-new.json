@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.5.8",
+    "en": [
+      "Manage your decks in Studio → Decks: reorder, rename, download or delete them (the last one stays), or add an empty one.",
+      "Swiping between decks can be turned off there too, if your thumb keeps changing the deck. The dots still switch.",
+      "The deck dots no longer take room from your tiles.",
+      "A phone that wakes up catches up with anything changed in Studio while it slept."
+    ],
+    "ru": [
+      "Деками теперь можно управлять в Studio → Деки: переставлять, переименовывать, скачивать и удалять (последняя остаётся), а ещё добавить пустую.",
+      "Там же можно выключить переключение дек свайпом, если палец то и дело меняет деку. Точки по-прежнему переключают.",
+      "Точки дек больше не отнимают место у плиток.",
+      "Проснувшийся телефон сам подтягивает всё, что поменялось в Studio, пока он спал."
+    ]
+  },
+  {
     "version": "0.5.7",
     "en": [
       "New tiles: hotkeys and media keys, Power (asks before it acts), Send text to the PC's clipboard, a live PC-load widget, and logos for popular games and launchers.",

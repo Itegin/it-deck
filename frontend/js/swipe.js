@@ -6,15 +6,20 @@
 // sideways and quick, so a sloppy tap or a vertical flick changes nothing.
 // A tile the swipe starts on isn't pressed either -- js/longpress.js treats
 // a pointer that moved as a drag, not a tap.
+//
+// Studio can switch the gesture off ("Switch decks by swiping", a server
+// setting): `isEnabled` is asked at the start of every swipe, so the change
+// lands without re-attaching anything.
 
 const MIN_DISTANCE_PX = 60;
 const MAX_DURATION_MS = 800;
 
-export function attachDeckSwipe(surface, onSwipe) {
+export function attachDeckSwipe(surface, onSwipe, { isEnabled = () => true } = {}) {
   let start = null;
 
   surface.addEventListener("pointerdown", (event) => {
     start = null;
+    if (!isEnabled()) return;
     if (!event.isPrimary || event.pointerType === "mouse") return;
     if (event.target.closest('[role="slider"], .context-overlay')) return;
     start = { x: event.clientX, y: event.clientY, at: performance.now() };

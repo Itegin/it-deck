@@ -924,11 +924,12 @@ function markAgentTiles(agent, isOffline) {
   }
 }
 
-// One dot per deck, in a row of their own under the header, when there is
-// more than one: where a swipe will go, and a way to get there without
-// swiping. Not inside the header: the deck name already shares that row
-// with three controls, and the dots squeezed it to a single letter.
-// Hidden on the picker and the error screen.
+// One dot per deck when there is more than one: where a swipe will go, and a
+// way to get there without swiping. They take no height: a row of their own
+// under the header cost the tiles 28px, so they are laid over the grid's top
+// padding instead (css/grid.css). Kept out of the header's row as well: the
+// deck name already shares it with three controls, and dots there squeezed
+// it to a single letter. Hidden on the picker and the error screen.
 export function renderDeckDots(workspaces, currentId, onSelect) {
   const header = document.getElementById("workspace-header");
   let dots = document.getElementById("deck-dots");
@@ -936,7 +937,9 @@ export function renderDeckDots(workspaces, currentId, onSelect) {
     dots = document.createElement("div");
     dots.id = "deck-dots";
     dots.className = "deck-dots";
-    header.insertAdjacentElement("afterend", dots);
+    // Inside the header only to be positioned against it; absolutely placed,
+    // so the header's flex row doesn't see it.
+    header.append(dots);
   }
   if (!dots) {
     return;

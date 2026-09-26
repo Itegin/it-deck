@@ -1,9 +1,10 @@
 import logging
 import sqlite3
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from app.auth import check_agent_token
 from app.db import get_connection
 from app.ws.hub import hub
 
@@ -47,12 +48,24 @@ MODES = ("auto", "light", "dark")
 DEFAULT_MODE = "auto"
 
 
+# Whether a sideways swipe on the phone moves to the next deck. On by default,
+# as it was before this setting existed; off for anyone whose thumb keeps
+# landing on the wrong deck. The dots and "Switch deck" work either way.
+# Stored as "on"/"off" through the same allowlist reader, served as a bool.
+DECK_SWIPE_VALUES = ("on", "off")
+DEFAULT_DECK_SWIPE = "on"
+
+
 class ThemeUpdate(BaseModel):
     theme: str
 
 
 class ModeUpdate(BaseModel):
     mode: str
+
+
+class DeckSwipeUpdate(BaseModel):
+    enabled: bool
 
 
 def _read_setting(
@@ -115,10 +128,11 @@ def get_settings() -> dict:
     try:
         theme = _read_setting(conn, "theme", THEMES, DEFAULT_THEME)
         mode = _read_setting(conn, "mode", MODES, DEFAULT_MODE)
+        swipe = _read_setting(conn, "deck_swipe", DECK_SWIPE_VALUES, DEFAULT_DECK_SWIPE)
     finally:
         conn.close()
 
-    return {"theme": theme, "mode": mode}
+    return {"theme": theme, "mode": mode, "deck_swipe": swipe == "on"}
 
 
 @router.put("/api/settings/theme")
@@ -165,3 +179,18 @@ async def set_mode(update: ModeUpdate) -> dict:
     logger.info("Mode set to %r", update.mode)
 
     return {"mode": update.mode}
+
+
+# Token-gated, unlike the two above: their exception exists because the
+# tokenless Dashboard writes them, and only Studio writes this one.
+@router.put("/api/settings/deck-swipe")
+async def set_deck_swipe(update: DeckSwipeUpdate, x_agent_token: str | None = Header(None)) -> dict:
+    check_agent_token(x_agent_token)
+    _write_setting("deck_swipe", "on" if update.enabled else "off")
+
+    await hub.broadcast_to_clients(
+        {"type": "settings_update", "settings": {"deck_swipe": update.enabled}}
+    )
+    logger.info("Deck swipe set to %s", update.enabled)
+
+    return {"deck_swipe": update.enabled}
