@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in IT-Deck doesn't work as it should
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: IT-Deck version
+      description: Shown in the IT-Deck window and in Studio's What's new.
+      placeholder: v0.5.8
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: PC and phone
+      description: Windows version, and the phone with its browser.
+      placeholder: Windows 11 24H2, iPhone 13 / Safari
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        The relevant lines from %LOCALAPPDATA%\IT-Deck\logs\ (backend.log,
+        agent.log, launcher.log). Remove anything you'd rather not share.
+      render: text
