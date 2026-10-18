@@ -30,11 +30,57 @@ metadata or bundled licence file.
 | comtypes | 1.2.1 | MIT | Windows audio COM calls |
 | pywin32 | 312 | PSF License | clipboard, Windows APIs |
 | qrcode | 8.2 | BSD | the QR code in the PC window |
+| cryptography | 46.0.3 | Apache-2.0 OR BSD-3-Clause | IT-Deck's local certificate authority for HTTPS |
+| OpenSSL | (cryptography's, 3.5) | Apache-2.0 | cryptography's crypto backend |
+| cffi | (cryptography's) | MIT-0 | cryptography's bindings |
+| pycparser | (cffi's) | BSD-3-Clause | cffi's C parser |
 | Tcl/Tk | 8.6 | Tcl/Tk License (BSD-style) | the PC window |
 | PyInstaller bootloader | 6.22.3 | GPL-2.0-or-later **with the bootloader exception** | packing everything into one exe |
 
 The PyInstaller exception explicitly allows distributing the built exe under
 any licence; the GPL applies to PyInstaller itself, not to IT-Deck.
+
+### Inside itdeck-cam.exe and itdeck-vcam.dll (the webcam)
+
+Built by `.github/workflows/native.yml` from vcpkg (baseline pinned in
+`native/vcpkg.json`), statically linked. Each package's licence file ships
+in the build artifact's `licenses/` folder.
+
+| Component | Version | Licence | Used for |
+|---|---|---|---|
+| libdatachannel | 0.24.6 | MPL-2.0 | WebRTC (ICE, DTLS, SRTP, RTP) and the loopback WebSocket |
+| libjuice | 1.7.4 | MPL-2.0 | ICE, libdatachannel's |
+| libsrtp | 2.8.1 | BSD-3-Clause | SRTP, libdatachannel's |
+| usrsctp | 0.9.5.0 | BSD-3-Clause | SCTP, libdatachannel's |
+| OpenSSL | 3.6.5 | Apache-2.0 | DTLS, libdatachannel's |
+| plog | 1.1.11 | MIT | logging, libdatachannel's |
+| nlohmann/json | 3.12.0 | MIT | the signaling messages |
+| VCamSample (Simon Mourier) | commit 58b6d4b | MIT | the virtual camera media source, adapted into itdeck-vcam.dll |
+| WIL (Windows Implementation Libraries, Microsoft) | 1.0.260126.7 | MIT | Win32 and COM helpers, itdeck-vcam.dll |
+| C++/WinRT (Microsoft) | 3.0.260818.1 | MIT | Windows Runtime helpers, itdeck-vcam.dll |
+| Cascadia Mono Bold and SemiBold (Microsoft) | [2407.24](https://github.com/microsoft/cascadia-code) | SIL OFL 1.1 | the `[IT-Deck]` webcam watermark, itdeck-cam.exe; the IT-Deck Camera's placeholder text, itdeck-vcam.dll |
+
+MPL-2.0 is file-level copyleft: the files it covers must stay available in
+source form. IT-Deck uses libdatachannel and libjuice unmodified, so their
+source is the upstream release named above
+(github.com/paullouisageneau/libdatachannel, github.com/paullouisageneau/libjuice);
+the rest of IT-Deck is not affected. H.264 is decoded by Windows' own Media
+Foundation decoder, which is part of the OS and not distributed with IT-Deck.
+
+The watermark is an image of the word "IT-Deck" set in Cascadia Mono Bold,
+rendered once by `native/tools/make_watermark.py` into
+`native/itdeck-cam/src/watermark_masks.hpp` (8-bit masks at three sizes,
+from the static `CascadiaMono-Bold.ttf` of release 2407.24). The camera's
+placeholder hint line is set in Cascadia Mono SemiBold and rendered by
+`native/tools/make_placeholder.py` into
+`native/itdeck-vcam/src/placeholder_masks.hpp`, from the static
+`CascadiaMono-SemiBold.ttf` of the same release. The placeholder's logo is
+the colour IT-Deck mark, not a font.
+No font file ships, only those pixels. The SIL Open Font License 1.1
+(Copyright (c) 2019 - Present, Microsoft Corporation, with Reserved Font
+Name Cascadia Code; <https://github.com/microsoft/cascadia-code>) places no
+restriction on text or images made with the font, and allows free
+redistribution of the font itself.
 
 ### SoundVolumeView (NirSoft)
 

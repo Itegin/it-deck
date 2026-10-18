@@ -4,7 +4,104 @@ Newest first. Versions are git tags; `main` between tags is unreleased.
 
 ---
 
-## Unreleased
+## v0.6.0 — 2026-10-17
+
+### Added
+
+- **The Keycap tile theme.** Tiles look like mechanical keycaps, with an LED
+  dot that lights in the state colour.
+- **A watermark on the webcam.** Every frame the virtual camera sends carries
+  a small `[IT-Deck]` mark.
+- **A webcam page in the tour.** The first-run tour shows how to install the
+  camera, set up the phone and pick IT-Deck Camera in a video app.
+- **A Webcam section in Studio's guide.**
+- **A first-time hint on the phone's Webcam screen**: three short steps from
+  installing the camera on the PC to choosing it in Discord, Zoom or OBS.
+- **A language choice in the PC window's Settings**: As in Windows, English or
+  Русский. It applies after IT-Deck restarts.
+- **A "Set up phone" QR code** in the PC window, for the certificate page.
+
+- **Webcam setup from the PC window.** A Webcam card with three steps:
+  Install camera, Set up phone, Check in Windows Camera. It ticks as each
+  step completes and shows "Update camera" when the driver is older.
+- **The deck on the Home Screen with the camera.** Setup ends on "Open the
+  deck", then Share, Add to Home Screen; the old icon can be deleted.
+- **The deck offers Start when an app opens IT-Deck Camera.**
+- **Streams stop by themselves** 15 s after the last app closes the camera.
+- **A placeholder in the camera** while nobody streams: "Open the deck on your
+  phone and press Start".
+
+### Changed
+
+- **Webcam tile:** tap starts or stops, long press opens the Webcam screen.
+  The Webcam screen shows the essentials, with the rest under More.
+- **Graphite look everywhere.** The phone, Studio and the setup pages follow
+  light and dark.
+- **A new logo.** The keycap is the app and Home Screen icon. The pixel `[IT]`
+  favicon sits in every header next to "IT-Deck". The camera placeholder shows
+  the logo in colour.
+- **A beginner README** with a picture for every setup step.
+- **A new PC window.** It opens on what is happening right now: open decks,
+  the Windows agent and the camera, live. Rare actions (start with Windows,
+  PIN, token, uninstall) moved into Settings.
+- **A new Webcam screen** on the phone: a tighter layout that fits the preview,
+  the controls and the status together.
+- **A clearer phone certificate setup page**, step by step with the iPhone
+  screens drawn.
+- **A larger webcam watermark**: 3.4% of the frame height, was 2.6%.
+- **"Update camera" only when the camera changed.** Native builds are
+  reproducible, so an unchanged camera DLL is not offered again.
+
+### Fixed
+
+- **The phone header wraps its controls** to a second row on narrow phones.
+- **12-hour clock:** AM/PM is drawn smaller.
+- **Studio:** primary and danger buttons show their text again.
+- **The Webcam screen's Deck button** is a 44 px pill.
+- **Settings:** no empty gap under "New phone token".
+- **The link field** in the PC window fits the whole link.
+- **The http deck's camera** offers "Set up webcam", which opens the setup page.
+
+### Removed
+
+- **The camera test page** (`camtest`) and its report to the PC.
+
+---
+
+## v0.5.9 — 2026-10-16
+
+### Added
+
+- **The phone as a webcam.** The deck streams its camera over WebRTC to
+  `itdeck-cam.exe` on the PC, which decodes the H.264 on the GPU and feeds
+  **IT-Deck Camera**, a Windows 11 virtual camera that video apps list like
+  any webcam. The camera is installed once from the PC window (Windows asks
+  for administrator rights) and stays listed even when IT-Deck is closed;
+  until the phone streams it shows a dark placeholder. `itdeck-cam.exe` runs
+  only while a phone streams, so a camera that is off costs nothing. Built in
+  GitHub Actions and bundled into ITDeck.exe.
+- **Smooth while a game runs.** Frames reach the camera on their own thread
+  and are read back from the GPU without waiting on it, so a busy GPU no
+  longer drops the stream to 16 fps or adds lag (measured: 29–31 fps at
+  720p30 with a game running).
+- **Webcam screen on the deck**, opened by the camera button next to
+  "Switch deck": a live preview, Start/Stop, front or back camera, quality
+  from 480p to 1080p at 20/24/30/60 fps (front camera, 720p 30 fps by
+  default), mirror, rotate left/right and reset, and what the PC receives.
+  The stream keeps running after you go back to the deck; a dot on the button
+  shows it is live. The picture stays upright however the phone lies.
+- **Webcam tile.** A tap starts or stops the stream; a long press opens a
+  quick menu: switch camera, mirror, lower or higher quality, all settings.
+- **HTTPS for the webcam only.** A phone allows the camera only on a secure
+  page, so IT-Deck also serves the deck over HTTPS on a second port
+  (`HTTPS_PORT` in `config.env`, picked once like `SERVER_PORT`), with its own
+  small certificate authority (it may only sign for private network
+  addresses) and a certificate for this PC's addresses, re-issued when they
+  change. `/setup.html` installs it on the phone once (a profile on iPhone, a
+  .crt on Android) and opens the https deck. The plain-http deck is
+  unchanged.
+- **Camera test page** (`/camtest.html`): what the phone's cameras and
+  encoder deliver, with a report saved in the logs folder.
 
 ---
 
