@@ -4,6 +4,31 @@ Newest first. Versions are git tags; `main` between tags is unreleased.
 
 ---
 
+## v0.6.1 — 2026-10-19
+
+### Added
+
+- **Six deck templates** in Studio's Decks dialog: Home, Streamer, Work,
+  Gamer, Calls, and Music & video. A new install starts with Home, which has a
+  quick-launch bar.
+
+### Changed
+
+- **The Webcam tile is 2 wide** and turns the on-air red while streaming, with
+  the quality ("On air · 720p") under its name.
+- **Keycap is the default theme.** A theme you picked stays.
+- **README screenshots** show the deck held sideways in Keycap; the webcam
+  setup steps are one picture.
+- **The Home Screen icon is the pixel `[IT]`.** Add the deck to the Home
+  Screen again to see it.
+- **A 10-second webcam demo** at the top of the README's webcam section.
+
+### Fixed
+
+- **Shut down asks first again.** On a deck held sideways the Run / Cancel
+  sheet opened under the finger, and the same tap pressed Run. A sheet now
+  counts only presses that start on it, and Cancel has the keyboard focus.
+
 ## v0.6.0 — 2026-10-17
 
 ### Added

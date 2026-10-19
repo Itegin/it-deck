@@ -11,7 +11,7 @@ doing. The same phone can be your PC's webcam.
 
 **[Русская версия](README.ru.md)**
 
-<img src="docs/screenshots/hero.png" alt="The IT-Deck deck on a phone held upright: a grid of tiles for the microphone, volume, audio device, VPN and PC load, and a bar of quick-launch buttons along the bottom" width="300">
+<img src="docs/screenshots/hero.png" alt="The IT-Deck deck on a phone held sideways: the Webcam tile lit red and marked On air, 720p, with a red dot on the camera button in the header, tiles for Mic, Sound, Volume, Audio Switch, Screenshot, Shut down, PC load, Send text, Clock and Lock PC, and a bar of quick-launch buttons down the left side" width="600">
 
 You need a Windows PC and a phone on the same Wi-Fi. Nothing else is installed
 on either one.
@@ -32,12 +32,12 @@ on either one.
 4. **Point the phone's camera at the code.** Use the normal Camera app. Tap the
    banner that appears. The deck opens in your browser.
 
-   <img src="docs/screenshots/dashboard.png" alt="The deck on a phone: tiles for Mic, Volume, Audio Switch, VPN and Terminal, a clock and weather widget, and the quick-launch bar along the bottom" width="300">
+   <img src="docs/screenshots/dashboard.png" alt="The Home deck on a phone held sideways: a wide Webcam tile and a Mic tile on top, then Sound, a Volume slider, Audio Switch, Screenshot, Shut down, PC load, Send text, a clock and Lock PC, with the quick-launch bar down the left side" width="600">
 
 5. **Add it to the Home Screen.** In Safari tap the Share button, then
    **Add to Home Screen**. The deck now has its own icon, like an app.
 
-   <img src="docs/screenshots/add-home.png" alt="The Share sheet in iPhone Safari with the Add to Home Screen row ringed" width="300">
+   <img src="docs/screenshots/add-home.png" alt="The Share sheet in iPhone Safari with the Add to Home Screen row ringed" width="240">
 
 That is all. Tap a tile and the PC does it. The tile shows what happened: the
 Mic tile turns red while the microphone is muted.
@@ -54,6 +54,8 @@ The phone's camera becomes a webcam on your PC. Windows 11 only. You set it up
 once. After that, apps such as Discord, Zoom and OBS list it as
 **IT-Deck Camera**.
 
+<img src="docs/screenshots/webcam-demo.gif" alt="A 10-second loop: a video app's settings with IT-Deck Camera picked and its preview waiting; on the phone beside it the deck shows An app on the PC wants the camera, Start is tapped, the Webcam tile turns red and says On air, and the app's preview switches to the live picture" width="720">
+
 1. **Install the camera.** In the IT-Deck window find the Webcam card and press
    **Install camera**. Windows asks for administrator rights. Say yes. This
    happens once.
@@ -65,17 +67,13 @@ once. After that, apps such as Discord, Zoom and OBS list it as
 
    Why this step? The phone only shares its camera with a page it trusts, so
    you install IT-Deck's certificate (a small trust file) on the phone once.
-   The page has three steps with pictures. Do them one by one.
+   The page has four steps with pictures. Do them one by one.
 
-   <img src="docs/screenshots/setup-1.png" alt="Setup page, step 1: Download the profile, with a button to download it and a note that Safari will ask to allow it" width="300">
-   <img src="docs/screenshots/setup-2.png" alt="Setup page, step 2: Install the profile, with a drawn iPhone Settings screen showing where to tap" width="300">
-   <img src="docs/screenshots/setup-3.png" alt="Setup page, step 3: Trust it, with a drawn Certificate Trust Settings screen and the IT-Deck local CA switch" width="300">
+   <img src="docs/screenshots/setup-steps.png" alt="The four steps of the setup page on an iPhone, side by side: 1 Download the profile, 2 Install the profile with drawn Settings screens showing where to tap, 3 Trust it with the IT-Deck local CA switch, 4 Add to Home Screen with an Open the deck button" width="720">
 
 3. **Open the deck.** The last step says **Open the deck**. Tap it. On the page
    that opens, tap Share, then **Add to Home Screen**. From now on use this new
    icon. You can delete the old IT-Deck icon.
-
-   <img src="docs/screenshots/setup-4.png" alt="Setup page, step 4: the certificate is trusted, with an Open the deck button and a drawn Safari Share sheet" width="300">
 
 4. **Pick the camera in your app.** In Discord, Zoom or OBS, open the camera
    settings and choose **IT-Deck Camera**. The picture is a dark placeholder
@@ -87,7 +85,7 @@ once. After that, apps such as Discord, Zoom and OBS list it as
    "An app on the PC wants the camera". Tap **Start**. Your picture appears in
    the app.
 
-   <img src="docs/screenshots/deck-start.png" alt="The deck on a phone with a card that says An app on the PC wants the camera, with Not now and Start buttons" width="300">
+   <img src="docs/screenshots/deck-start.png" alt="The deck on a phone held sideways with a card that says An app on the PC wants the camera, with Not now and Start buttons" width="600">
 
 **Notes.**
 - 720p at 30 fps is best over Wi-Fi. 1080p may break up on a weak network.
@@ -111,13 +109,13 @@ tile to edit it, press `+` to add one, drag to move. You choose what a tile
 does from cards, with no commands to type. The **Guide** button in the top bar
 is a short illustrated how-to.
 
-<img src="docs/screenshots/studio.png" alt="Studio in the Graphite look: a live preview of the deck next to the editor for an app tile, VALORANT, with logos of popular apps, games and launchers; the top bar has Decks, Access and What's new" width="600">
+<img src="docs/screenshots/studio.png" alt="Studio in the Graphite look: a live preview of the Home deck in Keycap next to the editor for the Webcam tile, with its icon, colour, size and position; the top bar has Decks, Access and What's new" width="600">
 
 Pick a look from five tile themes: Flat, Pastel, Glossy, Liquid Glass and
 Keycap. Each works on a dark or a light background. Tap the pill in the deck's
 header to switch theme.
 
-<img src="docs/screenshots/themes.png" alt="The same deck in five tile themes side by side: Flat, Pastel, Glossy, Liquid Glass and Keycap" width="600">
+<img src="docs/screenshots/themes.png" alt="The same Home deck in five tile themes side by side: Flat, Pastel, Glossy, Liquid Glass and Keycap" width="600">
 
 ## If something doesn't work
 
