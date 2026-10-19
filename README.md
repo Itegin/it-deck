@@ -11,6 +11,10 @@ doing. The same phone can be your PC's webcam.
 
 **[Русская версия](README.ru.md)**
 
+<img src="docs/screenshots/deck-demo.gif" alt="A 10-second loop of the deck held sideways: a tap on Mic turns the tile red, a finger drags the Volume slider from 40 to 75 percent, then a swipe slides from the Home deck to the Gamer deck" width="720">
+
+The same phone is also your PC's webcam in Discord, Zoom and OBS:
+
 <img src="docs/screenshots/webcam-demo.gif" alt="A 10-second loop: a video app's settings with IT-Deck Camera picked and its preview waiting; on the phone beside it the deck shows An app on the PC wants the camera, Start is tapped, the Webcam tile turns red and says On air, and the app's preview switches to the live picture" width="720">
 
 You need a Windows PC and a phone on the same Wi-Fi. Nothing else is installed
@@ -41,8 +45,6 @@ on either one.
 
 That is all. Tap a tile and the PC does it. The tile shows what happened: the
 Mic tile turns red while the microphone is muted.
-
-<img src="docs/screenshots/deck-demo.gif" alt="A 10-second loop of the deck held sideways: a tap on Mic turns the tile red, a finger drags the Volume slider from 40 to 75 percent, then a swipe slides from the Home deck to the Gamer deck" width="720">
 
 **Good to know.**
 - **Exit** in the window stops IT-Deck. **Minimise** leaves it running.
