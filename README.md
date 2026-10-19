@@ -11,7 +11,7 @@ doing. The same phone can be your PC's webcam.
 
 **[Русская версия](README.ru.md)**
 
-<img src="docs/screenshots/hero.png" alt="The IT-Deck deck on a phone held sideways: the Webcam tile lit red and marked On air, 720p, with a red dot on the camera button in the header, tiles for Mic, Sound, Volume, Audio Switch, Screenshot, Shut down, PC load, Send text, Clock and Lock PC, and a bar of quick-launch buttons down the left side" width="600">
+<img src="docs/screenshots/webcam-demo.gif" alt="A 10-second loop: a video app's settings with IT-Deck Camera picked and its preview waiting; on the phone beside it the deck shows An app on the PC wants the camera, Start is tapped, the Webcam tile turns red and says On air, and the app's preview switches to the live picture" width="720">
 
 You need a Windows PC and a phone on the same Wi-Fi. Nothing else is installed
 on either one.
@@ -42,6 +42,8 @@ on either one.
 That is all. Tap a tile and the PC does it. The tile shows what happened: the
 Mic tile turns red while the microphone is muted.
 
+<img src="docs/screenshots/deck-demo.gif" alt="A 10-second loop of the deck held sideways: a tap on Mic turns the tile red, a finger drags the Volume slider from 40 to 75 percent, then a swipe slides from the Home deck to the Gamer deck" width="720">
+
 **Good to know.**
 - **Exit** in the window stops IT-Deck. **Minimise** leaves it running.
 - Next time start IT-Deck from the **IT-Deck** shortcut it put on your Desktop.
@@ -53,8 +55,6 @@ Mic tile turns red while the microphone is muted.
 The phone's camera becomes a webcam on your PC. Windows 11 only. You set it up
 once. After that, apps such as Discord, Zoom and OBS list it as
 **IT-Deck Camera**.
-
-<img src="docs/screenshots/webcam-demo.gif" alt="A 10-second loop: a video app's settings with IT-Deck Camera picked and its preview waiting; on the phone beside it the deck shows An app on the PC wants the camera, Start is tapped, the Webcam tile turns red and says On air, and the app's preview switches to the live picture" width="720">
 
 1. **Install the camera.** In the IT-Deck window find the Webcam card and press
    **Install camera**. Windows asks for administrator rights. Say yes. This
@@ -69,7 +69,7 @@ once. After that, apps such as Discord, Zoom and OBS list it as
    you install IT-Deck's certificate (a small trust file) on the phone once.
    The page has four steps with pictures. Do them one by one.
 
-   <img src="docs/screenshots/setup-steps.png" alt="The four steps of the setup page on an iPhone, side by side: 1 Download the profile, 2 Install the profile with drawn Settings screens showing where to tap, 3 Trust it with the IT-Deck local CA switch, 4 Add to Home Screen with an Open the deck button" width="720">
+   <img src="docs/screenshots/setup-steps.png" alt="The four steps of the setup page on an iPhone in a 2 by 2 grid: 1 Download the profile, 2 Install the profile with the first drawn Settings screens, 3 Trust it with the IT-Deck local CA switch, 4 Add to Home Screen with an Open the deck button" width="720">
 
 3. **Open the deck.** The last step says **Open the deck**. Tap it. On the page
    that opens, tap Share, then **Add to Home Screen**. From now on use this new
@@ -356,7 +356,7 @@ press **Remove camera** in Settings before you do.
 
 ## Status
 
-v0.6.0: personal project, active development, API may change.
+A personal project in active development. The latest version is on the [Releases page](https://github.com/Itegin/it-deck/releases/latest); what changed is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
